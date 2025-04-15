@@ -5,7 +5,27 @@ py_test_module_list(
     size = "medium",
     data = glob(["tests/fixtures/*.*"]),
     env = {"RAY_SERVE_NODE_COMPACTION_DELAY_S": "1"},
-    files = glob(["tests/test_*.py"]),
+    files = glob(
+        ["tests/test_*.py"],
+        exclude = ["tests/test_deployment_scheduler.py"],
+    ),
+    tags = [
+        "exclusive",
+        "team:serve",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test_module_list(
+    size = "large",
+    data = glob(["tests/fixtures/*.*"]),
+    env = {"RAY_SERVE_NODE_COMPACTION_DELAY_S": "1"},
+    files = [
+        "tests/test_deployment_scheduler.py",
+    ],
     tags = [
         "exclusive",
         "team:serve",
