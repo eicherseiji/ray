@@ -61,6 +61,7 @@ class PushdownCountFiles(Rule):
             count_rows,
             batch_format="pyarrow",
             batch_size=read_files.reader.count_rows_batch_size(),
+            min_rows_per_bundled_input=read_files.reader.count_rows_batch_size(),
             zero_copy_batch=True,
             ray_remote_args={"num_cpus": self._PER_TASK_NUM_CPUS_ALLOCATION},
         )
