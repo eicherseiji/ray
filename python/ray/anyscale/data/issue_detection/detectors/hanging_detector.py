@@ -3,7 +3,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
-from ray.anyscale.data.issue_detection.issue_detector import Issue, IssueDetector
+from ray.anyscale.data.issue_detection.issue_detector import (
+    Issue,
+    IssueType,
+    IssueDetector,
+)
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.streaming_executor import StreamingExecutor
@@ -57,10 +61,13 @@ class HangingExecutionIssueDetector(IssueDetector):
             if state.task_idx not in self._hanging_op_tasks[state.operator_name]:
                 issues.append(
                     Issue(
+                        dataset_name=self._executor._dataset_id,
+                        operator_name=state.operator_name,
+                        issue_type=IssueType.HANGING,
                         message=(
                             f"A task for operator {state.operator_name} with task index {state.task_idx} "
                             f"has been hanging for >{time.perf_counter() - state.start_time_hanging}s."
-                        )
+                        ),
                     )
                 )
                 self._hanging_op_tasks[state.operator_name].add(state.task_idx)

@@ -2,7 +2,11 @@ import textwrap
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List
 
-from ray.anyscale.data.issue_detection.issue_detector import Issue, IssueDetector
+from ray.anyscale.data.issue_detection.issue_detector import (
+    Issue,
+    IssueDetector,
+    IssueType,
+)
 from ray.data._internal.execution.operators.map_operator import MapOperator
 from ray.data._internal.execution.util import memory_string
 
@@ -72,7 +76,14 @@ class HighMemoryIssueDetector(IssueDetector):
                     ),
                     detection_time_interval_s=self.detection_time_interval_s(),
                 )
-                issues.append(Issue(message=_format_message(message)))
+                issues.append(
+                    Issue(
+                        dataset_name=self._executor._dataset_id,
+                        operator_name=op.name,
+                        issue_type=IssueType.HIGH_MEMORY,
+                        message=_format_message(message),
+                    )
+                )
 
         return issues
 

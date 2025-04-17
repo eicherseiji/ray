@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List
 
@@ -7,9 +8,17 @@ if TYPE_CHECKING:
     from ray.data.context import DataContext
 
 
+class IssueType(str, Enum):
+    HANGING = "hanging"
+    HIGH_MEMORY = "high memory"
+
+
 @dataclass
 class Issue:
+    dataset_name: str
+    operator_name: str
     message: str
+    issue_type: IssueType
 
 
 class IssueDetector(ABC):
