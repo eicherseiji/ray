@@ -63,6 +63,7 @@ config = (
         pipeline_sync_freq=args.sync_freq,
         vf_loss_coeff=0.005,
         entropy_coeff=0.0,
+        # Only update connector states and model weights every n training_step calls.
         broadcast_interval=1,
     )
     .rl_module(

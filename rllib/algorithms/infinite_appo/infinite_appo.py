@@ -39,6 +39,7 @@ class InfiniteAPPOConfig(APPOConfig):
         # Defaults overriding APPOConfig settings.
         self.num_aggregator_actors_per_learner = 1
         self.env_runner_cls = InfiniteAPPOMultiAgentEnvRunner
+        self.num_gpu_loader_threads = 0
 
     @override(APPOConfig)
     def get_default_learner_class(self):
@@ -109,6 +110,10 @@ class InfiniteAPPO(APPO):
     @override(APPO)
     def setup(self, config: AlgorithmConfig):
         super().setup(config=config)
+
+        # TODO (sven): Move AggregatorActors into Learners, even for other algos.
+        # for actor in self._aggregator_actor_manager.actors().values():
+        #    ray.kill(actor)
 
         # Create metrics actor (last CPU bundle in pg).
         self.metrics_actor = MetricsActor.remote()

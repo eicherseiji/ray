@@ -29,14 +29,25 @@ class InfiniteAPPOMultiAgentEnvRunner(MultiAgentEnvRunner):
         )
 
     def set_aggregator_actors(self, aggregator_actor_refs):
-        # aggregator_actor_refs must be list of lists. Outer index is the learner index,
-        # inner index is the aggregator index (for that learner).
+        # `aggregator_actor_refs` must be list of lists.
+        # Outer index is the Learner index.
+        # Inner index is the aggregator index (for that Learner).
+
+        # Create a flat list of aggregator actors.
         self._aggregator_actor_refs = []
-        for agg_idx, agg_0 in enumerate(aggregator_actor_refs[0]):
+
+        # Shuffle inner index (aggregator indices per Learner).
+        for learner_idx in range(len(aggregator_actor_refs)):
+            np.random.shuffle(aggregator_actor_refs[learner_idx])
+
+        # Shuffle Learner sequence.
+        learner_seq = list(range(len(aggregator_actor_refs)))
+        np.random.shuffle(learner_seq)
+        for agg_idx, agg_0 in enumerate(aggregator_actor_refs[learner_seq[0]]):
             self._aggregator_actor_refs.extend(
                 [agg_0]
                 + [
-                    aggregator_actor_refs[i][agg_idx]
+                    aggregator_actor_refs[learner_seq[i]][agg_idx]
                     for i in range(1, len(aggregator_actor_refs))
                 ]
             )

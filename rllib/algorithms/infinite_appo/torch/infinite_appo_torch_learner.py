@@ -33,8 +33,11 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
 
     def build(self) -> None:
         super().build()
-        # Stop the Learner thread again and delete.
+        # Stop the Learner thread again and delete it.
         self._learner_thread.stopped = True
+        # Make sure learner thread gets out of its `step()` method (waiting for
+        # circular buffer to return an item).
+        self._learner_thread_in_queue.add("dummy")
         del self._learner_thread
 
         # Recreate the circular buffer with K-1 (b/c we use the incoming batch right
@@ -66,6 +69,12 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
 
         # Load the batch to the GPU.
         batch_on_gpu = batch.to_device(self._device, pin_memory=True)
+        # Reduce metrics (and sync them from GPU, if applicable), then send reduced
+        # metrics to metrics actor.
+        reduced_metrics = None
+        if self._num_batches >= 10:
+            reduced_metrics = self.metrics.reduce()
+            self._num_batches = 0
 
         # If buffer is full, pull K batches from it and perform an update on each.
         if (
@@ -112,7 +121,5 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
                 learner_state, broadcast=True
             )
 
-        # Send metrics to metrics actor.
-        if self._num_batches >= 10:
-            self._metrics_actor.add.remote(learner_metrics=self.metrics.reduce())
-            self._num_batches = 0
+        if reduced_metrics is not None:
+            self._metrics_actor.add.remote(learner_metrics=reduced_metrics)
