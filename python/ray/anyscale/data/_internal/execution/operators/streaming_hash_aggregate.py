@@ -237,11 +237,11 @@ class StreamingHashAggregate(PhysicalOperator):
         self._aggregator_pool.start()
         return super().start(options)
 
-    def shutdown(self, force: bool = False) -> None:
+    def _do_shutdown(self, force: bool = False) -> None:
         # This operator explicitly `ray.kill`s the aggregator actors, regardless of
         # whether `force` is true.
         self._aggregator_pool.shutdown()
-        return super().shutdown(force)
+        return super()._do_shutdown(force)
 
     def current_processor_usage(self) -> ExecutionResources:
         # Count both shuffle tasks and aggregator actors.

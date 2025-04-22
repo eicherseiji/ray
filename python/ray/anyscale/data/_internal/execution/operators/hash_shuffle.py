@@ -688,6 +688,15 @@ class HashShufflingOperatorBase(PhysicalOperator):
         # Update last finalized partition id
         self._last_finalized_partition_id = max(target_partition_ids)
 
+    def _do_shutdown(self, force: bool = False) -> None:
+        self._aggregator_pool.shutdown(force=True)
+        # NOTE: It's critical for Actor Pool to release actors before calling into
+        #       the base method that will attempt to cancel and join pending.
+        super()._do_shutdown(force)
+        # Release any pending refs
+        self._shuffling_tasks.clear()
+        self._finalizing_tasks.clear()
+
     def get_stats(self):
         return {
             # TODO factor in output blocks metadata
@@ -1046,6 +1055,15 @@ class AggregatorPool:
         logger.debug(f"Shuffle aggregator's remote args: {finalized_remote_args}")
 
         return finalized_remote_args
+
+    def shutdown(self, force: bool):
+        if force:
+            for actor in self._aggregators:
+                # NOTE: Actors can't be brought back after being ``ray.kill``-ed,
+                #       hence we're only doing that if this is a forced release
+                ray.kill(actor)
+
+        self._aggregators.clear()
 
 
 @ray.remote
