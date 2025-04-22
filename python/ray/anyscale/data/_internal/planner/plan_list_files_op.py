@@ -165,6 +165,8 @@ def plan_list_files_op(
             # Data from launching enough read tasks.
             "_generator_backpressure_num_objects": -1,
         },
+        # Avoid fuse ListFiles with the following ReadFiles.
+        supports_fusion=False,
     )
 
 

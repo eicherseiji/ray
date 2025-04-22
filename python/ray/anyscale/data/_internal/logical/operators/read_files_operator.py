@@ -1,7 +1,9 @@
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ray.anyscale.data._internal.readers import FileReader
+from ray.data._internal.compute import TaskPoolStrategy
 from ray.data._internal.logical.interfaces import LogicalOperator
+from ray.data._internal.logical.operators.map_operator import AbstractMap
 from ray.data._internal.planner.plan_expression.expression_evaluator import (
     ExpressionEvaluator,
 )
@@ -10,7 +12,7 @@ if TYPE_CHECKING:
     import pyarrow.dataset as pd
 
 
-class ReadFiles(LogicalOperator):
+class ReadFiles(AbstractMap):
     def __init__(
         self,
         input_dependency: LogicalOperator,
@@ -23,7 +25,12 @@ class ReadFiles(LogicalOperator):
         ray_remote_args: Dict[str, Any],
         concurrency: Optional[int],
     ):
-        super().__init__(name="ReadFiles", input_dependencies=[input_dependency])
+        super().__init__(
+            name="ReadFiles",
+            input_op=input_dependency,
+            ray_remote_args=ray_remote_args,
+            compute=TaskPoolStrategy(concurrency),
+        )
 
         self.reader = reader
         self.filesystem = filesystem
@@ -42,8 +49,6 @@ class ReadFiles(LogicalOperator):
             )
         self.columns = columns
         self.columns_rename = columns_rename
-        self.ray_remote_args = ray_remote_args
-        self.concurrency = concurrency
 
     def pushdown_filter(self, filter_expr_strs: List[str]) -> None:
         filter_expr = self._create_filter_expr(filter_expr_strs)

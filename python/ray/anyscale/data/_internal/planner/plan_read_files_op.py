@@ -5,7 +5,6 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     PATH_COLUMN_NAME,
 )
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
-from ray.data._internal.compute import TaskPoolStrategy
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data._internal.execution.operators.map_operator import MapOperator
@@ -103,7 +102,7 @@ def plan_read_files_op(
         data_context,
         name="ReadFiles",
         target_max_block_size=None,
-        compute_strategy=TaskPoolStrategy(op.concurrency),
-        supports_fusion=False,
-        ray_remote_args=op.ray_remote_args,
+        compute_strategy=op._compute,
+        supports_fusion=True,
+        ray_remote_args=op._ray_remote_args,
     )
