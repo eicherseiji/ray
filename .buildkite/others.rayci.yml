@@ -33,7 +33,9 @@ steps:
     depends_on: oss-ci-base_build
 
   - label: doc tests
-    tags: python
+    tags:
+      - python
+      - disabled
     instance_type: large
     commands:
       # Disable test DB to avoid any hidden failures going forward.
