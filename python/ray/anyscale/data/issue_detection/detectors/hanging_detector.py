@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 from ray.anyscale.data.issue_detection.issue_detector import (
     Issue,
-    IssueType,
     IssueDetector,
+    IssueType,
 )
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ class HangingExecutionIssueDetector(IssueDetector):
                         issue_type=IssueType.HANGING,
                         message=(
                             f"A task for operator {state.operator_name} with task index {state.task_idx} "
-                            f"has been hanging for >{time.perf_counter() - state.start_time_hanging}s."
+                            f"has been hanging for >{time.perf_counter() - state.start_time_hanging:.2f}s."
                         ),
                     )
                 )
