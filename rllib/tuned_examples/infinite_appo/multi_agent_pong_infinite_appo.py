@@ -43,6 +43,11 @@ parser.add_argument(
     default=10,
     help="Synchronization frequency between the different actor types of the pipeline.",
 )
+parser.add_argument(
+    "--num-aggregator-actors-per-learner2",
+    type=int,
+    default=1,
+)
 parser.set_defaults(
     enable_new_api_stack=True,
     env="ale_py:ALE/Pong-v5",

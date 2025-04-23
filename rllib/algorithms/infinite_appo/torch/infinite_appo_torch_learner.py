@@ -9,6 +9,7 @@ from ray.rllib.algorithms.infinite_appo.infinite_appo_aggregator_actor import (
 from ray.rllib.core import COMPONENT_RL_MODULE
 from ray.rllib.core.learner.torch.torch_learner import TorchLearner
 from ray.rllib.core.learner.training_data import TrainingData
+from ray.rllib.utils.annotations import override
 from ray.rllib.utils.metrics import NUM_ENV_STEPS_TRAINED_LIFETIME
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
@@ -28,9 +29,10 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
                 rl_module_spec=module_spec,
                 sync_freq=self.config.pipeline_sync_freq,
             )
-            for _ in range(self.config.num_aggregator_actors_per_learner)
+            for _ in range(self.config.num_aggregator_actors_per_inf_appo_learner)
         ]
 
+    @override(APPOTorchLearner)
     def build(self) -> None:
         super().build()
         # Stop the Learner thread again and delete it.
@@ -63,6 +65,13 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
                 )
             )
 
+    @override(APPOTorchLearner)
+    def _compute_off_policyness(self, batch):
+        # TODO (sven): Investigate, why this call is slowing things down in the
+        #  distributed Learner setup.
+        pass
+
+    @override(APPOTorchLearner)
     def update(self, batch, timesteps, send_weights=False):
         if timesteps is not None:
             self._timesteps = timesteps

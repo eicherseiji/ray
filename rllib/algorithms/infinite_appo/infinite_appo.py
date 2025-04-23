@@ -33,13 +33,23 @@ class InfiniteAPPOConfig(APPOConfig):
         self.num_weights_server_actors = 1
         self.num_batch_dispatchers = 1
         self.num_env_runner_state_aggregators = 1
-
+        self.num_aggregator_actors_per_inf_appo_learner = 2
         self.pipeline_sync_freq = 10
 
         # Defaults overriding APPOConfig settings.
-        self.num_aggregator_actors_per_learner = 1
+        self.num_aggregator_actors_per_learner = 0
         self.env_runner_cls = InfiniteAPPOMultiAgentEnvRunner
         self.num_gpu_loader_threads = 0
+
+    @override(APPOConfig)
+    def validate(self) -> None:
+        super().validate()
+        if self.num_aggregator_actors_per_learner != 0:
+            raise ValueError(
+                "`num_aggregator_actors_per_learner` must be 0! Use "
+                "`config.training(num_aggregator_actors_per_inf_appo_learner=...) "
+                "instead."
+            )
 
     @override(APPOConfig)
     def get_default_learner_class(self):
@@ -59,6 +69,7 @@ class InfiniteAPPOConfig(APPOConfig):
     def training(
         self,
         *,
+        num_aggregator_actors_per_inf_appo_learner: Optional[int] = NotProvided,
         num_weights_server_actors: Optional[int] = NotProvided,
         num_batch_dispatchers: Optional[int] = NotProvided,
         num_env_runner_state_aggregators: Optional[int] = NotProvided,
@@ -68,6 +79,10 @@ class InfiniteAPPOConfig(APPOConfig):
         """"""
         super().training(**kwargs)
 
+        if num_aggregator_actors_per_inf_appo_learner is not NotProvided:
+            self.num_aggregator_actors_per_inf_appo_learner = (
+                num_aggregator_actors_per_inf_appo_learner
+            )
         if num_weights_server_actors is not NotProvided:
             self.num_weights_server_actors = num_weights_server_actors
         if num_batch_dispatchers is not NotProvided:
@@ -198,13 +213,13 @@ class InfiniteAPPO(APPO):
         health_check_results = self.env_runner_group.fetch_ready_async_reqs()
         for env_runner_id, _ in health_check_results:
             self._env_runners_pending_failure_checks.remove(env_runner_id)
-        # Check a random subset of EnvRunners for failures.
+        # Check a random subset of (max 50) EnvRunners for failures.
         env_runner_ids_to_check = set(
             map(
                 int,
                 np.random.choice(
                     range(1, self.config.num_env_runners + 1),
-                    max(self.config.num_env_runners // 10, 1),
+                    max(min(self.config.num_env_runners // 10, 50), 1),
                     replace=False,
                 ),
             )
