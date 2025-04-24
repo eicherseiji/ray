@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 ResourceDict = Dict[str, float]
 
+HEAD_NODE_RESOURCE_LABEL = "node:__internal_head__"
+
 
 class ResourceRequestPriority(Enum):
     """Priority of a resource request."""
@@ -190,7 +192,21 @@ class AutoscalingCoordinator:
 
     def _update_cluster_node_resources(self) -> bool:
         """Update cluster's total resources. Return True if changed."""
-        nodes = [node for node in ray.nodes() if node["Alive"]]
+
+        def _is_node_eligible(node):
+            # Exclude dead nodes.
+            if not node["Alive"]:
+                return False
+            resources = node["Resources"]
+            # Exclude the head node if it doesn't have CPUs and GPUs,
+            # because the object store is not usable.
+            if HEAD_NODE_RESOURCE_LABEL in resources and (
+                resources.get("CPU", 0) == 0 and resources.get("GPU", 0) == 0
+            ):
+                return False
+            return True
+
+        nodes = list(filter(_is_node_eligible, ray.nodes()))
         nodes = sorted(nodes, key=lambda node: node.get("NodeID", ""))
         cluster_node_resources = [node["Resources"] for node in nodes]
         if cluster_node_resources == self._cluster_node_resources:

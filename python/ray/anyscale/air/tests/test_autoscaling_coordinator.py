@@ -1,10 +1,10 @@
-import unittest
 from unittest.mock import patch
 
 import pytest
 
 import ray
 from ray.anyscale.air._internal.autoscaling_coordinator import (
+    HEAD_NODE_RESOURCE_LABEL,
     AutoscalingCoordinator,
     get_or_create_autoscaling_coordinator,
 )
@@ -20,26 +20,63 @@ def mock_time():
     return MOCKED_TIME
 
 
-class TestAutoscalingCoordinator(unittest.TestCase):
-
-    CLUSTER_NODES = [
-        {
-            "Resources": {"CPU": 10, "GPU": 5, "object_store_memory": 1000},
-            "Alive": True,
+CLUSTER_NODES_WITH_HEAD = [
+    # Head node should be included if it has non-zero CPUs or GPUs.
+    {
+        "Resources": {
+            "CPU": 10,
+            "GPU": 5,
+            "object_store_memory": 1000,
+            HEAD_NODE_RESOURCE_LABEL: 1,
         },
-    ]
+        "Alive": True,
+    },
+    # Dead node should be excluded.
+    {
+        "Resources": {
+            "CPU": 10,
+            "GPU": 5,
+            "object_store_memory": 1000,
+        },
+        "Alive": False,
+    },
+]
 
-    @patch("time.time", mock_time)
-    @patch("ray.autoscaler.sdk.request_resources")
-    @patch("ray.nodes", return_value=CLUSTER_NODES)
-    def test_basic(self, mock_nodes, mock_request_resources):
+CLUSTER_NODES_WITHOUT_HEAD = [
+    {
+        "Resources": {"CPU": 10, "GPU": 5, "object_store_memory": 1000},
+        "Alive": True,
+    },
+    # Head node should be excluded if CPUs and GPUs are both 0.
+    {
+        "Resources": {
+            "CPU": 0,
+            "GPU": 0,
+            "object_store_memory": 1000,
+            HEAD_NODE_RESOURCE_LABEL: 1,
+        },
+        "Alive": True,
+    },
+]
+
+
+@pytest.mark.parametrize(
+    "cluster_nodes",
+    [
+        CLUSTER_NODES_WITH_HEAD,
+        CLUSTER_NODES_WITHOUT_HEAD,
+    ],
+)
+def test_basic(cluster_nodes):
+    with patch("ray.nodes", return_value=cluster_nodes), patch(
+        "time.time", mock_time
+    ), patch("ray.autoscaler.sdk.request_resources") as mock_request_resources:
         global MOCKED_TIME
 
         MOCKED_TIME = 0
         req1 = [{"CPU": 3, "GPU": 1, "object_store_memory": 100}]
         req1_timeout = 2
         as_coordinator = AutoscalingCoordinator()
-        mock_nodes.assert_called_once()
         as_coordinator.request_resources(
             requester_id="requester1",
             resources=req1,
@@ -47,6 +84,13 @@ class TestAutoscalingCoordinator(unittest.TestCase):
         )
         mock_request_resources.assert_called_once_with(bundles=req1)
         res1 = as_coordinator.get_allocated_resources("requester1")
+
+        def _remove_head_node_resources(res):
+            for r in res:
+                if HEAD_NODE_RESOURCE_LABEL in r:
+                    del r[HEAD_NODE_RESOURCE_LABEL]
+
+        _remove_head_node_resources(res1)
         assert res1 == req1
 
         # Send the same request again. `mock_request_resources` won't be called
@@ -70,6 +114,7 @@ class TestAutoscalingCoordinator(unittest.TestCase):
         )
         mock_request_resources.assert_called_with(bundles=req1 + req2)
         res2 = as_coordinator.get_allocated_resources("requester2")
+        _remove_head_node_resources(res2)
         assert res2 == req2 + [{"CPU": 5, "GPU": 3, "object_store_memory": 800}]
 
         # Test updating req1
@@ -81,8 +126,10 @@ class TestAutoscalingCoordinator(unittest.TestCase):
         )
         mock_request_resources.assert_called_with(bundles=req1_updated + req2)
         res1 = as_coordinator.get_allocated_resources("requester1")
+        _remove_head_node_resources(res1)
         assert res1 == req1_updated
         res2 = as_coordinator.get_allocated_resources("requester2")
+        _remove_head_node_resources(res2)
         assert res2 == req2 + [{"CPU": 4, "GPU": 2, "object_store_memory": 600}]
 
         # After req1_timeout, req1 should be expired.
@@ -91,6 +138,8 @@ class TestAutoscalingCoordinator(unittest.TestCase):
         mock_request_resources.assert_called_with(bundles=req2)
         res1 = as_coordinator.get_allocated_resources("requester1")
         res2 = as_coordinator.get_allocated_resources("requester2")
+        _remove_head_node_resources(res1)
+        _remove_head_node_resources(res2)
         assert res1 == []
         assert res2 == req2 + [{"CPU": 8, "GPU": 4, "object_store_memory": 900}]
 
@@ -100,12 +149,15 @@ class TestAutoscalingCoordinator(unittest.TestCase):
         mock_request_resources.assert_called_with(bundles=[])
         res1 = as_coordinator.get_allocated_resources("requester1")
         res2 = as_coordinator.get_allocated_resources("requester2")
+        _remove_head_node_resources(res1)
+        _remove_head_node_resources(res2)
         assert res1 == []
         assert res2 == []
 
         # Test canceling a request
         as_coordinator.cancel_request("requester2")
         res2 = as_coordinator.get_allocated_resources("requester2")
+        _remove_head_node_resources(res2)
         assert res2 == []
 
 
