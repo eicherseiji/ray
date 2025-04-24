@@ -32,7 +32,7 @@ from ray.data._internal.execution.streaming_executor import StreamingExecutor
 from ray.data._internal.logical.interfaces import Plan, Rule
 from ray.data._internal.logical.operators.read_operator import Read
 from ray.data._internal.logical.operators.write_operator import Write
-from ray.data._internal.logical.rules.operator_fusion import OperatorFusionRule
+from ray.data._internal.logical.rules.operator_fusion import FuseOperators
 from ray.data.block import Block, BlockAccessor, DataBatch
 from ray.data.datasource.datasink import Datasink
 from ray.types import ObjectRef
@@ -180,7 +180,7 @@ class InsertCheckpointingLayerRule(Rule):
     def dependents(cls) -> List[Type[Rule]]:
         # To ensure correctness, operator fusion can only occur after we've inserted
         # the checkpoint layer.
-        return [OperatorFusionRule]
+        return [FuseOperators]
 
     def _insert_write_checkpoint(
         self, plan: Plan, config: CheckpointConfig
