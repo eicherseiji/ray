@@ -379,7 +379,9 @@ class TestActorPoolAutoscaling:
             _inputs_complete=False,
             internal_queue_size=MagicMock(return_value=1),
         )
-        op_state = MagicMock(spec=OpState, num_queued=MagicMock(return_value=10))
+        op_state = MagicMock(
+            spec=OpState, total_input_enqueued=MagicMock(return_value=10)
+        )
         op_scheduling_status = MagicMock(under_resource_limits=True)
         op_state._scheduling_status = op_scheduling_status
 
@@ -492,7 +494,9 @@ class TestActorPoolAutoscaling:
             _inputs_complete=False,
             internal_queue_size=MagicMock(return_value=1),
         )
-        op_state = MagicMock(spec=OpState, num_queued=MagicMock(return_value=100))
+        op_state = MagicMock(
+            spec=OpState, total_input_enqueued=MagicMock(return_value=100)
+        )
         op_scheduling_status = MagicMock(under_resource_limits=True)
         op_state._scheduling_status = op_scheduling_status
 
@@ -610,7 +614,9 @@ class TestActorPoolAutoscaling:
             _inputs_complete=False,
             internal_queue_size=MagicMock(return_value=1),
         )
-        op_state = MagicMock(spec=OpState, num_queued=MagicMock(return_value=10))
+        op_state = MagicMock(
+            spec=OpState, total_input_enqueued=MagicMock(return_value=10)
+        )
         op_scheduling_status = MagicMock(under_resource_limits=True)
         op_state._scheduling_status = op_scheduling_status
 
@@ -666,7 +672,9 @@ class TestActorPoolAutoscaling:
             _inputs_complete=False,
             internal_queue_size=MagicMock(return_value=1),
         )
-        op_state = MagicMock(spec=OpState, num_queued=MagicMock(return_value=10))
+        op_state = MagicMock(
+            spec=OpState, total_input_enqueued=MagicMock(return_value=10)
+        )
         op_scheduling_status = MagicMock(under_resource_limits=True)
         op_state._scheduling_status = op_scheduling_status
 
@@ -744,7 +752,7 @@ class TestActorPoolAutoscaling:
 
         # Shouldn't scale up since the op has enough free slots for
         # the existing inputs.
-        with patch(op_state, "num_queued", 5):
+        with patch(op_state, "total_input_enqueued", 5):
             assert_should_scale_up(False)
 
         # Shouldn't scale up when there are pending actors.
