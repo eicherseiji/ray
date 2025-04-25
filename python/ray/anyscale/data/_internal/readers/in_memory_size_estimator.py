@@ -1,10 +1,14 @@
 import abc
 from typing import TYPE_CHECKING, Optional
 
+import numpy as np
 from pyarrow.fs import FileSystem
 
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
-from ray.data.block import BlockAccessor
+from ray.data.block import BlockAccessor, BlockColumn
 
 if TYPE_CHECKING:
     from .file_reader import FileReader
@@ -12,26 +16,18 @@ if TYPE_CHECKING:
 
 class InMemorySizeEstimator(abc.ABC):
     @abc.abstractmethod
-    def estimate_in_memory_size(
-        self,
-        path: str,
-        file_size: int,
-        *,
-        filesystem: FileSystem,
-    ) -> int:
-        """Estimate the in-memory size of the data at the given path.
+    def estimate_in_memory_sizes(self, manifest: FileManifest) -> np.array:
+        """Estimate the in-memory sizes of the paths in the given manifest.
 
-        This `ListFiles` operator uses this method to ensure that each read task
-        receives an appropriate amount of data. To ensure that file listing is
-        efficient, this method must be cheap to call, on average.
+        Some `FilePartitioner` implementations use this method to ensure that each
+        read task receives an appropriate amount of data. To ensure that file listing
+        is efficient, this method must be cheap to call, on average.
 
         Args:
-            path: The path to the file.
-            file_size: The on-disk size of the file in bytes.
-            filesystem: The filesystem to read from.
+            manifest: A manifest containing the paths and on-disk sizes of the files.
 
         Returns:
-            The estimated in-memory size of the data in bytes.
+            The estimated in-memory sizes of the data in bytes.
         """
 
 
@@ -48,38 +44,33 @@ class SamplingInMemorySizeEstimator(InMemorySizeEstimator):
     ratios (e.g. videos).
     """
 
-    def __init__(self, reader: "FileReader"):
+    def __init__(self, reader: "FileReader", *, filesystem: FileSystem):
         self._reader = reader
+        self._filesystem = filesystem
+
         self._encoding_ratio = None
 
-    def estimate_in_memory_size(
-        self,
-        path: str,
-        file_size: int,
-        *,
-        filesystem: FileSystem,
-    ) -> int:
-        assert file_size >= 0
+    def estimate_in_memory_sizes(self, manifest: FileManifest) -> BlockColumn:
+        assert np.all(manifest.file_sizes >= 0)
 
-        if self._encoding_ratio is None:
-            # Estimating the encoding ratio can be expensive since it requires
-            # reading the file. So, we only estimate the encoding ratio if we don't
-            # already have one.
-            self._encoding_ratio = self._estimate_encoding_ratio(
-                path, file_size, filesystem
-            )
+        for path, file_size in zip(manifest.paths, manifest.file_sizes):
+            if self._encoding_ratio is None:
+                # Estimating the encoding ratio can be expensive since it requires
+                # reading the file. So, we only estimate the encoding ratio if we don't
+                # already have one.
+                self._encoding_ratio = self._estimate_encoding_ratio(path, file_size)
+                break
 
         if self._encoding_ratio is None:
             # If we couldn't estimate the encoding ratio, assume a 1:1 encoding ratio.
-            return file_size
+            return manifest.file_sizes
         else:
-            return file_size * self._encoding_ratio
+            return manifest.file_sizes * self._encoding_ratio
 
     def _estimate_encoding_ratio(
         self,
         path: str,
         file_size: int,
-        filesystem: FileSystem,
     ) -> Optional[float]:
         """
 
@@ -91,7 +82,8 @@ class SamplingInMemorySizeEstimator(InMemorySizeEstimator):
         if not file_size:
             return None
 
-        batches = self._reader.read_paths([path], filesystem=filesystem)
+        manifest = FileManifest.from_paths_and_sizes([path], [file_size])
+        batches = self._reader.read_files(manifest, filesystem=self._filesystem)
 
         try:
             first_batch = next(batches)

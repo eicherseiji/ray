@@ -13,6 +13,9 @@ from ray._private.ray_constants import env_bool
 from ray._private.utils import INT32_MAX
 from ray.anyscale.data._internal.logical.operators.list_files_operator import ListFiles
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
+from ray.anyscale.data._internal.partitioners import (
+    RoundRobinPartitioner,
+)
 from ray.anyscale.data._internal.planner.file_indexer import (
     NonSamplingFileIndexer,
 )
@@ -174,7 +177,7 @@ def read_parquet(
         partitioning=partitioning,
     )
     if PARQUET_SAMPLING_ENABLED:
-        in_memory_size_estimator = SamplingInMemorySizeEstimator(reader)
+        in_memory_size_estimator = None
     else:
         in_memory_size_estimator = ParquetInMemorySizeEstimator()
     return read_files(
@@ -734,15 +737,17 @@ def read_files(
     if ray_remote_args is None:
         ray_remote_args = {}
 
-    if in_memory_size_estimator is None:
-        in_memory_size_estimator = SamplingInMemorySizeEstimator(reader)
-
     _validate_shuffle_arg(shuffle)
 
     paths, filesystem = _resolve_paths_and_filesystem(paths, filesystem)
     filesystem = RetryingPyFileSystem.wrap(
         filesystem, retryable_errors=DataContext.get_current().retried_io_errors
     )
+
+    if in_memory_size_estimator is None:
+        in_memory_size_estimator = SamplingInMemorySizeEstimator(
+            reader, filesystem=filesystem
+        )
 
     # NOTE: We're using shuffle config factory to fix the seed at the planning
     #       time, rather than at the composition time (for backward-compatibility)
@@ -754,10 +759,20 @@ def read_files(
         )
 
     file_indexer = NonSamplingFileIndexer(ignore_missing_paths=ignore_missing_paths)
+    file_partitioner = RoundRobinPartitioner(
+        in_memory_size_estimator=in_memory_size_estimator,
+        min_bucket_size=DataContext.get_current().min_read_partition_size,
+        max_bucket_size=DataContext.get_current().max_read_partition_size,
+        # We default to `read_op_min_num_blocks` buckets for consistency with the OSS
+        # implementation.
+        # TODO: Replace `read_op_min_num_blocks` with the maximum number of CPUs in the
+        # cluster once we have access to that information.
+        num_buckets=DataContext.get_current().read_op_min_num_blocks,
+    )
     list_files_op = ListFiles(
         paths=paths,
         file_indexer=file_indexer,
-        in_memory_size_estimator=in_memory_size_estimator,
+        file_partitioner=file_partitioner,
         filesystem=filesystem,
         file_extensions=file_extensions,
         partition_filter=partition_filter,

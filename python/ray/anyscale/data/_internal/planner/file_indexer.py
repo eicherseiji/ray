@@ -1,11 +1,16 @@
 import abc
 import logging
-from typing import Iterable, Optional, Tuple
+from typing import Callable, Iterable, Optional, Tuple
 
 import pyarrow as pa
-from pyarrow.fs import FileSelector, FileType
+from pyarrow.fs import FileSelector, FileSystem, FileType
 
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
+from ray.data.block import BlockAccessor, BlockColumn
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
+from ray.data.datasource.path_util import _resolve_paths_and_filesystem
 
 logger = logging.getLogger(__name__)
 
@@ -13,17 +18,17 @@ logger = logging.getLogger(__name__)
 class FileIndexer(abc.ABC):
     @abc.abstractmethod
     def list_files(
-        self, path: str, filesystem: pa.fs.FileSystem
-    ) -> Iterable[Tuple[str, Optional[int]]]:
+        self, paths: "BlockColumn", *, filesystem: "FileSystem"
+    ) -> Iterable[FileManifest]:
         """List files and their on-disk sizes for the given path.
 
         Args:
-            path: A path pointing to a file or directory.
+            paths: A column of paths pointing to files or directories.
             filesystem: A PyArrow filesystem object.
 
         Returns:
-            An iterator of tuples, where each tuple contains a file path and the on-disk
-            size of the file in bytes.
+            An iterator of `FileManifest` objects, each of which contains a file path
+            and the on-disk size of the file in bytes.
         """
         ...
 
@@ -36,13 +41,35 @@ class NonSamplingFileIndexer(FileIndexer):
     directory.
     """
 
+    # This number was chosen because it's the maximum number of paths returned by S3
+    # per page when listing a single directory.
+    _MAX_PATHS_PER_LIST_FILES_OUTPUT = 1000
+
     def __init__(self, *, ignore_missing_paths: bool):
         self._ignore_missing_paths = ignore_missing_paths
 
     def list_files(
-        self, path: str, filesystem: pa.fs.FileSystem
-    ) -> Iterable[Tuple[str, Optional[int]]]:
-        yield from _get_file_infos(path, filesystem, self._ignore_missing_paths)
+        self, paths: "BlockColumn", *, filesystem: "FileSystem"
+    ) -> Iterable[FileManifest]:
+        running_paths = []
+        running_file_sizes = []
+        for input_path in paths.to_pylist():
+            resolved_paths, _ = _resolve_paths_and_filesystem(input_path, filesystem)
+            assert len(resolved_paths) == 1
+            for path, file_size in _get_file_infos(
+                resolved_paths[0], filesystem, self._ignore_missing_paths
+            ):
+                running_paths.append(path)
+                running_file_sizes.append(file_size)
+                if len(running_paths) >= self._MAX_PATHS_PER_LIST_FILES_OUTPUT:
+                    yield FileManifest.from_paths_and_sizes(
+                        running_paths, running_file_sizes
+                    )
+                    running_paths = []
+                    running_file_sizes = []
+
+        if running_paths:
+            yield FileManifest.from_paths_and_sizes(running_paths, running_file_sizes)
 
 
 def _get_file_infos(
@@ -98,3 +125,29 @@ def _expand_directory(
         else:
             assert file_.type == FileType.NotFound
             raise FileNotFoundError(file_.path)
+
+
+# TODO: Maybe push these down to the `FileIndexer` interface so that `FileIndexer`
+#       implementations can more efficiently filter paths.
+def filter_paths(
+    manifest: FileManifest, filter_fn: Callable[[str], bool]
+) -> FileManifest:
+    """Return a new manifest with only the paths that match the filter.
+
+    Args:
+        manifest: The manifest to filter.
+        filter_fn: A function that takes a path and returns `True` if the path should be
+            included in the new manifest.
+    """
+    indices = []
+    for i, path in enumerate(manifest.paths):
+        if filter_fn(path):
+            indices.append(i)
+
+    if not indices:
+        # `Table.take` doesn't work if `indices` is empty. So, we explicitly return an
+        # empty manifest.
+        return FileManifest.from_paths_and_sizes([], [])
+    else:
+        filtered_block = BlockAccessor.for_block(manifest.as_block()).take(indices)
+        return FileManifest(filtered_block)

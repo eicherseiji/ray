@@ -2,7 +2,7 @@ import logging
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
-    PATH_COLUMN_NAME,
+    FileManifest,
 )
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
 from ray.data._internal.execution.interfaces import PhysicalOperator
@@ -68,15 +68,12 @@ def plan_read_files_op(
     fs = op.filesystem
     reader = op.reader
 
-    def read_paths(blocks: Iterable[Block], _: TaskContext) -> Iterable[DataBatch]:
-        import pyarrow as pa
-
+    def read_files(blocks: Iterable[Block], _: TaskContext) -> Iterable[DataBatch]:
         for block in blocks:
-            assert isinstance(block, pa.Table), type(block)
-            paths = block[PATH_COLUMN_NAME].to_pylist()
+            file_manifest = FileManifest(block)
             # For some readers, we need to filter the rows in-memory.
-            yield from reader.read_paths(
-                paths,
+            yield from reader.read_files(
+                file_manifest,
                 columns=columns,
                 columns_rename=columns_rename_map,
                 filter_expr=filter_expr,
@@ -85,7 +82,7 @@ def plan_read_files_op(
 
     transform_fns: List[MapTransformFn] = [
         BlocksToBatchesMapTransformFn(batch_format=None),
-        BatchMapTransformFn(read_paths),
+        BatchMapTransformFn(read_files),
         BuildOutputBlocksMapTransformFn.for_batches(),
     ]
 

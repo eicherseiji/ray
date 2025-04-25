@@ -4,11 +4,15 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
 import pyarrow
 import pyarrow as pa
 import pyarrow.dataset
 from pyarrow.parquet import ParquetFile
 
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
 from ray.data._internal.datasource.parquet_datasource import (
     PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT,
     ParquetDatasource,
@@ -110,9 +114,9 @@ class ParquetReader(FileReader, SupportsRowCounting):
         self._should_preserve_order = ctx.execution_options.preserve_order
         self._retried_io_errors = ctx.retried_io_errors
 
-    def read_paths(
+    def read_files(
         self,
-        paths: List[str],
+        file_manifest: FileManifest,
         *,
         filter_expr: Optional[pyarrow.dataset.Expression] = None,
         columns: Optional[List[str]] = None,
@@ -125,6 +129,7 @@ class ParquetReader(FileReader, SupportsRowCounting):
                 f"Invalid keys: {set(columns_rename.keys()) - set(columns)}"
             )
 
+        paths = list(file_manifest.paths)
         for path in paths:
             if not _has_file_extension(
                 path, ParquetDatasource._FUTURE_FILE_EXTENSIONS
@@ -341,10 +346,8 @@ class ParquetReader(FileReader, SupportsRowCounting):
 
 
 class ParquetInMemorySizeEstimator(InMemorySizeEstimator):
-    def estimate_in_memory_size(
-        self, path: str, file_size: int, *, filesystem: "pyarrow.fs.FileSystem"
-    ) -> int:
-        # Reading a batch of Parquet data can be slow, even if you try to read a
-        # single row. To avoid slow startup times, just return a constant value. For
-        # more information, see https://github.com/anyscale/rayturbo/issues/924.
-        return PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT * file_size
+    def estimate_in_memory_sizes(self, manifest: FileManifest) -> np.array:
+        # Reading a batch of Parquet data can be slow, even if you try to read a single
+        # row. To avoid slow startup times, just return a constant value. For more
+        # information, see https://github.com/anyscale/rayturbo/issues/924.
+        return PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT * manifest.file_sizes

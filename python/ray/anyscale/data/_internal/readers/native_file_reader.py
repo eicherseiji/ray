@@ -5,6 +5,9 @@ from typing import Any, Dict, Iterable, List, Optional
 import pandas as pd
 import pyarrow
 
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
 from ray.data._internal.util import (
     RetryingPyFileSystem,
     iterate_with_retry,
@@ -24,7 +27,7 @@ class NativeFileReader(FileReader):
     data from a stream of bytes and return data batches.
     """
 
-    _NUM_THREADS_PER_TASK = 0
+    _NUM_THREADS_PER_TASK = 8
 
     def __init__(
         self,
@@ -49,15 +52,16 @@ class NativeFileReader(FileReader):
     def read_stream(self, file: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
         ...
 
-    def read_paths(
+    def read_files(
         self,
-        paths: List[str],
+        file_manifest: FileManifest,
         *,
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
         filter_expr: Optional["pyarrow.dataset.Expression"] = None,
         filesystem,
     ) -> Iterable[DataBatch]:
+        paths = file_manifest.paths
         num_threads = self._NUM_THREADS_PER_TASK
         if len(paths) < num_threads:
             num_threads = len(paths)

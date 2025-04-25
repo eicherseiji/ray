@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+import numpy as np
 import pyarrow as pa
 import pytest
 
@@ -7,9 +8,11 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FILE_SIZE_COLUMN_NAME,
     PATH_COLUMN_NAME,
 )
+from ray.anyscale.data._internal.partitioners import (
+    RoundRobinPartitioner,
+)
 from ray.anyscale.data._internal.planner.plan_list_files_op import partition_files
 from ray.anyscale.data._internal.readers import InMemorySizeEstimator
-from ray.data.block import BlockAccessor
 
 
 @pytest.mark.parametrize(
@@ -42,11 +45,9 @@ from ray.data.block import BlockAccessor
         [7, [["1", "3", "5"], ["2", "4", "6"], ["7"]]],
     ),
 )
-def test_partition_files_produces_correct_partitions(num_paths, expected_partitions):
-    num_buckets = 2
-    min_bucket_size = 1
-    max_bucket_size = 3
-
+def test_round_robin_partitioner_produces_correct_partitions(
+    num_paths, expected_partitions
+):
     input_table = pa.Table.from_pydict(
         {
             PATH_COLUMN_NAME: [str(i) for i in range(1, num_paths + 1)],
@@ -55,18 +56,21 @@ def test_partition_files_produces_correct_partitions(num_paths, expected_partiti
     )
 
     class StubInMemorySizeEstimator(InMemorySizeEstimator):
-        def estimate_in_memory_size(
-            self, path: str, file_size: int, *, filesystem
-        ) -> int:
-            return 1
+        def estimate_in_memory_sizes(
+            self,
+            manifest,
+        ) -> np.ndarray:
+            return np.ones(len(manifest))
 
     outputs = partition_files(
-        BlockAccessor.for_block(input_table).iter_rows(public_row_format=True),
+        iter([input_table]),
         MagicMock(),
-        num_buckets=num_buckets,
-        min_bucket_size=min_bucket_size,
-        max_bucket_size=max_bucket_size,
-        in_memory_size_estimator=StubInMemorySizeEstimator(),
+        partitioner=RoundRobinPartitioner(
+            in_memory_size_estimator=StubInMemorySizeEstimator(),
+            num_buckets=2,
+            min_bucket_size=1,
+            max_bucket_size=3,
+        ),
         filesystem=MagicMock(),
         shuffle_config=None,
     )
@@ -75,8 +79,8 @@ def test_partition_files_produces_correct_partitions(num_paths, expected_partiti
     assert partitions == expected_partitions
 
 
-def test_partition_files_with_no_file_sizes():
-    # This tests the case where we don't have file sizes. This can happen if you use
+def test_round_robin_partitioner_with_no_size_estimates():
+    # This tests the case where we don't have size estimates. This can happen if you use
     # HTTPFileSystem.
     input_table = pa.Table.from_pydict(
         {
@@ -86,25 +90,31 @@ def test_partition_files_with_no_file_sizes():
     )
 
     class StubInMemorySizeEstimator(InMemorySizeEstimator):
-        def estimate_in_memory_size(
-            self, path: str, file_size: int, *, filesystem
-        ) -> int:
-            return None
+        def estimate_in_memory_sizes(
+            self,
+            manifest,
+        ) -> np.ndarray:
+            return manifest.file_sizes
 
     outputs = partition_files(
-        BlockAccessor.for_block(input_table).iter_rows(public_row_format=False),
+        iter([input_table]),
         MagicMock(),
-        num_buckets=1,
-        min_bucket_size=1,
-        max_bucket_size=1,
-        in_memory_size_estimator=StubInMemorySizeEstimator(),
+        partitioner=RoundRobinPartitioner(
+            in_memory_size_estimator=StubInMemorySizeEstimator(),
+            num_buckets=2,
+            min_bucket_size=1,
+            max_bucket_size=1,
+        ),
         filesystem=MagicMock(),
         shuffle_config=None,
     )
     partitions = [output[PATH_COLUMN_NAME].to_pylist() for output in outputs]
 
-    # All paths should be in the same partition because we don't have file sizes.
-    assert partitions == [["path0", "path1", "path2"]]
+    # If in-memory size estimates aren't available, the partitioner should round-robin
+    # the paths across the buckets, disregarding the bucket size limits.
+    assert len(partitions) == 2
+    assert partitions[0] == ["path0", "path2"]
+    assert partitions[1] == ["path1"]
 
 
 if __name__ == "__main__":

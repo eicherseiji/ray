@@ -1,5 +1,10 @@
 from typing import TYPE_CHECKING, Iterable, List, Optional
 
+import numpy as np
+
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
 from ray.data.block import DataBatch
 
 from .in_memory_size_estimator import InMemorySizeEstimator
@@ -26,8 +31,6 @@ class BinaryReader(NativeFileReader, SupportsRowCounting):
 
 
 class BinaryInMemorySizeEstimator(InMemorySizeEstimator):
-    def estimate_in_memory_size(
-        self, path: str, file_size: int, *, filesystem: "pyarrow.fs.FileSystem"
-    ) -> int:
+    def estimate_in_memory_sizes(self, manifest: FileManifest) -> np.array:
         # NOTE: This method assumes that the file isn't compressed.
-        return file_size
+        return manifest.file_sizes

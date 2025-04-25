@@ -1,6 +1,9 @@
 import abc
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
 
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
 from ray.data.block import DataBatch
 
 if TYPE_CHECKING:
@@ -17,9 +20,9 @@ class FileReader(abc.ABC):
     """
 
     @abc.abstractmethod
-    def read_paths(
+    def read_files(
         self,
-        paths: List[str],
+        file_manifest: FileManifest,
         *,
         filter_expr: "pyarrow.dataset.Expression",
         columns: Optional[List[str]],
@@ -29,7 +32,8 @@ class FileReader(abc.ABC):
         """Read batches of data from the given file paths.
 
         Args:
-            paths: A list of file paths to read.
+            file_manifest: A manifest containing the paths and on-disk sizes of the
+                files.
             filter_expr: pyarrow.dataset.Expression for predicate pushdown.
             columns: The columns that will be read. If None, all columns will be read.
             filesystem: The filesystem to read from.
