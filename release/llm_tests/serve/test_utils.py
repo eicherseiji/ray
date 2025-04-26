@@ -181,11 +181,10 @@ def get_applications(serve_config_file: str) -> List[Any]:
     return loaded_llm_config["applications"]
 
 
-def get_llm_configs(serve_config_file: str) -> List[Any]:
-    """Get the llm_configs from the serve config file."""
-    with open(serve_config_file, "r") as f:
-        loaded_llm_config = yaml.safe_load(f)
-    return loaded_llm_config["args"]["llm_configs"]
+def get_first_llm_config(applications: List[Dict]) -> List[Any]:
+    """Get the first llm_config from serve config file."""
+
+    return applications[0]["args"]["llm_configs"][0]
 
 
 def setup_client_env_vars(api_url: str, api_token: Optional[str] = None):
