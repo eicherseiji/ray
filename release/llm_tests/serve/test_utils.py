@@ -29,6 +29,7 @@ SECRET_NAME = "llm_release_test_hf_token"
 S3_BUCKET = "rayllm-ci-results"
 S3_PREFIX = "vllm_perf_results"
 
+
 def check_service_state(
     service_name: str, expected_state: ServiceState, cloud: Optional[str] = None
 ):

@@ -22,7 +22,7 @@ from test_utils import (
     get_python_version_from_image,
     append_python_version_from_image,
     get_s3_storage_path,
-    get_first_llm_config
+    get_first_llm_config,
 )
 
 
@@ -33,6 +33,7 @@ logging.basicConfig(level=logging.INFO)
 CLOUD = "serve_release_tests_cloud"
 JOB_NAME = "rayllm_release_test_vllm_perf"
 JOB_TIMEOUT_S = 1800
+
 
 @click.command()
 @click.option("--image-uri", type=str, default=None)
@@ -55,7 +56,7 @@ def main(
 
     if run_perf_profiler:
         llm_config = get_first_llm_config(applications)
-        submit_benchmark_vllm_job(image_uri, llm_config, env_vars['HF_TOKEN'])
+        submit_benchmark_vllm_job(image_uri, llm_config, env_vars["HF_TOKEN"])
 
     with start_service(
         service_name="llm_serving_release_test",

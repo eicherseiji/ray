@@ -125,6 +125,7 @@ def start_vllm_process(vllm_cli_args):
 
     return server_process
 
+
 def run_vllm_benchmark(vllm_cli_args):
     stop_event = threading.Event()
     results = {}
@@ -257,7 +258,7 @@ def main(pargs):
         "cloud_name": "",
         "service_name": "",
         "py_version": pargs.py_version,
-        "tag": f"{llm_config['accelerator_type']}-TP{llm_config['engine_kwargs']['tensor_parallel_size']}"
+        "tag": f"{llm_config['accelerator_type']}-TP{llm_config['engine_kwargs']['tensor_parallel_size']}",
     }
 
     if results:
