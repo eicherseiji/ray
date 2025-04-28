@@ -139,6 +139,51 @@ def test_multi_node_tcp_channel(ray_start_cluster):
     assert num_iterations == 50
 
 
+def test_multiple_router_on_same_node(ray_start_regular):
+    async def main():
+        @ray.remote
+        class AsyncActor:
+            async def run_0(self, dealer_channel):
+                next_message = 0
+                while True:
+                    await dealer_channel.async_write(next_message)
+                    next_message = await dealer_channel.async_read()
+
+            async def run_1(self, dealer_channel):
+                next_message = 0
+                while True:
+                    await dealer_channel.async_write(next_message)
+                    next_message = await dealer_channel.async_read()
+
+        actor = AsyncActor.remote()
+        router_channel_0 = RouterChannel(_asyncio=True)
+        router_channel_1 = RouterChannel(_asyncio=True)
+        dealer_channel_0 = router_channel_0.create_dealer(actor, _asyncio=True)
+        dealer_channel_1 = router_channel_1.create_dealer(actor, _asyncio=True)
+        actor.run_0.remote(dealer_channel_0)
+        actor.run_1.remote(dealer_channel_1)
+
+        start_time = time.time()
+        num_iterations = 0
+        while num_iterations < 50 and time.time() - start_time < 1:
+            message, actor = await router_channel_0.async_read()
+            await router_channel_0.async_write(actor, message)
+            num_iterations += 1
+        assert time.time() - start_time < 1
+        assert num_iterations == 50
+
+        start_time = time.time()
+        num_iterations = 0
+        while num_iterations < 50 and time.time() - start_time < 1:
+            message, actor = await router_channel_1.async_read()
+            await router_channel_1.async_write(actor, message)
+            num_iterations += 1
+        assert time.time() - start_time < 1
+        assert num_iterations == 50
+
+    get_or_create_event_loop().run_until_complete(main())
+
+
 if __name__ == "__main__":
     if os.environ.get("PARALLEL_CI"):
         sys.exit(pytest.main(["-n", "auto", "--boxed", "-vs", __file__]))

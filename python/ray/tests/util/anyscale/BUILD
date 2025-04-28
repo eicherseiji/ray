@@ -1,9 +1,9 @@
 load("@rules_python//python:defs.bzl", "py_test")
 
 py_test(
-    name = "zmq_channel_test",
+    name = "test_zmq_channel",
     size = "small",
-    srcs = ["zmq_channel_test.py"],
+    srcs = ["test_zmq_channel.py"],
     tags = [
         "exclusive",
         "no_main",

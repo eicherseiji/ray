@@ -5,6 +5,7 @@ from ray.util.annotations import PublicAPI
 import zmq.asyncio
 import msgpack
 import logging
+import uuid
 
 
 logger = logging.getLogger(__name__)
@@ -106,9 +107,10 @@ class RouterChannel:
 
         self._local_socket = self._context.socket(zmq.ROUTER)
         setup_socket(self._local_socket)
-        # TODO: Account for multiple routers on the same node
-        # and more ray sessions started after
-        self._local_address = "ipc:///tmp/ray/session_latest/sockets/zmq_ipc"
+
+        self._local_address = (
+            f"ipc:///tmp/ray/session_latest/sockets/zmq_ipc{uuid.uuid1()}"
+        )
         self._local_socket.bind(self._local_address)
 
         self._poller = zmq.asyncio.Poller() if _asyncio else zmq.Poller()
