@@ -144,7 +144,7 @@ def submit_benchmark_vllm_job(image_uri: str, llm_config: str, hf_token: str):
 
     job_config = anyscale.job.JobConfig(
         name=job_name,
-        entrypoint=f"python benchmark_vllm.py --llm-config {llm_config} --py-version {py_version} --remote-result-path {s3_storage_path} --hf-token {hf_token}",
+        entrypoint=f"python benchmark/benchmark_vllm.py --llm-config {llm_config} --py-version {py_version} --remote-result-path {s3_storage_path}",
         working_dir=working_dir,
         cloud=CLOUD,
         compute_config=anyscale.compute_config.ComputeConfig(
@@ -154,9 +154,11 @@ def submit_benchmark_vllm_job(image_uri: str, llm_config: str, hf_token: str):
             worker_nodes=[],  # To force running on head node only.
         ),
         image_uri=image_uri,
+        requirements="llm-requirements.txt",
         env_vars={
             "BUILDKITE_BRANCH": os.environ.get("BUILDKITE_BRANCH", ""),
             "BUILDKITE_COMMIT": os.environ.get("BUILDKITE_COMMIT", ""),
+            "HF_TOKEN": hf_token,
         },
         max_retries=0,
     )

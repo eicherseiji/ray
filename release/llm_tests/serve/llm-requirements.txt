@@ -1,0 +1,20 @@
+# Keep this in sync with the definition in setup.py for ray[llm]
+vllm>=0.8.2
+# For json mode
+jsonref>=1.1.0
+jsonschema
+ninja
+# async-timeout is a backport of asyncio.timeout for python < 3.11
+async-timeout; python_version < '3.11'
+typer
+pytest
+aiohttp
+pillow
+httpx>=0.27.2
+pynvml>=12.0.0
+xgrammar>=0.1.11, !=0.1.13, !=0.1.12
+jupytext>1.13.6
+sphinx==6.2.1
+gevent
+locust
+orjson
