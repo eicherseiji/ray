@@ -25,8 +25,10 @@ from typing import (
     Union,
 )
 
+from fastapi import Request
 import starlette.responses
 from anyio import to_thread
+from starlette.applications import Starlette
 from starlette.types import ASGIApp, Message
 
 import ray
@@ -1139,6 +1141,8 @@ class UserMethodInfo:
 class UserCallableWrapper:
     """Wraps a user-provided callable that is used to handle requests to a replica."""
 
+    service_unavailable_exceptions = (BackPressureError, DeploymentUnavailableError)
+
     def __init__(
         self,
         deployment_def: Callable,
@@ -1383,6 +1387,17 @@ class UserCallableWrapper:
             )
 
             if isinstance(self._callable, ASGIAppReplicaWrapper):
+                app: Starlette = self._callable.app
+                # The reason we need to do this is because BackPressureError is a serve internal exception
+                # and FastAPI doesn't know how to handle it, so it treats it as a 500 error.
+                # With same reasoning, we are not handling TimeoutError because it's a generic exception
+                # the FastAPI knows how to handle. See https://www.starlette.io/exceptions/
+                def handle_exception(_: Request, exc: Exception):
+                    return self.handle_exception(exc)
+
+                for exc in self.service_unavailable_exceptions:
+                    app.add_exception_handler(exc, handle_exception)
+
                 await self._callable._run_asgi_lifespan_startup()
 
         self._user_health_check = getattr(self._callable, HEALTH_CHECK_METHOD, None)
@@ -1642,9 +1657,6 @@ class UserCallableWrapper:
 
             return final_result
         except Exception as e:
-            unavailable_error = isinstance(
-                e, (BackPressureError, DeploymentUnavailableError)
-            )
             if (
                 request_metadata.is_http_request
                 and asgi_args is not None
@@ -1652,13 +1664,7 @@ class UserCallableWrapper:
                 # If the callable is an ASGI app, it already sent a 500 status response.
                 and not user_method_info.is_asgi_app
             ):
-                response = (
-                    starlette.responses.Response(e.message, status_code=503)
-                    if unavailable_error
-                    else starlette.responses.Response(
-                        "Internal Server Error", status_code=500
-                    )
-                )
+                response = self.handle_exception(e)
                 await self._send_user_result_over_asgi(response, asgi_args)
 
             if receive_task is not None and not receive_task.done():
@@ -1677,6 +1683,14 @@ class UserCallableWrapper:
                     receive_task.cancel()
 
             raise
+
+    def handle_exception(self, exc: Exception):
+        if isinstance(exc, self.service_unavailable_exceptions):
+            return starlette.responses.Response(exc.message, status_code=503)
+        else:
+            return starlette.responses.Response(
+                "Internal Server Error", status_code=500
+            )
 
     @_run_on_user_code_event_loop
     async def call_destructor(self):
