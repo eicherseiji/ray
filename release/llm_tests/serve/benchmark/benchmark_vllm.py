@@ -1,21 +1,22 @@
 # There is a dead-lock issue that arises due to gevent's monkey-patching
 # https://github.com/ipython/ipython/issues/11730
 # Fix: We do this import first before anything else
+# Thus the # noqa tags are needed below
 import gevent.monkey
 
 gevent.monkey.patch_all()
 
-import argparse
-import json
-import logging
-import os
-import subprocess
-import threading
-import time
-from datetime import datetime
+import argparse  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import subprocess  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from datetime import datetime  # noqa: E402
 
-from bm import run_bm
-from common import (
+from bm import run_bm  # noqa: E402
+from common import (  # noqa: E402
     read_yaml,
     write_to_s3,
 )

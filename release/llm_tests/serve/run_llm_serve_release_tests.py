@@ -56,7 +56,7 @@ def main(
 
     if run_perf_profiler:
         llm_config = get_first_llm_config(applications)
-        submit_benchmark_vllm_job(image_uri, llm_config, env_vars["HF_TOKEN"])
+        submit_benchmark_vllm_job(image_uri, llm_config, env_vars["HUGGING_FACE_HUB_TOKEN"])
 
     with start_service(
         service_name="llm_serving_release_test",
