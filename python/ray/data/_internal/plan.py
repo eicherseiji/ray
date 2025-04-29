@@ -134,7 +134,7 @@ class ExecutionPlan:
             ):
                 """Traverse (DFS) the LogicalPlan DAG and
                 return a string representation of the operators."""
-                if not op.input_dependencies or op.is_read():
+                if not op.input_dependencies or op.is_read_op():
                     return curr_str, depth
 
                 curr_max_depth = depth
@@ -168,7 +168,8 @@ class ExecutionPlan:
                 # This plan hasn't executed any operators.
                 has_n_ary_operator = False
                 dag = self._logical_plan.dag
-                while not dag.is_read() and dag.input_dependencies:
+
+                while not dag.is_read_op() and dag.input_dependencies:
                     if len(dag.input_dependencies) > 1:
                         has_n_ary_operator = True
                         break
@@ -180,7 +181,7 @@ class ExecutionPlan:
                     schema = None
                     count = None
                 else:
-                    assert dag.is_read() or not dag.input_dependencies, dag
+                    assert dag.is_read_op() or not dag.input_dependencies, dag
                     plan = ExecutionPlan(
                         DatasetStats(metadata={}, parent=None),
                         self._context,
@@ -592,7 +593,8 @@ class ExecutionPlan:
         the LogicalPlan is used."""
         if root_op is None:
             root_op = self._logical_plan.dag
-        return root_op.is_read()
+
+        return root_op.is_read_op()
 
     def has_computed_output(self) -> bool:
         """Whether this plan has a computed snapshot for the final operator, i.e. for

@@ -83,6 +83,6 @@ class LogicalOperator(Operator):
         """
         return True
 
-    def is_read(self) -> bool:
-        """Returns whether this operator is a read operator."""
+    @classmethod
+    def is_read_op(cls):
         return False
