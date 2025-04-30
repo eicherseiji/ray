@@ -57,7 +57,7 @@ class ReadFiles(AbstractMap):
         else:
             self.filter_expr = filter_expr
 
-    def is_read(self) -> bool:
+    def is_read_op(self) -> bool:
         return True
 
     def _create_filter_expr(self, filter_expr_strs: List[str]) -> "pd.Expression":

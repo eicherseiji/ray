@@ -18,6 +18,9 @@ from ray.anyscale.data._internal.logical.rules import (
     PushdownCountFiles,
     RedundantMapTransformPruning,
 )
+from ray.anyscale.data._internal.logical.rules.combine_repartitions import (
+    CombineRepartitions,
+)
 from ray.anyscale.data._internal.logical.rules.configure_map_task_memory import (
     ConfigureMapTaskMemoryWithProfiling,
 )
@@ -98,6 +101,7 @@ def apply_anyscale_patches():
     logical_ruleset.add(PredicatePushdown)
     logical_ruleset.add(PushdownCountFiles)
     logical_ruleset.add(ProjectionPushdown)
+    logical_ruleset.add(CombineRepartitions)
 
     physical_ruleset = get_physical_ruleset()
     if ANYSCALE_LOCAL_LIMIT_MAP_OPERATOR_ENABLED:
