@@ -11,6 +11,7 @@ import ray
 from ray import serve
 from ray._private.test_utils import wait_for_condition
 from ray._private.usage.usage_lib import get_extra_usage_tags_to_report
+from ray.anyscale.serve._private.constants import ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT
 from ray.serve._private.constants import SERVE_MULTIPLEXED_MODEL_ID
 from ray.serve._private.test_utils import (
     check_apps_running,
@@ -19,8 +20,6 @@ from ray.serve._private.test_utils import (
 from ray.serve._private.usage import ServeUsageTag
 from ray.serve.context import _get_global_client
 from ray.serve.schema import ApplicationStatus, ServeDeploySchema
-
-from ray.anyscale.serve._private.constants import ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT
 
 
 def test_fastapi_detected(manage_ray_with_telemetry):
