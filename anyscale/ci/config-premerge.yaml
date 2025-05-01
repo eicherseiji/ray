@@ -6,17 +6,16 @@ ci_work_repo: 830883877497.dkr.ecr.us-west-2.amazonaws.com/anyscale/ci-temp
 forge_prefix: cr.ray.io/rayproject/
 builder_queues:
   builder: rayturbo_builder_queue
-  builder-arm64: "~"
+  builder-arm64: rayturbo_builder_queue_arm64
   builder-windows: "~"
 runner_queues:
   default: rayturbo_small_queue
   small: rayturbo_small_queue
   medium: rayturbo_medium_queue
   large: rayturbo_large_queue
+  medium-arm64: rayturbo_medium_queue_arm64
   gpu: "~"
   gpu-large: "~"
-  trainium: "~"
-  medium-arm64: "~"
   windows: "~"
   macos: "~"
   macos-arm64: "~"
@@ -39,7 +38,6 @@ skip_tags:
   - disabled
   - skip-on-premerge
   - java
-  - arm64
   - oss
   - gpu
   # RLlib tests are too flaky; and not much activity on rayturbo.
