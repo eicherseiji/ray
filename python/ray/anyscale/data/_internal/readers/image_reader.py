@@ -12,8 +12,6 @@ from .supports_row_counting import SupportsRowCounting
 
 
 class ImageReader(NativeFileReader, SupportsRowCounting):
-    _NUM_THREADS_PER_TASK = 8
-
     def __init__(
         self,
         size: Optional[Tuple[int, int]] = None,
