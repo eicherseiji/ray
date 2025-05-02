@@ -41,6 +41,9 @@ class DataContextMixin:
         default_factory=_issue_detectors_config_factory
     )
 
+    # Overrides viability of fusion for file reading ops
+    _enable_read_files_fusion_override: Optional[bool] = None
+
     min_read_partition_size: int = DEFAULT_TARGET_MIN_BLOCK_SIZE
     # To amortize overheads associated with launching Ray tasks and using multi-
     # threading, produce multiple blocks in each read task. This doesn't change the

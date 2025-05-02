@@ -100,6 +100,16 @@ def plan_read_files_op(
         name="ReadFiles",
         target_max_block_size=None,
         compute_strategy=op._compute,
-        supports_fusion=True,
+        supports_fusion=(
+            # NOTE: By default fusion of the Read ops is turned off for now
+            #       until we can reliably estimate whether fusing read op
+            #       with subsequent operation will negatively affect parallelism
+            #       level of the either (this would require listing of the dataset
+            #       to be performed at the planning phase to accurately estimate
+            #       parallelism level of the reading op)
+            False
+            if data_context._enable_read_files_fusion_override is None
+            else data_context._enable_read_files_fusion_override
+        ),
         ray_remote_args=op._ray_remote_args,
     )

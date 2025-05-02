@@ -7,7 +7,7 @@ import pytest
 
 import ray
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
-from ray.data import Dataset
+from ray.data import Dataset, DataContext
 from ray.data._internal.execution.operators.map_transformer import (
     BatchMapTransformFn,
     BlockMapTransformFn,
@@ -886,16 +886,51 @@ def test_map_rows_transformer_fusion(ray_start_regular_shared):
     assert match_ds_result(ds, [15, 16, 17, 18, 19])
 
 
-def test_read_files_fusion(ray_start_regular_shared):
+@pytest.fixture(scope="module")
+def data_context_override(request):
+    overrides = getattr(request, "param", {})
+
+    ctx = DataContext.get_current()
+    copy = ctx.copy()
+
+    for k, v in overrides.items():
+        assert hasattr(ctx, k), f"Key '{k}' not found in DataContext"
+
+        setattr(ctx, k, v)
+
+    yield ctx
+
+    DataContext._set_current(copy)
+
+
+@pytest.mark.parametrize(
+    "data_context_override",
+    [
+        {"_enable_read_files_fusion_override": True},
+        {"_enable_read_files_fusion_override": False},
+        {"_enable_read_files_fusion_override": None},
+    ],
+    indirect=True,
+)
+def test_read_files_fusion(ray_start_regular_shared, data_context_override):
     """Test that ReadFiles gets fused with the following map,
     but not with the previous ListFiles."""
+
+    if data_context_override._enable_read_files_fusion_override:
+        expected_plan_str = (
+            "TaskPoolMapOperator[ListFiles] -> "
+            "TaskPoolMapOperator[ReadFiles->Map(<lambda>)]"
+        )
+    else:
+        expected_plan_str = (
+            "TaskPoolMapOperator[ListFiles] -> "
+            "TaskPoolMapOperator[ReadFiles] -> "
+            "TaskPoolMapOperator[Map(<lambda>)]"
+        )
+
     ds = ray.data.read_parquet("example://iris.parquet").map(lambda x: x)
-    physical_op = get_execution_plan(ds._logical_plan).dag
-    assert physical_op.name == "ReadFiles->Map(<lambda>)"
-    inputs = physical_op.input_dependencies
-    assert len(inputs) == 1
-    list_files_op = inputs[0]
-    assert list_files_op.name == "ListFiles"
+    dag_str = get_execution_plan(ds._logical_plan).dag.dag_str
+    assert expected_plan_str in dag_str
 
 
 if __name__ == "__main__":
