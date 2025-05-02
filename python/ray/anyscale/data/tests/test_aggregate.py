@@ -8,7 +8,7 @@ import pyarrow as pa
 import ray
 
 from pyarrow import compute as pac
-from ray.anyscale.data._internal.execution.operators.hash_aggregate import (
+from ray.data._internal.execution.operators.hash_aggregate import (
     HashAggregateOperator,
 )
 from ray.core.generated import autoscaler_pb2

@@ -2,7 +2,7 @@ import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from ray.anyscale.data._internal.execution.operators.hash_shuffle import (
+from ray.data._internal.execution.operators.hash_shuffle import (
     HashShufflingOperatorBase,
     StatefulShuffleAggregation,
     BlockTransformer,

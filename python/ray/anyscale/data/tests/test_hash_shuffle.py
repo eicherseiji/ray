@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from typing import Dict
 
-from ray.anyscale.data._internal.execution.operators.hash_shuffle import (
+from ray.data._internal.execution.operators.hash_shuffle import (
     HashShuffleOperator,
     AggregatorPool,
 )

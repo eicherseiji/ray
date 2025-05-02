@@ -26,7 +26,7 @@ def _plan_hash_shuffle_repartition(
     input_physical_op: PhysicalOperator,
 ) -> PhysicalOperator:
     from ray.data._internal.planner.exchange.sort_task_spec import SortKey
-    from ray.anyscale.data._internal.execution.operators.hash_shuffle import (
+    from ray.data._internal.execution.operators.hash_shuffle import (
         HashShuffleOperator,
     )
 
@@ -52,7 +52,7 @@ def _plan_hash_shuffle_aggregate(
     input_physical_op: PhysicalOperator,
 ) -> PhysicalOperator:
     from ray.data._internal.planner.exchange.sort_task_spec import SortKey
-    from ray.anyscale.data._internal.execution.operators.hash_aggregate import (
+    from ray.data._internal.execution.operators.hash_aggregate import (
         HashAggregateOperator,
     )
 
