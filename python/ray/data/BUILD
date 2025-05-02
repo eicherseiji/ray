@@ -54,6 +54,19 @@ py_test_module_list(
     ],
 )
 
+py_test_module_list(
+    size = "small",
+    files = glob(["tests/anyscale/test_*.py"]),
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
 py_test(
     name = "test_formats",
     size = "medium",
@@ -301,6 +314,21 @@ py_test(
     size = "enormous",
     srcs = ["tests/test_all_to_all.py"],
     tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
+    name = "test_join",
+    size = "medium",
+    srcs = ["tests/test_join.py"],
+    tags = [
+        "data_non_parallel",
         "exclusive",
         "team:data",
     ],
