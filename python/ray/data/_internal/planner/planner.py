@@ -1,6 +1,7 @@
 from typing import Callable, Dict, List, Tuple, Type, TypeVar
 
 from ray.data._internal.execution.interfaces import PhysicalOperator
+from ray.data._internal.execution.operators.join import JoinOperator
 from ray.data._internal.logical.interfaces import (
     LogicalOperator,
     LogicalPlan,
@@ -129,11 +130,6 @@ def _register_default_plan_logical_op_fns():
         physical_children: List[PhysicalOperator],
         data_context: DataContext,
     ) -> PhysicalOperator:
-        # NOTE: This has to be localized to break circular imports induced by us
-        #       invoking `_register_anyscale_plan_logical_op_fns` at module loading time
-        # TODO avoid registering at module loading
-        from ray.data._internal.execution.operators.join import JoinOperator
-
         assert len(physical_children) == 2
         assert logical_op._num_outputs is not None
 
