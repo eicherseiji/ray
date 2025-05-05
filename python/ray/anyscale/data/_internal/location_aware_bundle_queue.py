@@ -1,4 +1,5 @@
 import time
+import threading
 from typing import TYPE_CHECKING, Dict, Optional
 
 import ray
@@ -10,7 +11,10 @@ if TYPE_CHECKING:
 
 
 class LocationAwareBundleQueue(BundleQueue):
-    """Queue that prioritizes bundles that reside in Object Store memory."""
+    """Queue that prioritizes bundles that reside in Object Store memory.
+
+    This class is thread-safe.
+    """
 
     UPDATE_FREQUENCY_S = 30
 
@@ -19,63 +23,73 @@ class LocationAwareBundleQueue(BundleQueue):
         self._bundle_nbytes: Dict["RefBundle", int] = {}
         self._last_size_refresh_ts = time.time()
         self._total_nbytes = 0
+        self._lock = threading.RLock()
 
     def __len__(self) -> int:
-        return len(self._fifo_queue)
+        with self._lock:
+            return len(self._fifo_queue)
 
     def __contains__(self, bundle: "RefBundle") -> bool:
-        return bundle in self._fifo_queue
+        with self._lock:
+            return bundle in self._fifo_queue
 
     def add(self, bundle: "RefBundle") -> None:
-        self._fifo_queue.add(bundle)
-
-        # Use `"RefBundle".size_bytes()` as an initial estimate.
-        self._bundle_nbytes[bundle] = bundle.size_bytes()
-        self._total_nbytes += self._bundle_nbytes[bundle]
+        with self._lock:
+            self._fifo_queue.add(bundle)
+            # Use `"RefBundle".size_bytes()` as an initial estimate.
+            self._bundle_nbytes[bundle] = bundle.size_bytes()
+            self._total_nbytes += self._bundle_nbytes[bundle]
 
     def pop(self) -> "RefBundle":
-        if not self._fifo_queue:
-            raise IndexError("You can't pop from an empty queue")
+        with self._lock:
+            if not self._fifo_queue:
+                raise IndexError("You can't pop from an empty queue")
 
-        self._try_ensure_first_bundle_exists()
-        bundle = self._fifo_queue.peek()
-        self.remove(bundle)
-        return bundle
+            self._try_ensure_first_bundle_exists()
+            bundle = self._fifo_queue.peek()
+            if bundle is None:
+                raise IndexError("Unexpected empty queue")
+            self.remove(bundle)
+            return bundle
 
     def peek(self) -> Optional["RefBundle"]:
-        self._try_ensure_first_bundle_exists()
-        return self._fifo_queue.peek()
+        with self._lock:
+            self._try_ensure_first_bundle_exists()
+            return self._fifo_queue.peek()
 
     def remove(self, bundle: "RefBundle") -> None:
-        if bundle not in self._bundle_nbytes:
-            raise ValueError(f"Bundle {bundle} not found in the queue")
+        with self._lock:
+            if bundle not in self._bundle_nbytes:
+                raise ValueError(f"Bundle {bundle} not found in the queue")
 
-        self._fifo_queue.remove(bundle)
+            self._fifo_queue.remove(bundle)
 
-        nbytes = self._bundle_nbytes[bundle]
-        self._total_nbytes -= nbytes
-        assert self._total_nbytes >= 0, (
-            "Expected the total size of objects in the queue to be non-negative, but "
-            f"got {self._total_nbytes} bytes instead."
-        )
+            nbytes = self._bundle_nbytes[bundle]
+            self._total_nbytes -= nbytes
+            assert self._total_nbytes >= 0, (
+                "Expected the total size of objects in the queue to be non-negative, but "
+                f"got {self._total_nbytes} bytes instead."
+            )
 
-        if bundle not in self._fifo_queue:
-            del self._bundle_nbytes[bundle]
+            if bundle not in self._fifo_queue:
+                del self._bundle_nbytes[bundle]
 
-    def clear(self):
-        self._fifo_queue.clear()
-        self._bundle_nbytes.clear()
-        self._total_nbytes = 0
+    def clear(self) -> None:
+        with self._lock:
+            self._fifo_queue.clear()
+            self._bundle_nbytes.clear()
+            self._total_nbytes = 0
 
     def estimate_size_bytes(self) -> int:
-        now = time.time()
-        # Bundle sizes can change if Ray loses objects or creates replicas. So, we
-        # update the sizes every `UPDATE_FREQUENCY_S` seconds.
-        if now - self._last_size_refresh_ts > self.UPDATE_FREQUENCY_S:
-            self._refresh_bundle_sizes()
-            self._total_nbytes = sum(self._bundle_nbytes.values())
-            self._last_size_refresh_ts = now
-        return self._total_nbytes
+        with self._lock:
+            now = time.time()
+            # Bundle sizes can change if Ray loses objects or creates replicas. So, we
+            # update the sizes every `UPDATE_FREQUENCY_S` seconds.
+            if now - self._last_size_refresh_ts > self.UPDATE_FREQUENCY_S:
+                self._refresh_bundle_sizes()
+                self._total_nbytes = sum(self._bundle_nbytes.values())
+                self._last_size_refresh_ts = now
+            return self._total_nbytes
 
     def _try_ensure_first_bundle_exists(self):
         if not self._fifo_queue:
@@ -84,7 +98,8 @@ class LocationAwareBundleQueue(BundleQueue):
         num_bundles_skipped = 0
         while num_bundles_skipped < len(self._bundle_nbytes):
             first_bundle = self._fifo_queue.peek()
-            assert first_bundle is not None
+            if first_bundle is None:
+                return
 
             if self._objects_exist(first_bundle):
                 break
@@ -130,5 +145,6 @@ class LocationAwareBundleQueue(BundleQueue):
             assert nbytes >= 0, nbytes
             self._bundle_nbytes[bundle] = nbytes
 
-    def is_empty(self):
-        return not self._fifo_queue and not self._bundle_nbytes
+    def is_empty(self) -> bool:
+        with self._lock:
+            return not self._fifo_queue and not self._bundle_nbytes
