@@ -25,7 +25,7 @@ class InfiniteAPPOMultiAgentEnvRunner(MultiAgentEnvRunner):
 
         self._sampling_thread = threading.Thread(
             name="sampling_thread",
-            target=self._sampling_thread,
+            target=self._sampling_thread_func,
         )
 
     def set_aggregator_actors(self, aggregator_actor_refs):
@@ -61,7 +61,7 @@ class InfiniteAPPOMultiAgentEnvRunner(MultiAgentEnvRunner):
     def start_infinite_sample(self):
         self._sampling_thread.start()
 
-    def _sampling_thread(self):
+    def _sampling_thread_func(self):
         iteration = 0
         while True:
             # Pull new weights and merged connector states, every n times.

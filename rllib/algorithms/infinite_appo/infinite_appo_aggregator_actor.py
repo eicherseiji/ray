@@ -40,16 +40,22 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
 
         # Make sure we count how many timesteps we already have and only produce a
         # batch, once we have enough episode data.
+
+        # TODO (sven): Fix this logic for all algos. For infinite APPO, this should NOT
+        #  be done here as it already happened on the EnvRunners.
+        # Only for SEED algo: Numpy'ize episodes, if necessary.
+        if type(self.config).__name__ == "SEEDConfig" and self.config.episodes_to_numpy:
+            for eps in episodes:
+                eps.to_numpy()
+
         self._episodes.extend(episodes)
 
         env_steps = sum(len(e) for e in episodes)
         self._ts += env_steps
 
-        ma_batch = None
-
+        # If we have enough episodes collected, pass them through the connector
+        # to create a single train batch.
         if self._ts >= self.config.train_batch_size_per_learner:
-            # If we have enough episodes collected to create a single train batch, pass
-            # them at once through the connector to receive a single train batch.
             batch = self._learner_connector(
                 episodes=self._episodes,
                 rl_module=self._module,
@@ -60,8 +66,8 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
             self._episodes = []
 
             # Convert to a dict into a `MultiAgentBatch`.
-            # TODO (sven): Try to get rid of dependency on MultiAgentBatch (once our mini-
-            #  batch iterators support splitting over a dict).
+            # TODO (sven): Try to get rid of dependency on MultiAgentBatch (once our
+            #  mini-batch iterators support splitting over a dict).
             ma_batch = MultiAgentBatch(
                 policy_batches={
                     pid: SampleBatch(pol_batch) for pid, pol_batch in batch.items()
@@ -69,7 +75,6 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
                 env_steps=batch_env_steps,
             )
 
-        if ma_batch:
             self.metrics.log_value(
                 "num_env_steps_aggregated_lifetime",
                 batch_env_steps,
@@ -83,7 +88,6 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
                 batch_ref={"batch": ray.put(ma_batch)},
                 learner_idx=self._learner_idx,
             )
-            del ma_batch
 
             self._num_batches_produced += 1
 

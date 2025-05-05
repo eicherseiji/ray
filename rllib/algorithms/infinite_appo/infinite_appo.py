@@ -126,10 +126,6 @@ class InfiniteAPPO(APPO):
     def setup(self, config: AlgorithmConfig):
         super().setup(config=config)
 
-        # TODO (sven): Move AggregatorActors into Learners, even for other algos.
-        # for actor in self._aggregator_actor_manager.actors().values():
-        #    ray.kill(actor)
-
         # Create metrics actor (last CPU bundle in pg).
         self.metrics_actor = MetricsActor.remote()
 
@@ -246,7 +242,7 @@ class InfiniteAPPO(APPO):
         for batch_dispatcher in self.batch_dispatcher_actors:
             batch_dispatcher.set_timesteps.remote(timesteps)
 
-        # Get results from metrics actor once per iteration.
+        # Get results from metrics actor.
         metrics = ray.get(self.metrics_actor.get.remote())
         self.metrics.merge_and_log_n_dicts([metrics])
 
