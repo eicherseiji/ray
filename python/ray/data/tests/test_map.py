@@ -3,10 +3,10 @@ import itertools
 import logging
 import math
 import os
+import re
 import threading
 import time
 from typing import Iterator
-import re
 
 import numpy as np
 import pandas as pd

@@ -1,10 +1,10 @@
 import ast
 import logging
+from typing import Dict
 
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
-from typing import Dict
 
 logger = logging.getLogger(__name__)
 
