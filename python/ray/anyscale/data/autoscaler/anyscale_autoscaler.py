@@ -9,7 +9,6 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Deque, Dict, Optional, OrderedDict, Tuple, Union
 
 import ray
-from ray._private.ray_constants import env_bool
 from ray.anyscale.air._internal.autoscaling_coordinator import (
     get_or_create_autoscaling_coordinator,
 )
@@ -361,12 +360,6 @@ class AnyscaleAutoscaler(Autoscaler):
         # Determine whether to scale up based on the actor pool utilization.
         return util > self._actor_pool_scaling_up_threshold
 
-    @cached_property
-    def _disable_actor_pool_scaling_down(self):
-        # TODO(hchen): re-enable actor pool scaling down after fixing
-        # https://github.com/anyscale/rayturbo/issues/726
-        return env_bool("RAY_DATA_DISABLE_ACTOR_POOL_SCALING_DOWN", True)
-
     def _actor_pool_should_scale_down(
         self,
         actor_pool: AutoscalingActorPool,
@@ -381,8 +374,6 @@ class AnyscaleAutoscaler(Autoscaler):
             return True
         elif actor_pool.current_size() <= actor_pool.min_size():
             # Do not scale down, if the actor pool is already at min size.
-            return False
-        if self._disable_actor_pool_scaling_down:
             return False
         # Determine whether to scale down based on the actor pool utilization.
         return util < self._actor_pool_scaling_down_threshold

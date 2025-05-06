@@ -23,12 +23,6 @@ from ray.data._internal.execution.streaming_executor_state import OpState
 
 
 @pytest.fixture(autouse=True)
-def enable_actor_pool_downscaling(monkeypatch):
-    monkeypatch.setenv("RAY_DATA_DISABLE_ACTOR_POOL_SCALING_DOWN", "0")
-    yield
-
-
-@pytest.fixture(autouse=True)
 def patch_autoscaling_coordinator():
     with patch(
         "ray.anyscale.air._internal.autoscaling_coordinator.get_or_create_autoscaling_coordinator"  # noqa: E501
