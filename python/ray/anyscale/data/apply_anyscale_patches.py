@@ -24,6 +24,9 @@ from ray.anyscale.data._internal.logical.rules.combine_repartitions import (
 from ray.anyscale.data._internal.logical.rules.configure_map_task_memory import (
     ConfigureMapTaskMemoryWithProfiling,
 )
+from ray.anyscale.data._internal.logical.rules.map_fusion import (
+    BatchesToRowsMapTransformPrunning,
+)
 from ray.anyscale.data.api.context_mixin import DataContextMixin
 from ray.anyscale.data.api.dataset_mixin import DatasetMixin
 from ray.anyscale.data.planner import _register_anyscale_plan_logical_op_fns
@@ -109,6 +112,7 @@ def apply_anyscale_patches():
     physical_ruleset.add(InsertCheckpointingLayerRule)
     physical_ruleset.add(RedundantMapTransformPruning)
     physical_ruleset.add(FuseRepartitionOutputBlocks)
+    physical_ruleset.add(BatchesToRowsMapTransformPrunning)
     if ANYSCALE_MAP_TASK_MEMORY_CONFIGURATION_ENABLED:
         physical_ruleset.remove(ConfigureMapTaskMemoryUsingOutputSize)
         physical_ruleset.add(ConfigureMapTaskMemoryWithProfiling)

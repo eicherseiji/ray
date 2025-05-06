@@ -7,6 +7,9 @@ import pytest
 
 import ray
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
+from ray.anyscale.data._internal.logical.rules.map_fusion import (
+    BatchesToRowsTransformFn,
+)
 from ray.data import Dataset, DataContext
 from ray.data._internal.execution.operators.map_transformer import (
     BatchMapTransformFn,
@@ -931,6 +934,24 @@ def test_read_files_fusion(ray_start_regular_shared, data_context_override):
     ds = ray.data.read_parquet("example://iris.parquet").map(lambda x: x)
     dag_str = get_execution_plan(ds._logical_plan).dag.dag_str
     assert expected_plan_str in dag_str
+
+
+def test_map_batches_to_map_rows_fusion(ray_start_regular_shared):
+    """Test removing unnecessary BuildOutputBlocksMapTransformFn when fusing
+    map_batches() and map()."""
+    ds = ray.data.range(5).map_batches(lambda x: x, batch_size=2).map(lambda x: x)
+
+    plan = get_execution_plan(ds._plan._logical_plan)
+    fns = plan.dag.get_map_transformer().get_transform_fns()
+    expected_fns = [
+        BlocksToBatchesMapTransformFn,
+        BatchMapTransformFn,
+        BatchesToRowsTransformFn,
+        RowMapTransformFn,
+        BuildOutputBlocksMapTransformFn,
+    ]
+    assert match_transform_fns(expected_fns, fns)
+    assert match_ds_result(ds, list(range(5)))
 
 
 if __name__ == "__main__":

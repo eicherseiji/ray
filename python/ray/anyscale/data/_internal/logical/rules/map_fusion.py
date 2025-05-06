@@ -1,6 +1,7 @@
-from typing import List, Callable
+from typing import Iterable, List, Callable
 import copy
 
+from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data._internal.execution.operators.map_transformer import (
     BatchMapTransformFn,
     BlocksToBatchesMapTransformFn,
@@ -8,9 +9,12 @@ from ray.data._internal.execution.operators.map_transformer import (
     BuildOutputBlocksMapTransformFn,
     MapTransformFn,
     MapTransformFnCategory,
+    MapTransformFnDataType,
+    Row,
     RowMapTransformFn,
 )
 from ray.data._internal.logical.rules.zero_copy_map_fusion import ZeroCopyMapFusionRule
+from ray.data.block import BlockAccessor, DataBatch
 
 
 class RedundantMapTransformPruning(ZeroCopyMapFusionRule):
@@ -326,3 +330,70 @@ class FuseRepartitionOutputBlocks(ZeroCopyMapFusionRule):
                 new_transform_fns.append(cur_fn)
 
         return new_transform_fns
+
+
+class BatchesToRowsTransformFn(MapTransformFn):
+    """A MapTransformFn that directly converts batches to rows."""
+
+    def __init__(self):
+        super().__init__(
+            input_type=MapTransformFnDataType.Batch,
+            output_type=MapTransformFnDataType.Row,
+            category=MapTransformFnCategory.PostProcess,
+            is_udf=False,
+        )
+
+    def __call__(self, batches: Iterable[DataBatch], ctx: TaskContext) -> Iterable[Row]:
+        for batch in batches:
+            block = BlockAccessor.batch_to_block(batch)
+            ba = BlockAccessor.for_block(block)
+            yield from ba.iter_rows(public_row_format=True)
+
+    @classmethod
+    def instance(cls) -> "BatchesToRowsTransformFn":
+        """Returns a singleton instance of BatchesToRowsTransformFn."""
+        if not hasattr(cls, "_instance"):
+            cls._instance = cls()
+        return cls._instance
+
+
+class BatchesToRowsMapTransformPrunning(ZeroCopyMapFusionRule):
+    """This rule optimizes the sequence:
+
+    BatchMapTransformFn ->
+    BuildOutputBlocksMapTransformFn(input_type=MapTransformFnDataType.Batch) ->
+    BlocksToRowsMapTransformFn
+
+    by directly converting batches to rows without building blocks.
+
+    Example logical plans that have this pattern are `ReadFiles->MapRows`
+    and `MapBatches->MapRows`.
+    """
+
+    def _optimize(self, transform_fns: List[MapTransformFn]) -> List[MapTransformFn]:
+        result = []
+        i = 0
+        while i < len(transform_fns):
+            # Check if we have the pattern to optimize
+            if (
+                i + 2 < len(transform_fns)
+                and isinstance(transform_fns[i], BatchMapTransformFn)
+                and isinstance(transform_fns[i + 1], BuildOutputBlocksMapTransformFn)
+                and transform_fns[i + 1].input_type == MapTransformFnDataType.Batch
+                and isinstance(transform_fns[i + 2], BlocksToRowsMapTransformFn)
+            ):
+                # Add the BatchMapTransformFn
+                result.append(transform_fns[i])
+
+                # Replace the BuildOutputBlocksMapTransformFn and
+                # BlocksToRowsMapTransformFn with BatchesToRowsTransformFn
+                result.append(BatchesToRowsTransformFn.instance())
+
+                # Move past all three functions
+                i += 3
+            else:
+                # Keep the current function unchanged
+                result.append(transform_fns[i])
+                i += 1
+
+        return result
