@@ -1,7 +1,7 @@
 from typing import Dict, Optional, Union
 
 import ray
-from ray._private.utils import get_runtime_env_info, parse_runtime_env
+from ray._private.utils import get_runtime_env_info, parse_runtime_env_for_task_or_actor
 from ray.runtime_env import RuntimeEnv
 from ray.util.placement_group import PlacementGroup, PlacementGroupSchedulingStrategy
 
@@ -22,7 +22,7 @@ def prestart_workers_on_local_node(
     Prestart workers on the local node. This function is async: there's no guarantee
     the workers are started when this function returns.
     """
-    runtime_env = parse_runtime_env(runtime_env)
+    runtime_env = parse_runtime_env_for_task_or_actor(runtime_env)
     if runtime_env is not None:
         serialized_runtime_env_info = get_runtime_env_info(
             runtime_env,
