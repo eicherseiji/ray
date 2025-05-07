@@ -8,3 +8,9 @@ py_test_run_all_subdirectory(
     tags = ["team:serve"],
     deps = ["//:ray_lib"],
 )
+
+filegroup(
+    name = "test_configs",
+    data = glob(["*.yaml"]),
+    visibility = ["//release:__pkg__"],
+)

@@ -47,11 +47,6 @@ pip3 install --user -U pip
 
 # Strip the hashes from the constraint file
 # TODO(aslonnie): use bazel run..
-grep '==' release/requirements_buildkite.txt > /tmp/requirements_buildkite_nohash.txt
-sed -i 's/ \\//' /tmp/requirements_buildkite_nohash.txt  # Remove ending slashes.
-sed -i 's/\[.*\]//g' /tmp/requirements_buildkite_nohash.txt  # Remove extras.
-
-pip3 install --user -e release/ -c /tmp/requirements_buildkite_nohash.txt
 
 if [[ "${BUILDKITE_PIPELINE_ID}" == "0194d305-a31d-40b8-9ffd-122388f1f14e" ]]; then
     export RELEASE_QUEUE_DEFAULT="rayturbo_small_queue"
@@ -61,16 +56,21 @@ fi
 export RELEASE_AWS_BUCKET="runtime-release-test-artifacts"
 RAY_WANT_COMMIT_IN_IMAGE="$(cat .UPSTREAM)"
 export RAY_WANT_COMMIT_IN_IMAGE
-cd release
+echo "Downloading Bazel"
+curl -sLo /tmp/bazel https://github.com/bazelbuild/bazelisk/releases/download/v1.19.0/bazelisk-linux-amd64
+echo "Making Bazel executable"
+chmod +x /tmp/bazel
+echo "Generating test steps"
+
 if [[ "${BUILDKITE_BRANCH}" != "releases/"* && "${RAYCI_RUN_ALL_RELEASE_TEST:-0}" != "1" ]]; then
-    python3 ray_release/scripts/build_pipeline.py \
+    /tmp/bazel run //release:build_pipeline -- \
         --test-collection-file release/release_runtime_tests.yaml \
         --run-jailed-tests \
         --run-unstable-tests \
         --global-config runtime_config.yaml \
         | buildkite-agent pipeline upload
 else
-    python3 ray_release/scripts/build_pipeline.py \
+    /tmp/bazel run //release:build_pipeline -- \
         --test-collection-file release/release_runtime_tests.yaml \
         --test-collection-file release/release_data_tests.yaml \
         --test-collection-file release/release_tests.yaml \
