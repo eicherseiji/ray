@@ -52,7 +52,7 @@ class ImageReader(NativeFileReader, SupportsRowCounting):
         if self.mode is not None:
             image = image.convert(self.mode)
 
-        batch = np.expand_dims(np.array(image), axis=0)
+        batch = np.expand_dims(np.asarray(image), axis=0)
         yield {"image": batch}
 
     def count_rows(self, paths: List[str], *, filesystem) -> int:
