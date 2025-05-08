@@ -23,7 +23,7 @@ DEFAULT_DETECTION_TIME_INTERVAL_S = 30.0
 
 @dataclass
 class HangingExecutionState:
-    operator_name: str
+    operator_id: str
     task_idx: int
     bytes_output: int
     start_time_hanging: float
@@ -47,30 +47,32 @@ class HangingExecutionIssueDetector(IssueDetector):
             self._detector_cfg.op_task_stats_std_factor
         )
 
-        # Map of operator name to dict of task_idx to hanging execution info (bytes read and
+        # Map of operator id to dict of task_idx to hanging execution info (bytes read and
         # start time for hanging time calculation)
         self._state_map: Dict[str, Dict[int, HangingExecutionState]] = defaultdict(dict)
-        # Map of operator name to set of task_idx that are hanging
+        # Map of operator id to set of task_idx that are hanging
         self._hanging_op_tasks: Dict[str, Set[int]] = defaultdict(set)
+        # Map of operator id to operator name
+        self._op_id_to_name: Dict[str, str] = {}
 
     def _create_issues(
         self, hanging_op_tasks: Set[HangingExecutionState]
     ) -> List[Issue]:
         issues = []
         for state in hanging_op_tasks:
-            if state.task_idx not in self._hanging_op_tasks[state.operator_name]:
+            if state.task_idx not in self._hanging_op_tasks[state.operator_id]:
                 issues.append(
                     Issue(
                         dataset_name=self._executor._dataset_id,
-                        operator_name=state.operator_name,
+                        operator_id=state.operator_id,
                         issue_type=IssueType.HANGING,
                         message=(
-                            f"A task for operator {state.operator_name} with task index {state.task_idx} "
+                            f"A task for operator {self._op_id_to_name.get(state.operator_id, state.operator_id)} with task index {state.task_idx} "
                             f"has been hanging for >{time.perf_counter() - state.start_time_hanging:.2f}s."
                         ),
                     )
                 )
-                self._hanging_op_tasks[state.operator_name].add(state.task_idx)
+                self._hanging_op_tasks[state.operator_id].add(state.task_idx)
 
         return issues
 
@@ -78,13 +80,14 @@ class HangingExecutionIssueDetector(IssueDetector):
         op_task_stats_map = {}
         for operator, op_state in self._executor._topology.items():
             op_metrics = operator.metrics
-            op_task_stats_map[operator.name] = op_metrics._op_task_duration_stats
+            op_task_stats_map[operator.id] = op_metrics._op_task_duration_stats
+            self._op_id_to_name[operator.id] = operator.name
             if op_state._finished:
                 # Remove finished operators / tasks from the state map
-                if operator.name in self._state_map:
-                    del self._state_map[operator.name]
-                if operator.name in self._hanging_op_tasks:
-                    del self._hanging_op_tasks[operator.name]
+                if operator.id in self._state_map:
+                    del self._state_map[operator.id]
+                if operator.id in self._hanging_op_tasks:
+                    del self._hanging_op_tasks[operator.id]
             else:
                 active_tasks_idx = set()
                 for task in operator.get_active_tasks():
@@ -92,14 +95,14 @@ class HangingExecutionIssueDetector(IssueDetector):
                     if task_info is None:
                         # if the task is not in the running tasks map, it has finished
                         # remove it from the state map and hanging op tasks, if present
-                        self._state_map[operator.name].pop(task.task_index(), None)
-                        self._hanging_op_tasks[operator.name].discard(task.task_index())
+                        self._state_map[operator.id].pop(task.task_index(), None)
+                        self._hanging_op_tasks[operator.id].discard(task.task_index())
                         continue
 
                     active_tasks_idx.add(task.task_index())
                     bytes_output = task_info.bytes_outputs
 
-                    prev_state_value = self._state_map[operator.name].get(
+                    prev_state_value = self._state_map[operator.id].get(
                         task.task_index(), None
                     )
 
@@ -107,10 +110,10 @@ class HangingExecutionIssueDetector(IssueDetector):
                         prev_state_value is None
                         or bytes_output != prev_state_value.bytes_output
                     ):
-                        self._state_map[operator.name][
+                        self._state_map[operator.id][
                             task.task_index()
                         ] = HangingExecutionState(
-                            operator_name=operator.name,
+                            operator_id=operator.id,
                             task_idx=task.task_index(),
                             bytes_output=bytes_output,
                             start_time_hanging=time.perf_counter(),
@@ -118,14 +121,14 @@ class HangingExecutionIssueDetector(IssueDetector):
 
                 # Remove any tasks that are no longer active
                 task_idxs_to_remove = (
-                    set(self._state_map[operator.name].keys()) - active_tasks_idx
+                    set(self._state_map[operator.id].keys()) - active_tasks_idx
                 )
                 for task_idx in task_idxs_to_remove:
-                    del self._state_map[operator.name][task_idx]
+                    del self._state_map[operator.id][task_idx]
 
         hanging_op_tasks = []
-        for op_name, op_state_values in self._state_map.items():
-            op_task_stats = op_task_stats_map[op_name]
+        for op_id, op_state_values in self._state_map.items():
+            op_task_stats = op_task_stats_map[op_id]
             for task_idx, state_value in op_state_values.items():
                 curr_time = time.perf_counter() - state_value.start_time_hanging
                 if op_task_stats.count() > self._op_task_stats_min_count:

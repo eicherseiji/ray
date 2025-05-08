@@ -38,6 +38,11 @@ from ray.data._internal.logical.optimizers import (
 from ray.data._internal.logical.rules.configure_map_task_memory import (
     ConfigureMapTaskMemoryUsingOutputSize,
 )
+from ray.data._internal.execution.interfaces.op_runtime_metrics import (
+    OpRuntimeMetrics,
+    MetricsGroup,
+    metric_property,
+)
 
 ANYSCALE_LOCAL_LIMIT_MAP_OPERATOR_ENABLED = env_bool(
     "ANYSCALE_LOCAL_LIMIT_MAP_OPERATOR_ENABLED", False
@@ -86,6 +91,42 @@ def _patch_aggregations():
         aggregate.Unique = aggregate_vectorized.UniqueVectorized
 
 
+def _patch_observability_metrics():
+    """
+    This function patches the OpRuntimeMetrics class to add custom metrics on the
+    RayTurbo side.
+
+    In particular, it adds counter metrics to track the number of detector issues.
+    For rendering RayTurbo dashboard, these counters are indexed by timestamp so are
+    performant to query across multiple datasets.
+
+    We also persist the details of each issue as exported events. These details are not
+    indexed by timestamp and are not performant to query across multiple datasets. We
+    will only query these details at the operator level in RayTurbo dashboard.
+    """
+    OpRuntimeMetrics._issue_detector_hanging = 0
+    OpRuntimeMetrics._issue_detector_high_memory = 0
+
+    @metric_property(
+        description="Indicates if the operator is hanging.",
+        metrics_group=MetricsGroup.MISC,
+        internal_only=True,
+    )
+    def issue_detector_hanging(self) -> int:
+        return self._issue_detector_hanging
+
+    @metric_property(
+        description="Indicates if the operator is using high memory.",
+        metrics_group=MetricsGroup.MISC,
+        internal_only=True,
+    )
+    def issue_detector_high_memory(self) -> int:
+        return self._issue_detector_high_memory
+
+    OpRuntimeMetrics.issue_detector_hanging = issue_detector_hanging
+    OpRuntimeMetrics.issue_detector_high_memory = issue_detector_high_memory
+
+
 def apply_anyscale_patches():
     """Apply Anyscale-specific patches for Ray Data."""
     # Patch ray.data.Dataset
@@ -95,6 +136,9 @@ def apply_anyscale_patches():
     # Patch default aggregation implementations with more performant
     # vectorized versions
     _patch_aggregations()
+
+    # Patch observability metrics
+    _patch_observability_metrics()
 
     _patch_default_execution_callbacks()
 

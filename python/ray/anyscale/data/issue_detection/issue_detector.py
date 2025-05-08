@@ -16,7 +16,7 @@ class IssueType(str, Enum):
 @dataclass
 class Issue:
     dataset_name: str
-    operator_name: str
+    operator_id: str
     message: str
     issue_type: IssueType
 

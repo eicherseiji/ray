@@ -79,7 +79,7 @@ class HighMemoryIssueDetector(IssueDetector):
                 issues.append(
                     Issue(
                         dataset_name=self._executor._dataset_id,
-                        operator_name=op.name,
+                        operator_id=op.id,
                         issue_type=IssueType.HIGH_MEMORY,
                         message=_format_message(message),
                     )
