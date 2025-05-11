@@ -7,7 +7,7 @@ import pytest
 
 import ray
 from ray.anyscale._private.prestart import prestart_workers_on_pg_bundles
-from ray.tests.conftest import maybe_external_redis, shutdown_only  # noqa: F401
+from ray.tests.conftest import maybe_setup_external_redis, shutdown_only  # noqa: F401
 from ray.util.placement_group import PlacementGroupSchedulingStrategy, placement_group
 
 
