@@ -45,9 +45,6 @@ PATH="$HOME/.local/bin:$PATH"
 export PATH
 pip3 install --user -U pip
 
-# Strip the hashes from the constraint file
-# TODO(aslonnie): use bazel run..
-
 if [[ "${BUILDKITE_PIPELINE_ID}" == "0194d305-a31d-40b8-9ffd-122388f1f14e" ]]; then
     export RELEASE_QUEUE_DEFAULT="rayturbo_small_queue"
 else
@@ -62,19 +59,10 @@ echo "Making Bazel executable"
 chmod +x /tmp/bazel
 echo "Generating test steps"
 
-if [[ "${BUILDKITE_BRANCH}" != "releases/"* && "${RAYCI_RUN_ALL_RELEASE_TEST:-0}" != "1" ]]; then
-    /tmp/bazel run //release:build_pipeline -- \
-        --test-collection-file release/release_runtime_tests.yaml \
-        --run-jailed-tests \
-        --run-unstable-tests \
-        --global-config runtime_config.yaml \
-        | buildkite-agent pipeline upload
-else
-    /tmp/bazel run //release:build_pipeline -- \
-        --test-collection-file release/release_runtime_tests.yaml \
-        --test-collection-file release/release_data_tests.yaml \
-        --test-collection-file release/release_tests.yaml \
-        --run-jailed-tests \
-        --global-config runtime_config.yaml \
-        | buildkite-agent pipeline upload
-fi
+/tmp/bazel run //release:build_pipeline -- \
+    --test-collection-file release/release_runtime_tests.yaml \
+    --test-collection-file release/release_data_tests.yaml \
+    --test-collection-file release/release_tests.yaml \
+    --run-jailed-tests \
+    --global-config runtime_config.yaml \
+    | buildkite-agent pipeline upload
