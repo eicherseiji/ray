@@ -44,6 +44,9 @@ eval "$(/home/ray/anaconda3/bin/conda shell.bash activate)"
 /home/ray/anaconda3/bin/conda install -y "python=${PYTHON_VERSION}"
 /home/ray/anaconda3/bin/conda clean -a
 
+# Install uv
+wget -qO- https://astral.sh/uv/install.sh | sudo env UV_UNMANAGED_INSTALL="/usr/local/bin" sh
+
 EOF
 
 ENV PATH="/home/ray/anaconda3/bin:$PATH"
