@@ -1,17 +1,20 @@
 import io
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterator, Iterable, List, Optional, Set, Tuple
 
 import numpy as np
 import pyarrow
 
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
 from ray.data._internal.util import _check_import
-from ray.data.block import DataBatch
+from ray.data.block import BlockMetadata, DataBatch
 
 from .native_file_reader import NativeFileReader
-from .supports_row_counting import SupportsRowCounting
+from .supports_metadata import MetadataType, SupportsMetadata
 
 
-class ImageReader(NativeFileReader, SupportsRowCounting):
+class ImageReader(NativeFileReader, SupportsMetadata):
     def __init__(
         self,
         size: Optional[Tuple[int, int]] = None,
@@ -55,12 +58,24 @@ class ImageReader(NativeFileReader, SupportsRowCounting):
         batch = np.expand_dims(np.asarray(image), axis=0)
         yield {"image": batch}
 
-    def count_rows(self, paths: List[str], *, filesystem) -> int:
-        return len(paths)
+    def read_metadata(
+        self,
+        file_manifest: FileManifest,
+        *,
+        filesystem,
+        columns: Optional[List[str]],
+    ) -> Iterator[BlockMetadata]:
+        yield BlockMetadata(
+            num_rows=len(file_manifest.paths),
+            size_bytes=None,
+            exec_stats=None,
+            schema=None,
+            input_files=file_manifest.paths,
+        )
 
-    def can_count_rows(self) -> bool:
-        return True
+    def available_metadata(self) -> Set[MetadataType]:
+        return {MetadataType.NUM_ROWS}
 
-    def count_rows_batch_size(self) -> Optional[int]:
+    def get_target_metadata_batch_size(self) -> Optional[int]:
         # Since we just return the number of paths, we don't need to batch.
         return None

@@ -1,9 +1,11 @@
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     PATH_COLUMN_NAME,
+    FileManifest,
     ListFiles,
 )
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
-from ray.anyscale.data._internal.readers import SupportsRowCounting
+from ray.anyscale.data._internal.readers import SupportsMetadata
+from ray.anyscale.data._internal.readers.supports_metadata import MetadataType
 from ray.data._internal.logical.interfaces import LogicalPlan, Rule
 from ray.data._internal.logical.operators.count_operator import Count
 from ray.data._internal.logical.operators.map_operator import MapBatches
@@ -33,8 +35,8 @@ class PushdownCountFiles(Rule):
 
         if (
             not isinstance(read_files, ReadFiles)
-            or not isinstance(read_files.reader, SupportsRowCounting)
-            or not read_files.reader.can_count_rows()
+            or not isinstance(read_files.reader, SupportsMetadata)
+            or MetadataType.NUM_ROWS not in read_files.reader.available_metadata()
             # If `ReadFiles` op was optimized by predicate pushdown, this
             # PushdownCountFiles based on file stats won't work, so skip this rule.
             or read_files.filter_expr is not None
@@ -50,18 +52,22 @@ class PushdownCountFiles(Rule):
 
         def count_rows(batch: DataBatch) -> DataBatch:
             assert PATH_COLUMN_NAME in batch.column_names, batch.column_names
-            num_rows = read_files.reader.count_rows(
-                batch[PATH_COLUMN_NAME].to_pylist(),
+            block_metadata_generator = read_files.reader.read_metadata(
+                FileManifest(batch),
                 filesystem=read_files.filesystem,
+                columns=None,
             )
-            return {Count.COLUMN_NAME: [num_rows]}
+            total_rows = 0
+            for block_metadata in block_metadata_generator:
+                total_rows += block_metadata.num_rows
+            return {Count.COLUMN_NAME: [total_rows]}
 
         count_rows_op = MapBatches(
             list_files,
             count_rows,
             batch_format="pyarrow",
-            batch_size=read_files.reader.count_rows_batch_size(),
-            min_rows_per_bundled_input=read_files.reader.count_rows_batch_size(),
+            batch_size=read_files.reader.get_target_metadata_batch_size(),
+            min_rows_per_bundled_input=read_files.reader.get_target_metadata_batch_size(),
             zero_copy_batch=True,
             ray_remote_args={"num_cpus": self._PER_TASK_NUM_CPUS_ALLOCATION},
         )

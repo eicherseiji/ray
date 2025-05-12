@@ -15,7 +15,7 @@ from ray.anyscale.data._internal.partitioners import FilePartitioner
 from ray.anyscale.data._internal.planner.file_indexer import (
     FileIndexer,
     FileManifest,
-    filter_paths,
+    filter_file_manifest,
 )
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
 from ray.data._internal.execution.interfaces import PhysicalOperator, RefBundle
@@ -29,7 +29,6 @@ from ray.data._internal.execution.operators.map_transformer import (
 from ray.data.block import Block, BlockAccessor
 from ray.data.context import DataContext
 from ray.data.datasource import FileShuffleConfig, PathPartitionFilter
-from ray.data.datasource.path_util import _has_file_extension
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ def plan_list_files_op(
     transform_fns = [
         BlockMapTransformFn(
             partial(
-                list_files,
+                list_files_for_each_block,
                 indexer=indexer,
                 filesystem=filesystem,
                 file_extensions=file_extensions,
@@ -136,7 +135,7 @@ def create_input_data_buffer(
     return InputDataBuffer(data_context, input_data=input_data)
 
 
-def list_files(
+def list_files_for_each_block(
     blocks: Iterable[Block],
     _: TaskContext,
     *,
@@ -149,18 +148,9 @@ def list_files(
         for file_manifest in indexer.list_files(
             block[PATH_COLUMN_NAME], filesystem=filesystem
         ):
-            # Apply `file_extensions` parameter.
-            if file_extensions is not None:
-                file_manifest = filter_paths(
-                    file_manifest,
-                    lambda path: _has_file_extension(path, file_extensions),
-                )
-
-            # Apply `partition_filter` parameter.
-            if partition_filter is not None:
-                file_manifest = filter_paths(
-                    file_manifest, lambda path: partition_filter([path])
-                )
+            file_manifest = filter_file_manifest(
+                file_manifest, file_extensions, partition_filter
+            )
 
             # Don't yield empty manifests. This can happen if rows get filtered out for
             # `file_extensions` or `partition_filter`.

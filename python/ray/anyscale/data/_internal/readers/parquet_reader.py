@@ -2,13 +2,12 @@ import functools
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, Iterable, List, Optional, Set, Tuple
 
 import numpy as np
 import pyarrow
 import pyarrow as pa
 import pyarrow.dataset
-from pyarrow.parquet import ParquetFile
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -16,6 +15,7 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
 from ray.data._internal.datasource.parquet_datasource import (
     PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT,
     ParquetDatasource,
+    _infer_schema,
     check_for_legacy_tensor_type,
     emit_file_extensions_future_warning,
     get_parquet_dataset,
@@ -25,7 +25,7 @@ from ray.data._internal.util import (
     iterate_with_retry,
     make_async_gen,
 )
-from ray.data.block import Block, DataBatch
+from ray.data.block import Block, BlockMetadata, DataBatch
 from ray.data.context import DataContext
 from ray.data.datasource import Partitioning, PathPartitionParser
 from ray.data.datasource.path_util import _has_file_extension
@@ -35,7 +35,7 @@ from .file_reader import FileReader
 from .in_memory_size_estimator import (
     InMemorySizeEstimator,
 )
-from .supports_row_counting import SupportsRowCounting
+from .supports_metadata import MetadataType, SupportsMetadata
 
 # The number of rows to read per batch. This is the default we use in OSS.
 DEFAULT_BATCH_SIZE = 10_000
@@ -44,7 +44,7 @@ DEFAULT_BATCH_SIZE = 10_000
 logger = logging.getLogger(__name__)
 
 
-class ParquetReader(FileReader, SupportsRowCounting):
+class ParquetReader(FileReader, SupportsMetadata):
     """Reads Parquet files.
 
     This file reader implementation leverages PyArrow's `ParquetDataset` and
@@ -307,38 +307,69 @@ class ParquetReader(FileReader, SupportsRowCounting):
                 else:
                     yield table
 
-    def count_rows(self, paths: List[str], *, filesystem: pyarrow.fs.FileSystem) -> int:
-        num_rows = 0
+    def read_metadata(
+        self,
+        file_manifest: FileManifest,
+        *,
+        filesystem: pyarrow.fs.FileSystem,
+        columns: Optional[List[str]],
+    ) -> Iterator[BlockMetadata]:
 
-        def count_rows_in_file(path: str) -> int:
-            file = call_with_retry(
-                lambda: open_file(path),
-                description="open Parquet file",
-                match=self._retried_io_errors,
+        schema = self._schema
+        parquet_dataset = call_with_retry(
+            lambda: get_parquet_dataset(
+                file_manifest.paths.tolist(), filesystem, self._dataset_kwargs
+            ),
+            "open ParquetDataset",
+            match=self._retried_io_errors,
+        )
+
+        if not schema:
+            schema = _infer_schema(
+                parquet_dataset,
+                None,
+                columns,
+                self._partitioning,
+                self._block_udf,
             )
+
+        def get_metadata_for_path(
+            fragment: "pa.dataset.ParquetFileFragment",
+        ) -> Tuple[int, int]:
             # Getting the metadata requires network calls, so it might fail with
             # transient errors.
-            return call_with_retry(
-                lambda: file.metadata.num_rows,
-                description="get count from Parquet metadata",
+            num_rows = call_with_retry(
+                lambda: fragment.metadata.num_rows,
+                "fragment num_rows",
                 match=self._retried_io_errors,
             )
 
-        def open_file(path: str) -> ParquetFile:
-            stream = filesystem.open_input_file(path)
-            return ParquetFile(stream)
+            return num_rows
 
         with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(count_rows_in_file, path) for path in paths]
+            futures = [
+                executor.submit(get_metadata_for_path, fragment)
+                for fragment in parquet_dataset.fragments
+            ]
             for future in as_completed(futures):
-                num_rows += future.result()
+                num_rows = future.result()
+                metadata = BlockMetadata(
+                    num_rows=num_rows,
+                    size_bytes=None,
+                    exec_stats=None,
+                    schema=schema,
+                    input_files=None,
+                )
+                yield metadata
 
-        return num_rows
+    def available_metadata(self) -> Set[MetadataType]:
+        available = {MetadataType.SCHEMA}
+        if "filter" not in self._to_batches_kwargs:
+            available.add(MetadataType.NUM_ROWS)
+            available.add(MetadataType.NUM_BYTES)
+        return available
 
-    def can_count_rows(self) -> bool:
-        return "filter" not in self._to_batches_kwargs
-
-    def count_rows_batch_size(self) -> int:
+    def get_target_metadata_batch_size(self) -> int:
         return self._COUNT_ROWS_BATCH_SIZE
 
     def supports_predicate_pushdown(self) -> bool:

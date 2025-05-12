@@ -1,12 +1,23 @@
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
-
+import pyarrow as pa
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+    ListFiles,
+)
+from ray.anyscale.data._internal.planner.file_indexer import filter_file_manifest
 from ray.anyscale.data._internal.readers import FileReader
+from ray.anyscale.data._internal.readers.supports_metadata import SupportsMetadata
 from ray.data._internal.compute import TaskPoolStrategy
 from ray.data._internal.logical.interfaces import LogicalOperator
 from ray.data._internal.logical.operators.map_operator import AbstractMap
 from ray.data._internal.planner.plan_expression.expression_evaluator import (
     ExpressionEvaluator,
 )
+from ray.data.block import BlockAccessor, BlockMetadata
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import pyarrow.dataset as pd
@@ -80,3 +91,37 @@ class ReadFiles(AbstractMap):
                 filter_expr_str, field_changes=field_changes
             )
         return filter_expr
+
+    def aggregate_output_metadata(self) -> BlockMetadata:
+        # This method is used by the execution plan to efficiently return metadata
+        # without triggering execution.
+        if isinstance(self.input_dependency, ListFiles) and isinstance(
+            self.reader, SupportsMetadata
+        ):
+            paths = pa.array(self.input_dependency.paths)
+            gen = self.input_dependency.file_indexer.list_files(
+                paths, filesystem=self.filesystem
+            )
+            first_file_manifest = next(gen)
+            if first_file_manifest and len(first_file_manifest) > 0:
+                first_file_manifest = filter_file_manifest(
+                    first_file_manifest,
+                    self.input_dependency.file_extensions,
+                    self.input_dependency.partition_filter,
+                )
+                first_file_manifest = FileManifest(
+                    BlockAccessor.for_block(first_file_manifest.as_block()).slice(0, 1)
+                )
+                first_block_metadata = next(
+                    self.reader.read_metadata(
+                        first_file_manifest,
+                        filesystem=self.filesystem,
+                        columns=self.columns,
+                    )
+                )
+                if first_block_metadata:
+                    first_block_metadata.num_rows = None
+                    first_block_metadata.size_bytes = None
+                    return first_block_metadata
+
+        return super().aggregate_output_metadata()

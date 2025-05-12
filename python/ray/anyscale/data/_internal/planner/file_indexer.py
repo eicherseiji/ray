@@ -1,6 +1,6 @@
 import abc
 import logging
-from typing import Callable, Iterable, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 import pyarrow as pa
 from pyarrow.fs import FileSelector, FileSystem, FileType
@@ -10,7 +10,11 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
 )
 from ray.data.block import BlockAccessor, BlockColumn
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
-from ray.data.datasource.path_util import _resolve_paths_and_filesystem
+from ray.data.datasource.partitioning import PathPartitionFilter
+from ray.data.datasource.path_util import (
+    _has_file_extension,
+    _resolve_paths_and_filesystem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,3 +155,23 @@ def filter_paths(
     else:
         filtered_block = BlockAccessor.for_block(manifest.as_block()).take(indices)
         return FileManifest(filtered_block)
+
+
+def filter_file_manifest(
+    file_manifest: FileManifest,
+    file_extensions: Optional[List[str]],
+    partition_filter: Optional[PathPartitionFilter],
+) -> FileManifest:
+    # Apply `file_extensions` parameter.
+    if file_extensions is not None:
+        file_manifest = filter_paths(
+            file_manifest,
+            lambda path: _has_file_extension(path, file_extensions),
+        )
+
+    # Apply `partition_filter` parameter.
+    if partition_filter is not None:
+        file_manifest = filter_paths(
+            file_manifest, lambda path: partition_filter([path])
+        )
+    return file_manifest
