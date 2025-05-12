@@ -2,6 +2,7 @@ import io
 import logging
 import threading
 import time
+import re
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -85,7 +86,10 @@ class TestHangingExecutionIssueDetector:
         _ = ray.data.range(1).map(f1).materialize()
 
         log_output = log_capture.getvalue()
-        assert "hanging" not in log_output
+        warn_msg = (
+            r"A task of operator .+ with task index .+ has been running for [\d\.]+s"
+        )
+        assert re.search(warn_msg, log_output) is None, log_output
 
         # # test hanging does log hanging warning
         def f2(x):
@@ -95,7 +99,7 @@ class TestHangingExecutionIssueDetector:
         _ = ray.data.range(1).map(f2).materialize()
 
         log_output = log_capture.getvalue()
-        assert "hanging" in log_output
+        assert re.search(warn_msg, log_output) is not None, log_output
 
     @pytest.mark.parametrize(
         "ray_start_10_cpus",

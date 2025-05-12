@@ -1,7 +1,7 @@
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Set
 
 from ray.anyscale.data.issue_detection.issue_detector import (
     Issue,
@@ -11,6 +11,9 @@ from ray.anyscale.data.issue_detection.issue_detector import (
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.streaming_executor import StreamingExecutor
+    from ray.data._internal.execution.interfaces.op_runtime_metrics import (
+        TaskDurationStats,
+    )
     from ray.data.context import DataContext
 
 # Default minimum count of tasks before using adaptive thresholds
@@ -56,28 +59,37 @@ class HangingExecutionIssueDetector(IssueDetector):
         self._op_id_to_name: Dict[str, str] = {}
 
     def _create_issues(
-        self, hanging_op_tasks: Set[HangingExecutionState]
+        self,
+        hanging_op_tasks: List[HangingExecutionState],
+        op_task_stats_map: Dict[str, "TaskDurationStats"],
     ) -> List[Issue]:
         issues = []
         for state in hanging_op_tasks:
             if state.task_idx not in self._hanging_op_tasks[state.operator_id]:
+                op_name = self._op_id_to_name.get(state.operator_id, state.operator_id)
+                duration = time.perf_counter() - state.start_time_hanging
+                avg_duration = op_task_stats_map[state.operator_id].mean()
+                message = (
+                    f"A task of operator {op_name} with task index "
+                    f"{state.task_idx} has been running for {duration:.2f}s, which is longer"
+                    f" than the average task duration of this operator ({avg_duration:.2f}s)."
+                    f" If this message persists, please check the stack trace of the "
+                    "task for potential hanging issues."
+                )
                 issues.append(
                     Issue(
                         dataset_name=self._executor._dataset_id,
                         operator_id=state.operator_id,
                         issue_type=IssueType.HANGING,
-                        message=(
-                            f"A task for operator {self._op_id_to_name.get(state.operator_id, state.operator_id)} with task index {state.task_idx} "
-                            f"has been hanging for >{time.perf_counter() - state.start_time_hanging:.2f}s."
-                        ),
+                        message=message,
                     )
                 )
                 self._hanging_op_tasks[state.operator_id].add(state.task_idx)
 
         return issues
 
-    def detect(self) -> Optional[Issue]:
-        op_task_stats_map = {}
+    def detect(self) -> List[Issue]:
+        op_task_stats_map: Dict[str, "TaskDurationStats"] = {}
         for operator, op_state in self._executor._topology.items():
             op_metrics = operator.metrics
             op_task_stats_map[operator.id] = op_metrics._op_task_duration_stats
@@ -140,7 +152,10 @@ class HangingExecutionIssueDetector(IssueDetector):
                         hanging_op_tasks.append(state_value)
 
         # create issues for newly detected hanging tasks, then update the hanging task set
-        issues = self._create_issues(hanging_op_tasks=hanging_op_tasks)
+        issues = self._create_issues(
+            hanging_op_tasks=hanging_op_tasks,
+            op_task_stats_map=op_task_stats_map,
+        )
 
         return issues
 
