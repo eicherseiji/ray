@@ -352,7 +352,7 @@ class AnyscaleAutoscaler(Autoscaler):
         if not op_state._scheduling_status.under_resource_limits:
             return False
         # Do not scale up, if the op has enough free slots for the existing inputs.
-        if op_state.total_input_enqueued() <= actor_pool.num_free_task_slots():
+        if op_state.total_enqueued_input_bundles() <= actor_pool.num_free_task_slots():
             return False
         if actor_pool.num_pending_actors() > 0:
             # Do not scale up, if the last scale-up hasn't finished.
