@@ -11,7 +11,7 @@
 
   cluster:
     byod: {}
-    cluster_compute: ../../serve_tests/compute_tpl_8_cpu_autoscaling.yaml
+    cluster_compute: compute_tpl_8_cpu_autoscaling.yaml
 
   run:
     timeout: 7200
@@ -26,11 +26,11 @@
       env: gce
       frequency: manual
       cluster:
-        cluster_compute: ../../serve_tests/compute_tpl_8_cpu_autoscaling_gce.yaml
+        cluster_compute: compute_tpl_8_cpu_autoscaling_gce.yaml
 
 - name: safetensors_integration_tests_on_gpu
   group: Serve tests
-  working_dir: ../python/ray/anyscale/safetensors/tests/integration
+  working_dir: //python/ray/anyscale/safetensors/tests/integration
 
   frequency: nightly
   team: serve
@@ -46,7 +46,7 @@
 
 - name: safetensors_load_file_benchmark
   group: Serve tests
-  working_dir: ../python/ray/anyscale/safetensors/tests/benchmarks
+  working_dir: //python/ray/anyscale/safetensors/tests/benchmarks
 
   frequency: nightly
   team: serve
