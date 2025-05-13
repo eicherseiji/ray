@@ -40,9 +40,21 @@ TRAIN_GRAFANA_PANELS = [
         fill=0,
         stack=False,
     ),
-    # DCGM Profiling Metrics (SM_ACTIVITY)
     Panel(
         id=3,
+        title="Train Controller State",
+        description="State of the train controller.",
+        unit="",
+        targets=[
+            Target(
+                expr="sum(ray_train_controller_state{{{global_filters}}}) by (ray_train_run_name, ray_train_controller_state)",
+                legend="Run Name: {{ray_train_run_name}}, Controller State: {{ray_train_controller_state}}",
+            ),
+        ],
+    ),
+    # DCGM Profiling Metrics (SM_ACTIVITY)
+    Panel(
+        id=101,
         title="GPU SM Activity",
         description="GPU Streaming Multiprocessor Activity. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
         # Note `percentunit` is a special unit that will render the y-axis
@@ -59,7 +71,7 @@ TRAIN_GRAFANA_PANELS = [
     ),
     # DCGM Profiling Metrics (SM_OCCUPANCY)
     Panel(
-        id=4,
+        id=102,
         title="GPU SM Occupancy",
         description="GPU Streaming Multiprocessor Occupancy. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
         unit="percentunit",
