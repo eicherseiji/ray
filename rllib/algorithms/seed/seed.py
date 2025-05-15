@@ -115,9 +115,14 @@ class SEEDConfig(InfiniteAPPOConfig):
     def validate(self) -> None:
         super().validate()
 
+        # TODO (kamil): zmq _router_channel_max_num_actors -> should be larger than
+        #  number of env runners per inference process
+
         # Max batch size.
+        # TODO (sven): Figure out settings for evaluation env runners.
         if (
-            self.inference_batch_size
+            not self.in_evaluation
+            and self.inference_batch_size
             > (self.num_env_runners or 1) * self.num_envs_per_env_runner
         ):
             raise ValueError(
@@ -126,17 +131,16 @@ class SEEDConfig(InfiniteAPPOConfig):
                 f"`num_envs_per_env_runner` ({self.num_envs_per_env_runner})!"
             )
 
-        # TODO (kamil): zmq _router_channel_max_num_actors -> should be larger than
-        #  number of env runners per inference process
-
-        # "env runners / inference" -> should be and integer.
-        ratio = (self.num_env_runners or 1) / self.n_inference_processes
-        if ratio != int(ratio):
-            raise ValueError(
-                f"The ratio of `num_env_runners` ({self.num_env_runners}) / "
-                f"`n_inference_processes` ({self.n_inference_processes}) must be an "
-                f"int!"
-            )
+        # "env runners / inference" -> Should be and integer.
+        # TODO (sven): Figure out settings for evaluation env runners.
+        if not self.in_evaluation:
+            ratio = (self.num_env_runners or 1) / self.n_inference_processes
+            if ratio != int(ratio):
+                raise ValueError(
+                    f"The ratio of `num_env_runners` ({self.num_env_runners}) / "
+                    f"`n_inference_processes` ({self.n_inference_processes}) must be "
+                    "a whole number (int)!"
+                )
 
 
 class SEED(Algorithm):
