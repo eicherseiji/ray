@@ -43,6 +43,7 @@ from ray.exceptions import RpcError
 from ray.job_submission import JobStatus
 from ray.tests.conftest import call_ray_start  # noqa: F401
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy  # noqa: F401
+from ray.util.state import list_tasks
 
 import psutil
 
@@ -1415,7 +1416,22 @@ async def test_actor_creation_error_not_overwritten(shared_ray_instance, tmp_pat
             assert data.driver_exit_code is None
 
 
-@pytest.mark.asyncio
+async def test_no_task_events_exported(shared_ray_instance, tmp_path):
+    """Verify that no task events are exported by the JobSupervisor."""
+    job_manager = create_job_manager(shared_ray_instance, tmp_path)
+    job_id = await job_manager.submit_job(entrypoint="echo hello")
+
+    await async_wait_for_condition(
+        check_job_succeeded, job_manager=job_manager, job_id=job_id
+    )
+
+    assert "hello" in job_manager.get_job_logs(job_id)
+
+    # Assert no task events for the JobSupervisor are exported.
+    for t in list_tasks():
+        assert "JobSupervisor" not in t.name
+
+        
 @pytest.mark.parametrize(
     "max_failures,expected_job_status",
     [
