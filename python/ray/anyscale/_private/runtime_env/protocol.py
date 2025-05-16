@@ -25,13 +25,19 @@ class AnyscaleProtocolsProvider(ProtocolsProvider):
     @classmethod
     def download_remote_uri(cls, protocol, source_uri, dest_file):
         if protocol == "azure":
+            missing_imports = []
             try:
                 from azure.identity import DefaultAzureCredential
+            except ImportError:
+                missing_imports.append("azure-identity")
+            try:
                 from azure.storage.blob import BlobServiceClient
                 from smart_open import open as open_file
             except ImportError:
+                missing_imports.append("smart_open[azure]")
+            if missing_imports:
                 raise ImportError(
-                    "You must `pip install smart_open[azure]` "
+                    "You must `pip install " + " ".join(missing_imports) + "` "
                     "to fetch URIs in azure blob storage container. "
                     + cls._MISSING_DEPENDENCIES_WARNING
                 )
