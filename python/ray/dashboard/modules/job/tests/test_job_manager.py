@@ -1431,7 +1431,7 @@ async def test_no_task_events_exported(shared_ray_instance, tmp_path):
     for t in list_tasks():
         assert "JobSupervisor" not in t.name
 
-        
+
 @pytest.mark.parametrize(
     "max_failures,expected_job_status",
     [
