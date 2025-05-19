@@ -1,5 +1,5 @@
-import time
 import threading
+import time
 from typing import TYPE_CHECKING, Dict, Optional
 
 import ray
@@ -10,15 +10,18 @@ if TYPE_CHECKING:
     from ray.data._internal.execution.interfaces import RefBundle
 
 
+DEFAULT_UPDATE_FREQUENCY_S = 30
+
+
 class LocationAwareBundleQueue(BundleQueue):
     """Queue that prioritizes bundles that reside in Object Store memory.
 
     This class is thread-safe.
     """
 
-    UPDATE_FREQUENCY_S = 30
+    def __init__(self, update_frequency_s=DEFAULT_UPDATE_FREQUENCY_S):
+        self._update_frequency_s = update_frequency_s
 
-    def __init__(self):
         self._fifo_queue = FIFOBundleQueue()
         self._bundle_nbytes: Dict["RefBundle", int] = {}
         self._last_size_refresh_ts = time.time()
@@ -62,17 +65,21 @@ class LocationAwareBundleQueue(BundleQueue):
             if bundle not in self._bundle_nbytes:
                 raise ValueError(f"Bundle {bundle} not found in the queue")
 
+            # If there are multiple instances of the bundle in the queue, this method
+            # only removes the first one.
             self._fifo_queue.remove(bundle)
 
-            nbytes = self._bundle_nbytes[bundle]
-            self._total_nbytes -= nbytes
-            assert self._total_nbytes >= 0, (
-                "Expected the total size of objects in the queue to be non-negative, but "
-                f"got {self._total_nbytes} bytes instead."
-            )
-
             if bundle not in self._fifo_queue:
+                # The underlying FIFO queue might contain multiple instances of the
+                # same bundle. So, we only decrement the total size if the bundle is
+                # not in the queue anymore.
+                nbytes = self._bundle_nbytes[bundle]
                 del self._bundle_nbytes[bundle]
+                self._total_nbytes -= nbytes
+                assert self._total_nbytes >= 0, (
+                    "Expected the total size of objects in the queue to be non-negative, but "
+                    f"got {self._total_nbytes} bytes instead."
+                )
 
     def clear(self) -> None:
         with self._lock:
@@ -84,8 +91,8 @@ class LocationAwareBundleQueue(BundleQueue):
         with self._lock:
             now = time.time()
             # Bundle sizes can change if Ray loses objects or creates replicas. So, we
-            # update the sizes every `UPDATE_FREQUENCY_S` seconds.
-            if now - self._last_size_refresh_ts > self.UPDATE_FREQUENCY_S:
+            # update the sizes every `_update_frequency_s` seconds.
+            if now - self._last_size_refresh_ts >= self._update_frequency_s:
                 self._refresh_bundle_sizes()
                 self._total_nbytes = sum(self._bundle_nbytes.values())
                 self._last_size_refresh_ts = now

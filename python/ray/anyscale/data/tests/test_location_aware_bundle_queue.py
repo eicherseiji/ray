@@ -1,26 +1,35 @@
-import pytest
 import threading
 import time
+from typing import Any
 from unittest.mock import MagicMock, patch
 
-import ray
+import pyarrow as pa
+import pytest
 
+import ray
 from ray.anyscale.data._internal.location_aware_bundle_queue import (
     LocationAwareBundleQueue,
 )
+from ray.data._internal.execution.interfaces import RefBundle
+from ray.data.block import BlockAccessor
+
+
+def _create_bundle(data: Any) -> RefBundle:
+    """Create a RefBundle with a single row with the given data."""
+    block = pa.Table.from_pydict({"data": [data]})
+    block_ref = ray.put(block)
+    metadata = BlockAccessor.for_block(block).get_metadata()
+    return RefBundle([(block_ref, metadata)], owns_blocks=False)
 
 
 def test_location_aware_bundle_queue_thread_safety():
     """Test that the LocationAwareBundleQueue is thread-safe."""
-    with (
-        patch.object(ray, "experimental", MagicMock()) as mock_experimental,
-        patch.object(LocationAwareBundleQueue, "UPDATE_FREQUENCY_S", 0),
-    ):
+    with patch.object(ray, "experimental", MagicMock()) as mock_experimental:
         mock_experimental.get_local_object_locations.return_value = {
             "": {"node_ids": ["node1"], "object_size": 100}
         }
 
-        queue = LocationAwareBundleQueue()
+        queue = LocationAwareBundleQueue(update_frequency_s=0)
         exceptions = []
         stop_event = threading.Event()
 
@@ -67,6 +76,35 @@ def test_location_aware_bundle_queue_thread_safety():
         assert len(exceptions) == 0, f"Exceptions occurred: {exceptions}"
         assert len(queue) == 0
         assert queue.estimate_size_bytes() == 0
+
+
+def test_remove_duplicate_bundles():
+    # Test for https://anyscale1.atlassian.net/browse/DATA-1006.
+    bundle = _create_bundle(0)
+    queue = LocationAwareBundleQueue(update_frequency_s=0)
+
+    queue.add(bundle)
+    queue.add(bundle)
+    # At the time of writing, calling `estimate_size_bytes` is needed to reproduce the
+    # bug.
+    queue.estimate_size_bytes()
+    queue.remove(bundle)
+    queue.remove(bundle)
+
+    assert len(queue) == 0
+
+
+def test_estimate_size_bytes_with_duplicate_bundles():
+    bundle = _create_bundle(0)
+    queue = LocationAwareBundleQueue(update_frequency_s=0)
+
+    queue.add(bundle)
+    initial_estimate = queue.estimate_size_bytes()
+    queue.add(bundle)
+
+    # The two bundles reference the same underlying objects, so the amount of object
+    # store memory used should be the same.
+    assert queue.estimate_size_bytes() == initial_estimate
 
 
 if __name__ == "__main__":
