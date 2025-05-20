@@ -463,3 +463,29 @@ def get_proxy_handle(endpoint: DeploymentID, info: EndpointInfo):  # noqa: F811
         stream=not info.app_is_cross_language,
         _by_reference=not ANYSCALE_RAY_SERVE_PROXY_USE_GRPC,
     )
+
+
+def get_controller_impl():  # noqa: F811
+    from ray.anyscale.serve._private.controller import (
+        AnyscaleServeController,
+    )
+
+    controller_impl = ray.remote(
+        name=SERVE_CONTROLLER_NAME,
+        namespace=SERVE_NAMESPACE,
+        num_cpus=0,
+        lifetime="detached",
+        max_restarts=-1,
+        max_task_retries=-1,
+        resources={HEAD_NODE_RESOURCE_NAME: 0.001},
+        max_concurrency=CONTROLLER_MAX_CONCURRENCY,
+        enable_task_events=RAY_SERVE_ENABLE_TASK_EVENTS,
+    )(
+        type(
+            "ServeController",
+            (AnyscaleServeController,),
+            dict(AnyscaleServeController.__dict__),
+        )
+    )
+
+    return controller_impl
