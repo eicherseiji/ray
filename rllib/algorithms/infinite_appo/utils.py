@@ -27,7 +27,7 @@ class BatchDispatcher:
         self.sync_freq = sync_freq
 
         self._learners = []
-        self._learner_idx = 0
+        self._learner_index = 0
         self._metrics_actor = None
         self._batch_refs = None
         self._timesteps = None
@@ -44,30 +44,30 @@ class BatchDispatcher:
     def set_timesteps(self, timesteps):
         self._timesteps = timesteps
 
-    def add_batch(self, batch_ref, learner_idx: int):
-        assert isinstance(batch_ref["batch"], ray.ObjectRef)
+    def add_batch(self, *, batch_ref, batch_env_steps, learner_index: int):
+        batch_ref = batch_ref["shared_gpu_batch"]
 
         # No Learners set yet, just return.
         if not self._learners:
             return
 
-        self._batch_refs[learner_idx].append(batch_ref["batch"])
+        self._batch_refs[learner_index].append((batch_ref, batch_env_steps))
 
         # Call `update`, while we have at least one batch ref per Learner.
         while all(br for br in self._batch_refs.values()):
             call_refs = [
                 learner.update.remote(
-                    self._batch_refs[idx].pop(0),
+                    batch_and_env_steps=self._batch_refs[idx].pop(0),
                     timesteps=self._timesteps,
-                    send_weights=(idx == self._learner_idx),
+                    send_weights=(idx == self._learner_index),
                 )
                 for idx, learner in enumerate(self._learners)
             ]
             if self._updates % self.sync_freq == 0:
-                ray.get(call_refs[self._learner_idx])
+                ray.get(call_refs[self._learner_index])
 
-            self._learner_idx += 1
-            self._learner_idx %= len(self._learners)
+            self._learner_index += 1
+            self._learner_index %= len(self._learners)
             self._updates += 1
             # Reset timesteps.
             self._timesteps = None

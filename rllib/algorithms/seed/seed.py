@@ -265,7 +265,6 @@ class SEED(Algorithm):
                     metrics_actor=self.metrics_actor,
                     weights_server_actors=self.weights_server_actors,
                     batch_dispatchers=self.batch_dispatcher_actors,
-                    learner_idx=lid,
                 )
             )
         self.aggregator_actors = [

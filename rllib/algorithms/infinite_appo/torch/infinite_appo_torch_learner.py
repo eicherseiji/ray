@@ -1,6 +1,8 @@
 import random
+import torch
 
 import ray
+import tree
 from ray.rllib.algorithms.appo.torch.appo_torch_learner import APPOTorchLearner
 from ray.rllib.algorithms.appo.utils import CircularBuffer
 from ray.rllib.algorithms.infinite_appo.infinite_appo_aggregator_actor import (
@@ -9,32 +11,47 @@ from ray.rllib.algorithms.infinite_appo.infinite_appo_aggregator_actor import (
 from ray.rllib.core import COMPONENT_RL_MODULE
 from ray.rllib.core.learner.torch.torch_learner import TorchLearner
 from ray.rllib.core.learner.training_data import TrainingData
+from ray.rllib.policy.sample_batch import SampleBatch, MultiAgentBatch
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.metrics import NUM_ENV_STEPS_TRAINED_LIFETIME
-from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 
 class InfiniteAPPOTorchLearner(APPOTorchLearner):
-    def __init__(self, *, config, module_spec):
-        super().__init__(config=config, module_spec=module_spec)
+    @override(APPOTorchLearner)
+    def build(self) -> None:
+        super().build()
+
         self._num_batches = 0
         self._timesteps = {NUM_ENV_STEPS_TRAINED_LIFETIME: 0}
 
-        # Create child aggregator actors.
-        node_id = ray.get_runtime_context().get_node_id()
-        strategy = NodeAffinitySchedulingStrategy(node_id=node_id, soft=False)
+        # Create child aggregator actors and place all of them on the same device
+        # through picking the same placement bundle index as this very Learner actor.
         self.aggregator_actors = [
-            InfiniteAPPOAggregatorActor.options(scheduling_strategy=strategy).remote(
+            ray.remote(
+                num_cpus=1,
+                num_gpus=0.01 * float(self.config.num_gpus_per_learner > 0),
+            )(InfiniteAPPOAggregatorActor)
+            .options(
+                placement_group=self._placement_group,
+                placement_group_bundle_index=(
+                    # main process
+                    1
+                    # env runners
+                    + self.config.num_env_runners
+                    # eval env runners
+                    + self.config.get_evaluation_config_object().num_env_runners
+                    # Learners
+                    + self._learner_index
+                ),
+            )
+            .remote(
                 config=self.config,
-                rl_module_spec=module_spec,
+                rl_module_spec=self._module_spec,
                 sync_freq=self.config.pipeline_sync_freq,
             )
             for _ in range(self.config.num_aggregator_actors_per_inf_appo_learner)
         ]
 
-    @override(APPOTorchLearner)
-    def build(self) -> None:
-        super().build()
         # Stop the Learner thread again and delete it.
         self._learner_thread.stopped = True
         # Make sure learner thread gets out of its `step()` method (waiting for
@@ -51,7 +68,7 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
 
     # Synchronization helper method.
     def set_other_actors(
-        self, *, metrics_actor, weights_server_actors, batch_dispatchers, learner_idx
+        self, *, metrics_actor, weights_server_actors, batch_dispatchers
     ):
         self._metrics_actor = metrics_actor
         self._weights_server_actors = weights_server_actors
@@ -61,7 +78,7 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
                 agg.set_other_actors.remote(
                     batch_dispatchers=batch_dispatchers,
                     metrics_actor=metrics_actor,
-                    learner_idx=learner_idx,
+                    learner_index=self._learner_index,
                 )
             )
 
@@ -72,18 +89,27 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
         pass
 
     @override(APPOTorchLearner)
-    def update(self, batch, timesteps, send_weights=False):
+    def update(self, batch_and_env_steps, timesteps, send_weights=False):
         if timesteps is not None:
             self._timesteps = timesteps
 
-        # Load the batch to the GPU.
-        batch_on_gpu = batch.to_device(self._device, pin_memory=True)
         # Reduce metrics (and sync them from GPU, if applicable), then send reduced
         # metrics to metrics actor.
         reduced_metrics = None
         if self._num_batches >= 10:
             reduced_metrics = self.metrics.reduce()
             self._num_batches = 0
+
+        batch_on_gpu, env_steps = batch_and_env_steps
+        # Get tensors from GPU memory.
+        batch_on_gpu = tree.map_structure(self._map_from_gpu_memory, batch_on_gpu)
+        # Convert to MABatch.
+        batch_on_gpu = MultiAgentBatch(
+            policy_batches={
+                pid: SampleBatch(batch) for pid, batch in batch_on_gpu.items()
+            },
+            env_steps=env_steps,
+        )
 
         # If buffer is full, pull K batches from it and perform an update on each.
         if (
@@ -105,7 +131,7 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
                 )
                 self._num_batches += 1
                 self._timesteps[NUM_ENV_STEPS_TRAINED_LIFETIME] += (
-                    batch.env_steps() * self.config.num_learners
+                    batch_on_gpu.env_steps() * self.config.num_learners
                 )
 
         if self.config.circular_buffer_iterations_per_batch > 1:
@@ -132,3 +158,9 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
 
         if reduced_metrics is not None:
             self._metrics_actor.add.remote(learner_metrics=reduced_metrics)
+
+    def _map_from_gpu_memory(self, s):
+        storage = torch.UntypedStorage._new_shared_cuda(*s.handle)
+        tensor = torch.tensor([], dtype=s.dtype, device=self._device)
+        tensor.set_(storage, 0, s.shape)
+        return tensor

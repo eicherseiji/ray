@@ -1,12 +1,12 @@
 import random
 
+import tree  # pip install dm_tree
+
 import ray
 from ray.rllib.algorithms.utils import AggregatorActor
-from ray.rllib.policy.sample_batch import MultiAgentBatch, SampleBatch
 from ray.rllib.utils.metrics.metrics_logger import MetricsLogger
 
 
-@ray.remote
 class InfiniteAPPOAggregatorActor(AggregatorActor):
     def __init__(
         self,
@@ -19,17 +19,17 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
         self.sync_freq = sync_freq
         self._batch_dispatchers = None
         self._metrics_actor = None
-        self._learner_idx = None
+        self._learner_index = None
 
         self._num_batches_produced = 0
         self._ts = 0
         self._episodes = []
         self._env_runner_metrics = MetricsLogger()
 
-    def set_other_actors(self, *, batch_dispatchers, metrics_actor, learner_idx):
+    def set_other_actors(self, *, batch_dispatchers, metrics_actor, learner_index):
         self._batch_dispatchers = batch_dispatchers
         self._metrics_actor = metrics_actor
-        self._learner_idx = learner_idx
+        self._learner_index = learner_index
 
     # Synchronization helper method.
     def sync(self):
@@ -65,14 +65,14 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
             self._ts = 0
             self._episodes = []
 
-            # Convert to a dict into a `MultiAgentBatch`.
-            # TODO (sven): Try to get rid of dependency on MultiAgentBatch (once our
-            #  mini-batch iterators support splitting over a dict).
-            ma_batch = MultiAgentBatch(
-                policy_batches={
-                    pid: SampleBatch(pol_batch) for pid, pol_batch in batch.items()
-                },
-                env_steps=batch_env_steps,
+            # Pre-load onto the GPU using IPC.
+            shared_gpu_batch = tree.map_structure(
+                lambda s: _SharedCUDA(
+                    s.untyped_storage()._share_cuda_(),
+                    dtype=s.dtype,
+                    shape=s.shape,
+                ),
+                batch,
             )
 
             self.metrics.log_value(
@@ -85,8 +85,9 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
             # Forward results to a Learner actor.
             batch_dispatch_actor = random.choice(self._batch_dispatchers)
             batch_dispatch_actor.add_batch.remote(
-                batch_ref={"batch": ray.put(ma_batch)},
-                learner_idx=self._learner_idx,
+                batch_ref={"shared_gpu_batch": shared_gpu_batch},
+                batch_env_steps=batch_env_steps,
+                learner_index=self._learner_index,
             )
 
             self._num_batches_produced += 1
@@ -100,3 +101,10 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
             # Sync with one of the dispatcher actors.
             if self._num_batches_produced % self.sync_freq == 0:
                 ray.get(batch_dispatch_actor.sync.remote())
+
+
+class _SharedCUDA:
+    def __init__(self, handle, *, shape, dtype):
+        self.handle = handle
+        self.dtype = dtype
+        self.shape = shape

@@ -101,17 +101,34 @@ class InfiniteAPPO(APPO):
     def default_resource_request(cls, config):
         pg_factory = APPO.default_resource_request(config)
 
-        infinite_appo_bundles = pg_factory.bundles + [
-            # 1 metrics actor + n weights servers + m batch dispatchers +
-            # o env runner state aggregators.
-            {"CPU": 1}
-            for _ in range(
-                1
-                + config["num_weights_server_actors"]
-                + config["num_batch_dispatchers"]
-                + config["num_env_runner_state_aggregators"]
-            )
-        ]
+        # Loop through learner bundles and add the `InfiniteAPPOAggregatorActors`.
+        # Note that we don't have to change the GPUs here as agg. actors don't take
+        # their own GPU, they take a slice (0.01) from the Learner's GPU. Thus, the
+        # number of GPUs per bundle remains the same (normally 1.0).
+        num_learners = config["num_learners"]
+        learner_bundles = []
+        for i in range(num_learners):
+            lb = pg_factory.bundles[-num_learners + i].copy()
+            if "CPU" not in lb:
+                lb["CPU"] = 0
+            lb["CPU"] += config["num_aggregator_actors_per_inf_appo_learner"]
+            learner_bundles.append(lb)
+
+        infinite_appo_bundles = (
+            pg_factory.bundles[:-num_learners]
+            + learner_bundles
+            + [
+                # 1 metrics actor + n weights servers + m batch dispatchers +
+                # o env runner state aggregators.
+                {"CPU": 1}
+                for _ in range(
+                    1
+                    + config["num_weights_server_actors"]
+                    + config["num_batch_dispatchers"]
+                    + config["num_env_runner_state_aggregators"]
+                )
+            ]
+        )
         return PlacementGroupFactory(
             bundles=infinite_appo_bundles,
             strategy=config["placement_strategy"],
@@ -155,13 +172,12 @@ class InfiniteAPPO(APPO):
 
         # Setup all Learners' knowledge of important actors.
         learners = list(self.learner_group._worker_manager.actors().values())
-        for lid, learner in enumerate(learners):
+        for learner in learners:
             ray.get(
                 learner.set_other_actors.remote(
                     metrics_actor=self.metrics_actor,
                     weights_server_actors=self.weights_server_actors,
                     batch_dispatchers=self.batch_dispatcher_actors,
-                    learner_idx=lid,
                 )
             )
         self.aggregator_actors = [

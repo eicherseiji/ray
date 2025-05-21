@@ -37,8 +37,8 @@ class InfiniteAPPOMultiAgentEnvRunner(MultiAgentEnvRunner):
         self._aggregator_actor_refs = []
 
         # Shuffle inner index (aggregator indices per Learner).
-        for learner_idx in range(len(aggregator_actor_refs)):
-            np.random.shuffle(aggregator_actor_refs[learner_idx])
+        for learner_index in range(len(aggregator_actor_refs)):
+            np.random.shuffle(aggregator_actor_refs[learner_index])
 
         # Shuffle Learner sequence.
         learner_seq = list(range(len(aggregator_actor_refs)))

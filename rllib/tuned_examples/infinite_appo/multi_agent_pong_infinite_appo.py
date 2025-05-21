@@ -102,6 +102,7 @@ config = (
         env_to_module_connector=_make_env_to_module_connector,
     )
     .training(
+        num_aggregator_actors_per_inf_appo_learner=args.num_aggregator_actors_per_learner2,
         num_weights_server_actors=args.num_weights_server_actors,
         num_batch_dispatchers=args.num_batch_dispatchers,
         num_env_runner_state_aggregators=args.num_env_runner_state_aggregators,
