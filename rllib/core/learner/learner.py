@@ -242,7 +242,7 @@ class Learner(Checkpointable):
 
         # Attributes to be set separately (not by user's custom `build()` code)
         # by a LearnerGroup.
-        self._worker_index = 0
+        self._learner_index = 0
         self._placement_group = None
 
         # These are the attributes that are set during build.
@@ -1680,8 +1680,8 @@ class Learner(Checkpointable):
             with_throughput=True,
         )
 
-    def _set_worker_index_and_placement_group(self, *, worker_index, placement_group):
-        self._worker_index = worker_index
+    def _set_learner_index_and_placement_group(self, *, learner_index, placement_group):
+        self._learner_index = learner_index
         self._placement_group = placement_group
 
     @Deprecated(new="Learner.update(batch=.., ..)", error=False)

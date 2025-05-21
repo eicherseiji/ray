@@ -203,8 +203,8 @@ class LearnerGroup(Checkpointable):
 
             ray.get(
                 [
-                    w._set_worker_index_and_placement_group.remote(
-                        worker_index=i,
+                    w._set_learner_index_and_placement_group.remote(
+                        learner_index=i,
                         placement_group=placement_group,
                     )
                     for i, w in enumerate(self._workers)
