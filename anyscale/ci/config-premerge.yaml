@@ -42,7 +42,6 @@ skip_tags:
   - gpu
   # RLlib tests are too flaky; and not much activity on rayturbo.
   # The efforts are also deprioritized.
-  - rllib
   - rllib_directly
 docker_plugin:
   allow_mount_buildkite_agent: true
