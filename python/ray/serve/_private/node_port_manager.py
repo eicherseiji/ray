@@ -177,26 +177,40 @@ class NodePortManager:
         self._http_allocator.prune(active_replica_ids)
         self._grpc_allocator.prune(active_replica_ids)
 
-    def allocate_http_port(self, replica_id: str) -> int:
-        return self._http_allocator.allocate(replica_id)
+    def allocate_port(self, replica_id: str, protocol: RequestProtocol) -> int:
+        if protocol == RequestProtocol.HTTP:
+            return self._http_allocator.allocate(replica_id)
+        elif protocol == RequestProtocol.GRPC:
+            return self._grpc_allocator.allocate(replica_id)
+        else:
+            raise ValueError(f"Unsupported protocol: {protocol}")
 
-    def release_http_port(self, replica_id: str, port: int, block_port: bool = False):
-        self._http_allocator.release(replica_id, port, block_port)
+    def release_port(
+        self,
+        replica_id: str,
+        port: int,
+        protocol: RequestProtocol,
+        block_port: bool = False,
+    ):
+        if protocol == RequestProtocol.HTTP:
+            self._http_allocator.release(replica_id, port, block_port)
+        elif protocol == RequestProtocol.GRPC:
+            self._grpc_allocator.release(replica_id, port, block_port)
+        else:
+            raise ValueError(f"Unsupported protocol: {protocol}")
 
-    def allocate_grpc_port(self, replica_id: str) -> int:
-        return self._grpc_allocator.allocate(replica_id)
+    def get_port(self, replica_id: str, protocol: RequestProtocol) -> int:
+        if protocol == RequestProtocol.HTTP:
+            return self._http_allocator.get_port(replica_id)
+        elif protocol == RequestProtocol.GRPC:
+            return self._grpc_allocator.get_port(replica_id)
+        else:
+            raise ValueError(f"Unsupported protocol: {protocol}")
 
-    def release_grpc_port(self, replica_id: str, port: int, block_port: bool = False):
-        self._grpc_allocator.release(replica_id, port, block_port)
-
-    def get_http_port(self, replica_id: str) -> int:
-        return self._http_allocator.get_port(replica_id)
-
-    def get_grpc_port(self, replica_id: str) -> int:
-        return self._grpc_allocator.get_port(replica_id)
-
-    def is_http_port_allocated(self, replica_id: str) -> bool:
-        return self._http_allocator.is_port_allocated(replica_id)
-
-    def is_grpc_port_allocated(self, replica_id: str) -> bool:
-        return self._grpc_allocator.is_port_allocated(replica_id)
+    def is_port_allocated(self, replica_id: str, protocol: RequestProtocol) -> bool:
+        if protocol == RequestProtocol.HTTP:
+            return self._http_allocator.is_port_allocated(replica_id)
+        elif protocol == RequestProtocol.GRPC:
+            return self._grpc_allocator.is_port_allocated(replica_id)
+        else:
+            raise ValueError(f"Unsupported protocol: {protocol}")

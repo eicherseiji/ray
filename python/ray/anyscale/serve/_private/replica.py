@@ -8,6 +8,7 @@ from functools import wraps
 from typing import Any, AsyncGenerator, Callable, Generator, Optional, Tuple
 
 import grpc
+from ray.serve.config import HTTPOptions, gRPCOptions
 from starlette.types import Receive, Scope, Send
 
 import ray
@@ -15,6 +16,7 @@ from ray import cloudpickle
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
 )
 from ray.anyscale.serve._private.tracing_utils import (
     TraceContextManager,
@@ -48,7 +50,7 @@ from ray.serve._private.constants import (
     SERVE_NAMESPACE,
 )
 from ray.serve._private.replica import ReplicaBase, StatusCodeCallback
-from ray.serve._private.utils import generate_request_id
+from ray.serve._private.utils import generate_request_id, is_grpc_enabled
 from ray.serve.generated import serve_proprietary_pb2, serve_proprietary_pb2_grpc
 from ray.serve.grpc_util import RayServegRPCContext
 
@@ -134,8 +136,8 @@ class AnyscaleReplica(ReplicaBase):
             ]
         )
 
-        self._http_direct_ingress_server_task: Optional[asyncio.Task] = None
-        self._grpc_direct_ingress_server_task: Optional[asyncio.Task] = None
+        self._direct_ingress_http_server_task: Optional[asyncio.Task] = None
+        self._direct_ingress_grpc_server_task: Optional[asyncio.Task] = None
 
         super().__init__(**kwargs)
 
@@ -157,44 +159,105 @@ class AnyscaleReplica(ReplicaBase):
                 "The replica will continue running, but traces will not be exported."
             )
 
-    async def _maybe_start_direct_ingress_servers(self):
-        if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
-            return
-
-        controller_handle = ray.get_actor(
+        self._controller_handle = ray.get_actor(
             SERVE_CONTROLLER_NAME, namespace=SERVE_NAMESPACE
         )
+
+        # get node ID
+        self._node_id = ray.get_runtime_context().get_node_id()
+
+    async def _maybe_start_direct_ingress_servers(self):
+        if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+            logger.info(
+                "Direct ingress is disabled, skipping direct ingress server start"
+            )
+            return
+
+        async def allocate_and_start_server(start_server_fn, protocol):
+            """Attempt to allocate a port and start the server with retries."""
+            for _ in range(RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT):
+                port = await self._controller_handle.allocate_replica_port.remote(
+                    self._node_id, self._replica_id.unique_id, protocol
+                )
+                logger.info(f"Allocated port {port} for {protocol}")
+
+                try:
+                    server_task = await start_server_fn(port)
+                    logger.info(
+                        f"Successfully started {protocol} server on port {port}"
+                    )
+                    return port, server_task
+                except RuntimeError as e:
+                    logger.warning(
+                        f"Failed to start {protocol} server on port {port}: {e}. Retrying..."
+                    )
+                    # setting block_port to True because we are concluding that the port is
+                    # in use by another service on the same node. Blocking port here is a small
+                    # optimization to avoid trying to start the server on a the same port
+                    # multiple times by other replicas.
+                    await self._controller_handle.release_replica_port.remote(
+                        self._node_id,
+                        self._replica_id.unique_id,
+                        port,
+                        protocol,
+                        block_port=True,
+                    )
+            raise RuntimeError(
+                f"Failed to allocate and start {protocol} server after retries"
+            )
+
+        # Fetch configs
         http_options, grpc_options = ray.get(
             [
-                controller_handle.get_http_config.remote(),
-                controller_handle.get_grpc_config.remote(),
+                self._controller_handle.get_http_config.remote(),
+                self._controller_handle.get_grpc_config.remote(),
             ]
         )
-        grpc_enabled = (
-            grpc_options.port > 0 and len(grpc_options.grpc_servicer_functions) > 0
-        )
-        logger.info(
-            f"Starting HTTP server on port {http_options.port}"
-            + (
-                f" and gRPC server on port {grpc_options.port}."
-                if grpc_enabled
-                else "."
+
+        grpc_enabled = is_grpc_enabled(grpc_options)
+
+        # Allocate and start HTTP server
+        async def start_http_server(port):
+            options = HTTPOptions(**{**http_options.dict(), "port": port})
+            return await start_asgi_http_server(
+                self._direct_ingress_asgi,
+                options,
+                event_loop=self._event_loop,
+                enable_so_reuseport=False,
             )
+
+        (
+            self._http_port,
+            self._direct_ingress_http_server_task,
+        ) = await allocate_and_start_server(
+            start_server_fn=start_http_server,
+            protocol=RequestProtocol.HTTP,
         )
 
-        self._direct_ingress_http_server_task = await start_asgi_http_server(
-            self._direct_ingress_asgi,
-            http_options,
-            event_loop=self._event_loop,
-            enable_so_reuseport=True,
-        )
+        # Allocate and start gRPC server if enabled
         if grpc_enabled:
-            self._direct_ingress_grpc_server_task = await start_grpc_server(
-                self._direct_ingress_service_handler_factory,
-                grpc_options,
-                event_loop=self._event_loop,
-                enable_so_reuseport=True,
+
+            async def start_grpc_server_fn(port):
+                options = gRPCOptions(**{**grpc_options.dict(), "port": port})
+                return await start_grpc_server(
+                    self._direct_ingress_service_handler_factory,
+                    options,
+                    event_loop=self._event_loop,
+                    enable_so_reuseport=False,
+                )
+
+            (
+                self._grpc_port,
+                self._direct_ingress_grpc_server_task,
+            ) = await allocate_and_start_server(
+                start_server_fn=start_grpc_server_fn,
+                protocol=RequestProtocol.GRPC,
             )
+
+        logger.info(
+            f"Started HTTP server on port {self._http_port}"
+            + (f" and gRPC server on port {self._grpc_port}" if grpc_enabled else "")
+        )
 
     async def _on_initialized(self):
         serve_proprietary_pb2_grpc.add_ASGIServiceServicer_to_server(self, self._server)
@@ -599,3 +662,10 @@ class AnyscaleReplica(ReplicaBase):
         finally:
             if not proxy_asgi_receive_task.done():
                 proxy_asgi_receive_task.cancel()
+
+    async def perform_graceful_shutdown(self):
+        await super().perform_graceful_shutdown()
+        if self._direct_ingress_http_server_task:
+            self._direct_ingress_http_server_task.cancel()
+        if self._direct_ingress_grpc_server_task:
+            self._direct_ingress_grpc_server_task.cancel()

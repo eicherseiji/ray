@@ -1,8 +1,8 @@
 from collections import defaultdict
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
-from ray.serve._private.common import DeploymentID, RequestProtocol, RunningReplicaInfo
+from ray.serve._private.common import DeploymentID, RequestProtocol
 from ray.serve._private.controller import ServeController
 from ray.serve._private.constants import (
     SERVE_LOGGER_NAME,
@@ -10,6 +10,7 @@ from ray.serve._private.constants import (
 from ray.serve._private.deployment_state import DeploymentReplica
 from ray.serve._private.utils import is_grpc_enabled
 from ray.serve.schema import (
+    ReplicaDetails,
     Target,
     TargetGroup,
 )
@@ -68,7 +69,6 @@ class AnyscaleServeController(ServeController):
         ]
         if not apps:
             return proxy_target_groups
-
         # Create target groups for each application
         target_groups = []
         atleast_one_app_has_no_running_replica = False
@@ -83,32 +83,46 @@ class AnyscaleServeController(ServeController):
             target_groups.extend(proxy_target_groups)
         return target_groups
 
-    def get_running_replica_infos_for_ingress_deployment(
+    def get_running_replica_details_for_ingress_deployment(
         self, app_name: str
-    ) -> List[RunningReplicaInfo]:
-        """Get running replica infos for a specific application."""
+    ) -> List[ReplicaDetails]:
+        """Get running replica details for a specific application."""
         ingress_deployment_name = (
             self.application_state_manager.get_ingress_deployment_name(app_name)
         )
         deployment_id = DeploymentID(app_name=app_name, name=ingress_deployment_name)
-        return self.deployment_state_manager.get_running_replica_infos().get(
-            deployment_id, []
-        )
+        details = self.deployment_state_manager.get_deployment_details(deployment_id)
+        if not details:
+            return []
+        replica_details = details.replicas
+        running_replica_ids = {
+            replica_info.replica_id.unique_id
+            for replica_info in self.deployment_state_manager.get_running_replica_infos().get(
+                deployment_id, []
+            )
+        }
+        return [
+            replica_detail
+            for replica_detail in replica_details
+            if replica_detail.replica_id in running_replica_ids
+        ]
 
     def get_target_groups_for_app(self, app_name: str) -> List[TargetGroup]:
         """Create HTTP and gRPC target groups for a specific application."""
         route_prefix = self.application_state_manager.get_route_prefix(app_name)
 
         # Get running replicas for the ingress deployment
-        replica_infos = self.get_running_replica_infos_for_ingress_deployment(app_name)
-        if not replica_infos:
+        replica_details = self.get_running_replica_details_for_ingress_deployment(
+            app_name
+        )
+        if not replica_details:
             return []
 
         target_groups = []
 
         # Create targets for each protocol
         http_targets = self._get_targets_for_protocol(
-            replica_infos, RequestProtocol.HTTP
+            replica_details, RequestProtocol.HTTP
         )
         if http_targets:
             target_groups.append(
@@ -122,7 +136,7 @@ class AnyscaleServeController(ServeController):
         # Add gRPC targets if enabled
         if is_grpc_enabled(self.get_grpc_config()):
             grpc_targets = self._get_targets_for_protocol(
-                replica_infos, RequestProtocol.GRPC
+                replica_details, RequestProtocol.GRPC
             )
             if grpc_targets:
                 target_groups.append(
@@ -135,26 +149,18 @@ class AnyscaleServeController(ServeController):
 
         return target_groups
 
-    def _get_replica_node_ip_and_port(
-        self, replica_info: RunningReplicaInfo, protocol: RequestProtocol
-    ) -> Tuple[str, int]:
-        """Get the node IP and port for a replica based on protocol."""
-        if protocol == RequestProtocol.HTTP:
-            return replica_info.node_ip, self.get_http_port(replica_info)
-        elif protocol == RequestProtocol.GRPC:
-            return replica_info.node_ip, self.get_grpc_port(replica_info)
-        else:
-            raise ValueError(f"Unsupported protocol: {protocol}")
-
     def _get_targets_for_protocol(
-        self, replica_infos: List[RunningReplicaInfo], protocol: RequestProtocol
+        self, replica_details: List[ReplicaDetails], protocol: RequestProtocol
     ) -> List[Target]:
         """Create targets for a specific protocol from a list of replicas."""
         return [
-            Target(ip=ip, port=port)
-            for replica_info in replica_infos
-            if self.is_port_allocated(replica_info, protocol)
-            for ip, port in [self._get_replica_node_ip_and_port(replica_info, protocol)]
+            Target(
+                ip=replica_detail.node_ip,
+                port=self.get_port(replica_detail, protocol),
+                instance_id=replica_detail.node_instance_id,
+            )
+            for replica_detail in replica_details
+            if self.is_port_allocated(replica_detail, protocol)
         ]
 
     def _get_node_id_to_alive_replica_ids(self) -> Dict[str, Set[str]]:
@@ -187,53 +193,35 @@ class AnyscaleServeController(ServeController):
             # get all alive replica ids and their node ids.
             NodePortManager.prune(self._get_node_id_to_alive_replica_ids())
 
-    def allocate_replica_http_port(self, node_id: str, replica_id: str) -> int:
+    def allocate_replica_port(
+        self, node_id: str, replica_id: str, protocol: RequestProtocol
+    ) -> int:
         """Allocate an HTTP port for a replica in direct ingress mode."""
         node_manager = NodePortManager.get_node_manager(node_id)
-        return node_manager.allocate_http_port(replica_id)
+        return node_manager.allocate_port(replica_id, protocol)
 
-    def allocate_replica_grpc_port(self, node_id: str, replica_id: str) -> int:
-        """Allocate a gRPC port for a replica in direct ingress mode."""
-        node_manager = NodePortManager.get_node_manager(node_id)
-        return node_manager.allocate_grpc_port(replica_id)
-
-    def release_replica_http_port(
-        self, node_id: str, replica_id: str, port: int, block_port: bool = False
+    def release_replica_port(
+        self,
+        node_id: str,
+        replica_id: str,
+        port: int,
+        protocol: RequestProtocol,
+        block_port: bool = False,
     ):
         """Release an HTTP port for a replica in direct ingress mode."""
         node_manager = NodePortManager.get_node_manager(node_id)
-        node_manager.release_http_port(replica_id, port, block_port)
+        node_manager.release_port(replica_id, port, protocol, block_port)
 
-    def release_replica_grpc_port(
-        self, node_id: str, replica_id: str, port: int, block_port: bool = False
-    ):
-        """Release a gRPC port for a replica in direct ingress mode."""
-        node_manager = NodePortManager.get_node_manager(node_id)
-        node_manager.release_grpc_port(replica_id, port, block_port)
-
-    def get_http_port(self, replica_info: RunningReplicaInfo) -> int:
-        """Get the HTTP port for a replica."""
-        return NodePortManager.get_node_manager(replica_info.node_id).get_http_port(
-            replica_info.replica_id.unique_id
-        )
-
-    def get_grpc_port(self, replica_info: RunningReplicaInfo) -> int:
-        """Get the gRPC port for a replica."""
-        return NodePortManager.get_node_manager(replica_info.node_id).get_grpc_port(
-            replica_info.replica_id.unique_id
-        )
+    def get_port(
+        self, replica_detail: ReplicaDetails, protocol: RequestProtocol
+    ) -> int:
+        """Get the port for a replica."""
+        node_manager = NodePortManager.get_node_manager(replica_detail.node_id)
+        return node_manager.get_port(replica_detail.replica_id, protocol)
 
     def is_port_allocated(
-        self, replica_info: RunningReplicaInfo, protocol: RequestProtocol
+        self, replica_detail: ReplicaDetails, protocol: RequestProtocol
     ) -> bool:
         """Check if the port for a replica is allocated."""
-        if protocol == RequestProtocol.HTTP:
-            return NodePortManager.get_node_manager(
-                replica_info.node_id
-            ).is_http_port_allocated(replica_info.replica_id.unique_id)
-        elif protocol == RequestProtocol.GRPC:
-            return NodePortManager.get_node_manager(
-                replica_info.node_id
-            ).is_grpc_port_allocated(replica_info.replica_id.unique_id)
-        else:
-            raise ValueError(f"Unsupported protocol: {protocol}")
+        node_manager = NodePortManager.get_node_manager(replica_detail.node_id)
+        return node_manager.is_port_allocated(replica_detail.replica_id, protocol)
