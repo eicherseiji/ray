@@ -4,6 +4,7 @@ import unittest
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import time
 import pytest
 
 from ray.anyscale.data.autoscaler.anyscale_autoscaler import (
@@ -297,6 +298,7 @@ class MockAutoscalingActorPool(AutoscalingActorPool):
         self._max_tasks_in_flight_per_actor = max_tasks_in_flight_per_actor
         self._current_in_flight_tasks = 0
         self._per_actor_resource_usage = per_actor_resource_usage
+        self._last_scaling_up_ts = None
 
     def min_size(self):
         return self._min_size
@@ -325,6 +327,7 @@ class MockAutoscalingActorPool(AutoscalingActorPool):
     def scale_up(self, num_actors: int) -> int:
         self._current_size += num_actors
         self._num_pending_actors += num_actors
+        self._last_scaling_up_ts = time.time()
         return num_actors
 
     def scale_down(self, num_actors: int) -> int:
@@ -343,6 +346,13 @@ class MockAutoscalingActorPool(AutoscalingActorPool):
 
     def per_actor_resource_usage(self) -> ExecutionResources:
         return self._per_actor_resource_usage
+
+    def can_scale_down(self):
+        return (
+            self._last_scaling_up_ts is None
+            or time.time()
+            >= self._last_scaling_up_ts + self._ACTOR_POOL_SCALE_DOWN_DEBOUNCE_PERIOD_S
+        )
 
 
 class TestActorPoolAutoscaling:
