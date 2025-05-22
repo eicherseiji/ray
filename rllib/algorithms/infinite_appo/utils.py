@@ -45,7 +45,7 @@ class BatchDispatcher:
         self._timesteps = timesteps
 
     def add_batch(self, *, batch_ref, batch_env_steps, learner_index: int):
-        batch_ref = batch_ref["shared_gpu_batch"]
+        batch_ref = batch_ref["train_batch"]
 
         # No Learners set yet, just return.
         if not self._learners:

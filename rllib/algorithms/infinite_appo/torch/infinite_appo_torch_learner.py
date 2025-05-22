@@ -29,11 +29,22 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
         self.aggregator_actors = [
             ray.remote(
                 num_cpus=1,
-                num_gpus=0.01 * float(self.config.num_gpus_per_learner > 0),
+                # Provide each agg. actor with access to the GPU, only so that it can
+                # preload the train batches to the GPU. The agg. actor doesn't have to
+                # do any heavy lifting on that GPU, so 0.01 seems a good choice here.
+                # The Learner would still have 90+x% of the GPU for computations.
+                num_gpus=0.01
+                * float(
+                    self.config.enable_gpu_pre_loading
+                    and self.config.num_gpus_per_learner > 0
+                ),
             )(InfiniteAPPOAggregatorActor)
             .options(
                 placement_group=self._placement_group,
                 placement_group_bundle_index=(
+                    -1
+                    if self._placement_group is None
+                    else
                     # main process
                     1
                     # env runners
@@ -100,16 +111,21 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
             reduced_metrics = self.metrics.reduce()
             self._num_batches = 0
 
-        batch_on_gpu, env_steps = batch_and_env_steps
-        # Get tensors from GPU memory.
-        batch_on_gpu = tree.map_structure(self._map_from_gpu_memory, batch_on_gpu)
+        batch, env_steps = batch_and_env_steps
+
+        # Get tensors directly from GPU memory.
+        if self.config.enable_gpu_pre_loading:
+            batch = tree.map_structure(self._map_from_gpu_memory, batch)
+
         # Convert to MABatch.
-        batch_on_gpu = MultiAgentBatch(
-            policy_batches={
-                pid: SampleBatch(batch) for pid, batch in batch_on_gpu.items()
-            },
+        batch = MultiAgentBatch(
+            policy_batches={pid: SampleBatch(b) for pid, b in batch.items()},
             env_steps=env_steps,
         )
+
+        # Load the batch to the GPU.
+        if not self.config.enable_gpu_pre_loading:
+            batch = batch.to_device(self._device, pin_memory=False)
 
         # If buffer is full, pull K batches from it and perform an update on each.
         if (
@@ -122,20 +138,20 @@ class InfiniteAPPOTorchLearner(APPOTorchLearner):
                 # are consumed right away (at least once) before we even add them to
                 # the circular buffer.
                 if i > 0:
-                    batch_on_gpu = self._learner_thread_in_queue.sample()
+                    batch = self._learner_thread_in_queue.sample()
                 TorchLearner.update(
                     self,
-                    training_data=TrainingData(batch=batch_on_gpu),
+                    training_data=TrainingData(batch=batch),
                     timesteps=self._timesteps,
                     _no_metrics_reduce=True,
                 )
                 self._num_batches += 1
                 self._timesteps[NUM_ENV_STEPS_TRAINED_LIFETIME] += (
-                    batch_on_gpu.env_steps() * self.config.num_learners
+                    batch.env_steps() * self.config.num_learners
                 )
 
         if self.config.circular_buffer_iterations_per_batch > 1:
-            self._learner_thread_in_queue.add(batch_on_gpu)
+            self._learner_thread_in_queue.add(batch)
 
         # Figure out, whether we need to send our weights to a weights server.
         if send_weights and self._weights_server_actors:

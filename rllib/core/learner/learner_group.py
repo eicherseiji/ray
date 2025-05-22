@@ -212,7 +212,7 @@ class LearnerGroup(Checkpointable):
             )
 
             # Run the neural network building code on remote workers.
-            ray.get([w.build.remote() for i, w in enumerate(self._workers)])
+            ray.get([w.build.remote() for w in self._workers])
 
             self._worker_manager = FaultTolerantActorManager(
                 self._workers,

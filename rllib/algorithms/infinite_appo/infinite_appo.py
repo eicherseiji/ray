@@ -30,6 +30,7 @@ class InfiniteAPPOConfig(APPOConfig):
     def __init__(self, algo_class=None):
         super().__init__(algo_class=algo_class or InfiniteAPPO)
 
+        self.enable_gpu_pre_loading = False
         self.num_weights_server_actors = 1
         self.num_batch_dispatchers = 1
         self.num_env_runner_state_aggregators = 1
@@ -44,11 +45,18 @@ class InfiniteAPPOConfig(APPOConfig):
     @override(APPOConfig)
     def validate(self) -> None:
         super().validate()
+
         if self.num_aggregator_actors_per_learner != 0:
             raise ValueError(
                 "`num_aggregator_actors_per_learner` must be 0! Use "
                 "`config.training(num_aggregator_actors_per_inf_appo_learner=...) "
                 "instead."
+            )
+
+        if self.enable_gpu_pre_loading and self.num_gpus_per_learner == 0:
+            raise ValueError(
+                "Can't set `enable_gpu_pre_loading=True` w/o setting "
+                "`num_gpus_per_learner` > 0!"
             )
 
     @override(APPOConfig)
@@ -69,6 +77,7 @@ class InfiniteAPPOConfig(APPOConfig):
     def training(
         self,
         *,
+        enable_gpu_pre_loading: Optional[bool] = NotProvided,
         num_aggregator_actors_per_inf_appo_learner: Optional[int] = NotProvided,
         num_weights_server_actors: Optional[int] = NotProvided,
         num_batch_dispatchers: Optional[int] = NotProvided,
@@ -76,9 +85,35 @@ class InfiniteAPPOConfig(APPOConfig):
         pipeline_sync_freq: Optional[int] = NotProvided,
         **kwargs,
     ):
-        """"""
+        """Sets the training related configuration.
+
+        Args:
+            enable_gpu_pre_loading: Whether the train batch on the aggregator actors
+                should be already pre-loaded to the Learner's GPU. If True, each
+                aggregator actor occupies 0.01 of the Learner's GPU.
+            num_aggregator_actors_per_inf_appo_learner: The number of aggregator actors
+                to use per Learner.
+            num_weights_server_actors: The number of weights server actors to use. These
+                receive weight updates from the Learners and distribute those to the
+                EnvRunners.
+            num_batch_dispatchers: The number of batch dispatcher actors to use.
+                These actors receive train batch references from the aggregator actors
+                and make sure a full set of train batches is sent out to all Learners in
+                parallel. This ensures a continuous task-flow into the Learner pipeline
+                and increases GPU utilization.
+            num_env_runner_state_aggregators: The number of env runner state aggregators
+                to use. These actors collect EnvRunner states, merge them into one
+                global state and redistribute this merged state back to all EnvRunners.
+            pipeline_sync_freq: The frequency, with which each actor type (EnvRunner,
+                aggregator actor, etc..) sends a ray.remote "sync" request, which
+                returns None, to the next layer of actors in order to avoid queueing
+                in case one actor layer poses a bottleneck. Increase this value for
+                a higher throughput, but at the cost of larger off-policiness.
+        """
         super().training(**kwargs)
 
+        if enable_gpu_pre_loading is not NotProvided:
+            self.enable_gpu_pre_loading = enable_gpu_pre_loading
         if num_aggregator_actors_per_inf_appo_learner is not NotProvided:
             self.num_aggregator_actors_per_inf_appo_learner = (
                 num_aggregator_actors_per_inf_appo_learner

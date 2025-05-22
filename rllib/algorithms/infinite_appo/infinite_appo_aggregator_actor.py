@@ -5,6 +5,9 @@ import tree  # pip install dm_tree
 import ray
 from ray.rllib.algorithms.utils import AggregatorActor
 from ray.rllib.utils.metrics.metrics_logger import MetricsLogger
+from ray.rllib.utils.framework import try_import_torch
+
+torch, _ = try_import_torch()
 
 
 class InfiniteAPPOAggregatorActor(AggregatorActor):
@@ -16,6 +19,12 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
         sync_freq,
     ):
         super().__init__(config=config, rl_module_spec=rl_module_spec)
+
+        # Remove NumpyToTensor piece from connector, if we don't do GPU pre-loading.
+        if not self.config.enable_gpu_pre_loading:
+            self._device = torch.device("cpu")
+            self._learner_connector.remove("NumpyToTensor")
+
         self.sync_freq = sync_freq
         self._batch_dispatchers = None
         self._metrics_actor = None
@@ -66,14 +75,15 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
             self._episodes = []
 
             # Pre-load onto the GPU using IPC.
-            shared_gpu_batch = tree.map_structure(
-                lambda s: _SharedCUDA(
-                    s.untyped_storage()._share_cuda_(),
-                    dtype=s.dtype,
-                    shape=s.shape,
-                ),
-                batch,
-            )
+            if self.config.enable_gpu_pre_loading:
+                batch = tree.map_structure(
+                    lambda s: _SharedCUDA(
+                        s.untyped_storage()._share_cuda_(),
+                        dtype=s.dtype,
+                        shape=s.shape,
+                    ),
+                    batch,
+                )
 
             self.metrics.log_value(
                 "num_env_steps_aggregated_lifetime",
@@ -85,7 +95,7 @@ class InfiniteAPPOAggregatorActor(AggregatorActor):
             # Forward results to a Learner actor.
             batch_dispatch_actor = random.choice(self._batch_dispatchers)
             batch_dispatch_actor.add_batch.remote(
-                batch_ref={"shared_gpu_batch": shared_gpu_batch},
+                batch_ref={"train_batch": batch},
                 batch_env_steps=batch_env_steps,
                 learner_index=self._learner_index,
             )

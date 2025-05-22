@@ -48,6 +48,13 @@ parser.add_argument(
     type=int,
     default=1,
 )
+parser.add_argument(
+    "--enable-gpu-pre-loading",
+    action="store_true",
+    help="Activates GPU-preloading of train batches already on agg. actors, such that "
+    "Learners can work with the batch right away w/o having to load it to the GPU "
+    "first.",
+)
 parser.set_defaults(
     enable_new_api_stack=True,
     env="ale_py:ALE/Pong-v5",
@@ -57,7 +64,7 @@ parser.set_defaults(
 args = parser.parse_args()
 
 
-def _make_env_to_module_connector(env):
+def _make_env_to_module_connector(env, spaces, device):
     return FrameStackingEnvToModule(num_frames=4, multi_agent=True)
 
 
@@ -102,6 +109,7 @@ config = (
         env_to_module_connector=_make_env_to_module_connector,
     )
     .training(
+        enable_gpu_pre_loading=args.enable_gpu_pre_loading,
         num_aggregator_actors_per_inf_appo_learner=args.num_aggregator_actors_per_learner2,
         num_weights_server_actors=args.num_weights_server_actors,
         num_batch_dispatchers=args.num_batch_dispatchers,
