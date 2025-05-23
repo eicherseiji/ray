@@ -559,6 +559,8 @@ py_test(
         "learning_tests_pytorch_use_all_core",
         "team:rllib",
         "torch_only",
+        # Disabled: https://github.com/ray-project/ray/issues/50532
+        "manual",
     ],
 )
 
@@ -663,6 +665,8 @@ py_test(
         "learning_tests_pytorch_use_all_core",
         "team:rllib",
         "torch_only",
+        # Disabled: https://github.com/ray-project/ray/issues/43808
+        "manual",
     ],
 )
 
@@ -690,6 +694,8 @@ py_test(
         "learning_tests_pytorch_use_all_core",
         "team:rllib",
         "torch_only",
+        # Disabled: https://github.com/ray-project/ray/issues/50538
+        "manual",
     ],
 )
 
@@ -775,6 +781,8 @@ py_test(
         "multi_gpu",
         "team:rllib",
         "torch_only",
+        # Disabled: https://github.com/ray-project/ray/issues/47216
+        "manual",
     ],
 )
 
@@ -3830,6 +3838,8 @@ py_test(
         "examples",
         "exclusive",
         "team:rllib",
+        # Disabled: https://github.com/ray-project/ray/issues/47435
+        "manual",
     ],
 )
 
