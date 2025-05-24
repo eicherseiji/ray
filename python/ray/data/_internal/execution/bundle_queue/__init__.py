@@ -1,7 +1,6 @@
-from ray.data.context import DataContext
-
 from .bundle_queue import BundleQueue
 from .fifo_bundle_queue import FIFOBundleQueue
+from ray.data.context import DataContext
 
 
 def create_bundle_queue() -> BundleQueue:
