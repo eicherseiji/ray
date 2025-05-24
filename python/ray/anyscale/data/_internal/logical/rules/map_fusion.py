@@ -14,7 +14,7 @@ from ray.data._internal.execution.operators.map_transformer import (
     RowMapTransformFn,
 )
 from ray.data._internal.logical.rules.zero_copy_map_fusion import ZeroCopyMapFusionRule
-from ray.data.block import BlockAccessor, DataBatch
+from ray.data.block import DataBatch
 
 
 class RedundantMapTransformPruning(ZeroCopyMapFusionRule):
@@ -345,9 +345,27 @@ class BatchesToRowsTransformFn(MapTransformFn):
 
     def __call__(self, batches: Iterable[DataBatch], ctx: TaskContext) -> Iterable[Row]:
         for batch in batches:
-            block = BlockAccessor.batch_to_block(batch)
-            ba = BlockAccessor.for_block(block)
-            yield from ba.iter_rows(public_row_format=True)
+            if isinstance(batch, dict):
+                keys = list(batch.keys())
+                if not keys or len(batch[keys[0]]) == 0:
+                    continue
+                for i in range(len(batch[keys[0]])):
+                    yield {k: batch[k][i] for k in keys}
+
+            elif hasattr(batch, "iterrows"):  # pandas.DataFrame
+                if batch.empty:
+                    continue
+                for _, row in batch.iterrows():
+                    yield row.to_dict()
+
+            elif hasattr(batch, "column_names"):  # pyarrow.Table
+                if batch.num_rows == 0:
+                    continue
+                for record_batch in batch.to_batches():
+                    yield from record_batch.to_pylist()
+
+            else:
+                raise TypeError(f"Unsupported batch type: {type(batch)}")
 
     @classmethod
     def instance(cls) -> "BatchesToRowsTransformFn":
