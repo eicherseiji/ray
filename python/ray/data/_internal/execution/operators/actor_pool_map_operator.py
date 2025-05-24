@@ -429,7 +429,9 @@ class ActorPoolMapOperator(MapOperator):
             elif actor_state != gcs_pb2.ActorTableData.ActorState.ALIVE:
                 # The actors can be either ALIVE or RESTARTING here because they will
                 # be restarted indefinitely until execution finishes.
-                assert actor_state == gcs_pb2.ActorTableData.ActorState.RESTARTING
+                assert (
+                    actor_state == gcs_pb2.ActorTableData.ActorState.RESTARTING
+                ), actor_state
                 self._actor_pool.update_running_actor_state(actor, True)
             else:
                 self._actor_pool.update_running_actor_state(actor, False)
@@ -529,6 +531,8 @@ class _ActorPool(AutoscalingActorPool):
                 create an actor with those labels. The function should return the actor
                 handle and a reference to the actor's node ID.
             per_actor_resource_usage: The resource usage per actor.
+            _enable_actor_pool_on_exit_hook: Whether to enable the actor pool on exit
+                hook.
         """
 
         self._min_size: int = compute_strategy.min_size
