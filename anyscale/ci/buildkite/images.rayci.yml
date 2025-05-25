@@ -50,7 +50,7 @@ steps:
     tags:
       - gotools
 
-  - label: ":tapioca: rayturbo py{{matrix}} wheel"
+  - label: ":tapioca: rayturbo py{{matrix}} wheel amd64"
     key: rayturbo-wheels
     commands:
       - bazel run //ci/ray_ci:build_in_docker -- wheel --python-version {{matrix}}
@@ -60,6 +60,23 @@ steps:
       - manylinux
       - forge
     job_env: forge
+    tags: docker
+    matrix:
+      - "3.9"
+      - "3.10"
+      - "3.11"
+      - "3.12"
+
+  - label: ":tapioca: rayturbo py{{matrix}} wheel arm64"
+    key: rayturbo-wheels-arm64
+    commands:
+      - bazel run //ci/ray_ci:build_in_docker -- wheel --architecture aarch64 --python-version {{matrix}}
+      - bash anyscale/ci/upload-wheels.sh
+    instance_type: medium-arm64
+    depends_on:
+      - manylinux-aarch64
+      - forge-aarch64
+    job_env: forge-aarch64
     tags: docker
     matrix:
       - "3.9"
