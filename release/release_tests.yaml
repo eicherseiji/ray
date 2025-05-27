@@ -2897,7 +2897,7 @@
 
   run:
     timeout: 1800
-    script: python experimental/accelerated_dag_gpu_microbenchmark.py
+    script: python experimental/compiled_graph_gpu_microbenchmark.py
 
 - name: compiled_graphs_GPU_multinode
   group: core-daily-test
@@ -2914,7 +2914,7 @@
 
   run:
     timeout: 1800
-    script: python experimental/accelerated_dag_gpu_microbenchmark.py --distributed
+    script: python experimental/compiled_graph_gpu_microbenchmark.py --distributed
 
 - name: benchmark_worker_startup
   group: core-daily-test
@@ -3470,6 +3470,52 @@
       frequency: manual
       cluster:
         cluster_compute: object_store_gce.yaml
+
+- name: small_objects
+  group: core-scalability-test
+  working_dir: benchmarks
+
+  frequency: nightly
+  team: core
+  env: aws_perf
+  cluster:
+    byod:
+      type: gpu
+      runtime_env:
+        - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
+    cluster_compute: object_store/small_objects.yaml
+
+  run:
+    timeout: 3600
+    script: python object_store/test_small_objects.py
+    wait_for_nodes:
+      num_nodes: 5
+
+  variations:
+    - __suffix__: aws
+
+- name: large_objects
+  group: core-scalability-test
+  working_dir: benchmarks
+
+  frequency: nightly
+  team: core
+  env: aws_perf
+  cluster:
+    byod:
+      type: gpu
+      runtime_env:
+        - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
+    cluster_compute: object_store/large_objects.yaml
+
+  run:
+    timeout: 3600
+    script: python object_store/test_large_objects.py
+    wait_for_nodes:
+      num_nodes: 10
+
+  variations:
+    - __suffix__: aws
 
 - name: many_actors
   group: core-scalability-test
