@@ -157,12 +157,12 @@ curl -sfL "${OSS_WHEEL_URL_PREFIX}${CPP_WHEEL_FILE}" -o "${BUILD_TMP}/oss-whl/${
 aws s3 cp "${S3_TEMP}/${WHEEL_FILE}" "${BUILD_TMP}/runtime-whl/${WHEEL_FILE}"
 
 if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
-    readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/20240906/dataplane_slim.tar.gz"
-    readonly DATAPLANE_TGZ_WANT="1caf415fd69aa3954d89814fe0521216f6d98d2bec1f68a674c32b64680d30f3"
+    readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_slim_20250515.tar.gz"
+    readonly DATAPLANE_TGZ_WANT="c2060c5a70d39eaeeeee2834b9f3bb4ad27b8f44d2e41f6e6c25449d781fb2d7"
     readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-min-py${PY_VERSION}-${IMG_TYPE}-base"
 else
-    readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/20240906/dataplane.tar.gz"
-    readonly DATAPLANE_TGZ_WANT="4f8322060db950bf1e6477744a98e2cebf0ffacac81063c74bfccadb8d9de9d9"
+    readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_20250515.tar.gz"
+    readonly DATAPLANE_TGZ_WANT="b6afd94c7acdb0040d032f72a24cf701a03e60794b3f21cce8cdb5ab8796f938"
     readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-${BASE_TYPE}-py${PY_VERSION}-${IMG_TYPE}-base"
 fi
 
