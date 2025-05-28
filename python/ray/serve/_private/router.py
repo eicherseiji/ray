@@ -54,7 +54,6 @@ from ray.serve._private.long_poll import LongPollClient, LongPollNamespace
 from ray.serve._private.metrics_utils import InMemoryMetricsStore, MetricsPusher
 from ray.serve._private.replica_result import ReplicaResult
 from ray.serve._private.replica_scheduler import PendingRequest, ReplicaScheduler
-from ray.serve._private.replica_scheduler.replica_wrapper import RunningReplica
 from ray.serve._private.utils import (
     generate_request_id,
     resolve_deployment_response,
@@ -493,6 +492,10 @@ class AsyncioRouter:
         router is initialized.
         """
         if not self._request_router and self._request_router_class:
+            from ray.anyscale.serve._private.replica_scheduler.replica_wrapper import (
+                AnyscaleRunningReplica,
+            )
+
             request_router = self._request_router_class(
                 deployment_id=self.deployment_id,
                 handle_source=self._handle_source,
@@ -503,7 +506,7 @@ class AsyncioRouter:
                 else None,
                 # Streaming ObjectRefGenerators are not supported in Ray Client
                 use_replica_queue_len_cache=self._enable_strict_max_ongoing_requests,
-                create_replica_wrapper_func=lambda r: RunningReplica(r),
+                create_replica_wrapper_func=lambda r: AnyscaleRunningReplica(r),
                 prefer_local_node_routing=self._prefer_local_node_routing,
                 prefer_local_az_routing=RAY_SERVE_PROXY_PREFER_LOCAL_AZ_ROUTING,
                 self_availability_zone=self._availability_zone,

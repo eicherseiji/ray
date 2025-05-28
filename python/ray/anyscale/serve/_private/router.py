@@ -19,7 +19,9 @@ class CurrentLoopRouter(Router):
 
         self._asyncio_loop = asyncio.get_running_loop()
         self._asyncio_router = AsyncioRouter(
-            event_loop=self._asyncio_loop, **passthrough_kwargs
+            event_loop=self._asyncio_loop,
+            _request_router_initialized_event=asyncio.Event(),
+            **passthrough_kwargs,
         )
 
     def running_replicas_populated(self) -> bool:

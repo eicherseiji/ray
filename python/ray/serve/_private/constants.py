@@ -432,8 +432,9 @@ RAY_SERVE_METRICS_EXPORT_INTERVAL_MS = int(
 # The default request router class to use if none is specified.
 DEFAULT_REQUEST_ROUTER_PATH = (
     "ray.serve._private.replica_scheduler:PowerOfTwoChoicesReplicaScheduler"
+)
 
-  # How long to wait after deployments become stable before attempting node compaction
+# How long to wait after deployments become stable before attempting node compaction
 RAY_SERVE_NODE_COMPACTION_DELAY_S = int(
     os.environ.get("RAY_SERVE_NODE_COMPACTION_DELAY_S", "300")
 )

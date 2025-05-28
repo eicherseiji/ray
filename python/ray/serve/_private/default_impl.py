@@ -335,13 +335,11 @@ def create_router(  # noqa: F811
     handle_id: str,
     deployment_id: DeploymentID,
     handle_options: Any,
+    request_router_class: Optional[Callable] = None,
 ):
     import asyncio
 
     # NOTE(edoakes): this is lazy due to a nasty circular import that should be fixed.
-    from ray.anyscale.serve._private.replica_scheduler.replica_wrapper import (
-        AnyscaleRunningReplica,
-    )
     from ray.anyscale.serve._private.router import CurrentLoopRouter
     from ray.anyscale.serve.utils import (
         asyncio_grpc_exception_handler,
@@ -353,22 +351,6 @@ def create_router(  # noqa: F811
     node_id, availability_zone = _get_node_id_and_az()
     controller_handle = _get_global_client()._controller
     is_inside_ray_client_context = inside_ray_client_context()
-
-    replica_scheduler = PowerOfTwoChoicesReplicaScheduler(
-        deployment_id=deployment_id,
-        handle_source=handle_options._source,
-        prefer_local_node_routing=handle_options._prefer_local_routing,
-        prefer_local_az_routing=RAY_SERVE_PROXY_PREFER_LOCAL_AZ_ROUTING,
-        self_node_id=node_id,
-        self_actor_id=actor_id,
-        self_actor_handle=ray.get_runtime_context().current_actor
-        if ray.get_runtime_context().get_actor_id()
-        else None,
-        self_availability_zone=availability_zone,
-        # Streaming ObjectRefGenerators are not supported in Ray Client
-        use_replica_queue_len_cache=not is_inside_ray_client_context,
-        create_replica_wrapper_func=lambda r: AnyscaleRunningReplica(r),
-    )
 
     if handle_options._run_router_in_separate_loop:
         router_wrapper_cls = SingletonThreadRouter
@@ -393,10 +375,13 @@ def create_router(  # noqa: F811
         handle_id=handle_id,
         self_actor_id=actor_id,
         handle_source=handle_options._source,
-        replica_scheduler=replica_scheduler,
+        request_router_class=request_router_class,
         # Streaming ObjectRefGenerators are not supported in Ray Client
         enable_strict_max_ongoing_requests=not is_inside_ray_client_context,
         resolve_request_arg_func=resolve_deployment_resp_and_ray_objects,
+        node_id=node_id,
+        availability_zone=availability_zone,
+        prefer_local_node_routing=handle_options._prefer_local_routing,
     )
 
 
