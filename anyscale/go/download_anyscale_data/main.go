@@ -27,7 +27,8 @@ func main() {
 
 	args := flag.Args()
 	if len(args) != 1 {
-		log.Fatalf("Usage: %s <path>", args[0])
+		flag.PrintDefaults()
+		log.Fatal("no download path given")
 	}
 
 	var w io.Writer
