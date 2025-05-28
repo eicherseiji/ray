@@ -11,6 +11,7 @@ import pyarrow.fs
 # Ray imports
 import ray.train
 from ray.data.datasource.partitioning import Partitioning
+from ray.data.context import DataContext
 
 # Local imports
 from constants import DatasetKey
@@ -87,6 +88,7 @@ class ImageClassificationJpegRayDataLoaderFactory(
         s3fs = self.get_s3fs_with_boto_creds()
 
         # Create training dataset with class-based partitioning
+        DataContext.get_current()._enable_read_files_fusion_override = True
         train_pattern = IMAGENET_JPEG_SPLIT_S3_DIRS[DatasetKey.TRAIN]
         train_partitioning = Partitioning(
             "dir", base_dir=train_pattern, field_names=["class"]
