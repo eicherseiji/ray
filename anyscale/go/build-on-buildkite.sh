@@ -35,7 +35,12 @@ export PATH="${GOROOT}/bin:${PATH}"
     CGO_ENABLED=0 go build -trimpath -buildvcs=false \
         -o /tmp/download_anyscale_data \
         ./download_anyscale_data
+
+    CGO_ENABLED=0 GOARCH=arm64 go build -trimpath -buildvcs=false \
+        -o /tmp/download_anyscale_data-aarch64 \
+        ./download_anyscale_data
 )
 
 echo "--- save download_anyscale_data"
 aws s3 cp /tmp/download_anyscale_data "${S3_TEMP}/download_anyscale_data"
+aws s3 cp /tmp/download_anyscale_data-aarch64 "${S3_TEMP}/download_anyscale_data-aarch64"
