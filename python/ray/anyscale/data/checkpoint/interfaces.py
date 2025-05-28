@@ -124,9 +124,13 @@ class CheckpointConfig:
         self.checkpoint_path: str = (
             checkpoint_path or self._get_default_checkpoint_path()
         )
-        inferred_backend, inferred_fs = self._infer_backend_and_fs(self.checkpoint_path)
-        self.filesystem: "pyarrow.fs.FileSystem" = override_filesystem or inferred_fs
-        self.backend: CheckpointBackend = override_backend or inferred_backend
+        inferred_backend, inferred_fs = self._infer_backend_and_fs(
+            self.checkpoint_path,
+            override_filesystem,
+            override_backend,
+        )
+        self.filesystem: "pyarrow.fs.FileSystem" = inferred_fs
+        self.backend: CheckpointBackend = inferred_backend
         self.delete_checkpoint_on_success: bool = delete_checkpoint_on_success
         self.filter_num_threads: int = filter_num_threads
         self.write_num_threads: int = write_num_threads
@@ -155,14 +159,34 @@ class CheckpointConfig:
         return f"{artifact_storage}/{self.DEFAULT_CHECKPOINT_PATH_DIR}"
 
     def _infer_backend_and_fs(
-        self, checkpoint_path
+        self,
+        checkpoint_path: str,
+        override_filesystem: Optional["pyarrow.fs.FileSystem"] = None,
+        override_backend: Optional[CheckpointBackend] = None,
     ) -> Tuple[CheckpointBackend, "pyarrow.fs.FileSystem"]:
         try:
-            fs, _ = pyarrow.fs.FileSystem.from_uri(checkpoint_path)
-            if isinstance(fs, pyarrow.fs.LocalFileSystem):
-                return CheckpointBackend.FILE_STORAGE, fs
+            if override_filesystem is not None:
+                assert isinstance(override_filesystem, pyarrow.fs.FileSystem), (
+                    "override_filesystem must be an instance of "
+                    f"`pyarrow.fs.FileSystem`, but got {type(override_filesystem)}"
+                )
+                fs = override_filesystem
             else:
-                return CheckpointBackend.CLOUD_OBJECT_STORAGE, fs
+                fs, _ = pyarrow.fs.FileSystem.from_uri(checkpoint_path)
+
+            if override_backend is not None:
+                assert isinstance(override_backend, CheckpointBackend), (
+                    "override_backend must be an instance of `CheckpointBackend`, "
+                    f"but got {type(override_backend)}"
+                )
+                backend = override_backend
+            else:
+                if isinstance(fs, pyarrow.fs.LocalFileSystem):
+                    backend = CheckpointBackend.FILE_STORAGE
+                else:
+                    backend = CheckpointBackend.CLOUD_OBJECT_STORAGE
+
+            return backend, fs
         except Exception as e:
             raise InvalidCheckpointingConfig(
                 f"Invalid checkpoint path: {checkpoint_path}. "

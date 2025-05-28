@@ -238,6 +238,19 @@ class TestCheckpointConfig:
         assert config.filesystem is fs
         assert config.backend is backend
 
+    def test_skip_inference_with_overrides(self):
+        """Test that filesystem inference is skipped when override is provided."""
+        # Inferring filesystem will fail if the path doesn't exist.
+        path = "s3://non-existing-bucket/"
+        fs = pyarrow.fs.S3FileSystem()
+        config = CheckpointConfig(
+            "id",
+            path,
+            override_filesystem=fs,
+        )
+        assert config.filesystem is fs
+        assert config.backend is CheckpointBackend.CLOUD_OBJECT_STORAGE
+
 
 class TestInsertCheckpointingLayerRule:
     """Unit tests for `InsertCheckpointingLayerRule`."""
