@@ -1,18 +1,18 @@
 import abc
-from typing import Dict
+from typing import Dict, Optional
 
 from ray.rllib.algorithms.bc_irl_ppo.bc_irl_ppo import BCIRLPPOConfig
 from ray.rllib.core.learner.differentiable_learner import DifferentiableLearner
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.lambda_defaultdict import LambdaDefaultDict
 from ray.rllib.utils.schedules.scheduler import Scheduler
-from ray.rllib.utils.typing import ModuleID, TensorType
+from ray.rllib.utils.typing import DeviceType, ModuleID, TensorType
 
 
 class BCIRLPPODifferentiableLearner(DifferentiableLearner):
     @override(DifferentiableLearner)
-    def build(self) -> None:
-        super().build()
+    def build(self, device: Optional[DeviceType] = None) -> None:
+        super().build(device=device)
 
         # TODO (simon): Check, if we still need this in new stack PPO.
         # Dict mapping module IDs to the respective entropy Scheduler instance.
@@ -24,8 +24,7 @@ class BCIRLPPODifferentiableLearner(DifferentiableLearner):
                     self.config.get_config_for_module(module_id).ppo_entropy_coeff
                 ),
                 framework=self.framework,
-                # TODO (simon): Add device for GPU training.
-                # device=self._device,
+                device=self._device,
             )
         )
 

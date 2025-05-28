@@ -308,14 +308,16 @@ class BCIRLPPOTorchDifferentiableLearner(
         Returns: A tensor with the value targets.
         """
         # Convert to torch tensors.
-        lambda_ = torch.Tensor([lambda_])
-        gamma = torch.Tensor([gamma])
+        lambda_ = torch.tensor([lambda_], device=self._device)
+        gamma = torch.tensor([gamma], device=self._device)
 
         # Force-set all values at terminals (not at truncations!) to 0.0.
         continues = 1.0 - terminateds
         orig_values = flat_values = values * continues
 
-        flat_values = torch.concatenate((flat_values, torch.zeros((1,))), dim=-1)
+        flat_values = torch.concatenate(
+            (flat_values, torch.zeros((1,), device=self._device)), dim=-1
+        )
         intermediates = rewards + gamma * (1.0 - lambda_) * flat_values[1:]
 
         Rs = []

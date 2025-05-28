@@ -44,6 +44,7 @@ from ray.rllib.utils.minibatch_utils import (
     MiniBatchRayDataIterator,
 )
 from ray.rllib.utils.typing import (
+    DeviceType,
     ModuleID,
     NamedParamDict,
     ResultDict,
@@ -96,6 +97,8 @@ class DifferentiableLearner(Checkpointable):
         self.learner_config: "DifferentiableLearnerConfig" = learner_config
         # The reference to the caller's module.
         self._module: Optional[MultiRLModule] = module
+        # The reference to the caller's device.
+        self._device: Optional[DeviceType] = None
         # A counter for functional weight updates.
         self._weights_seq_no: int = 0
 
@@ -116,11 +119,13 @@ class DifferentiableLearner(Checkpointable):
         self.iterator: MiniBatchRayDataIterator = None
 
     @OverrideToImplementCustomLogic_CallToSuperRecommended
-    def build(self) -> None:
+    def build(self, device: Optional[DeviceType] = None) -> None:
 
         if self._is_built:
             logger.debug("DifferentiableLearner already built. Skipping built.")
 
+        if device is not None:
+            self._device = device
         # TODO (simon): Move the `build_learner_connector` to the
         # `DifferentiableLearnerConfig`.
         self._learner_connector = self.learner_config.build_learner_connector(
