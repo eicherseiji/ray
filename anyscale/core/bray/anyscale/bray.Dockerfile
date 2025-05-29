@@ -1,5 +1,6 @@
 FROM 830883877497.dkr.ecr.us-west-2.amazonaws.com/anyscale/runtime:__REMOTE_BUILD_COMMIT_BASE__-py312-cu123-min-as
 
+RUN echo "__REMOTE_RANDOM_ECHO__"
 RUN mkdir -p /tmp/patches /tmp/newray && \
     aws s3 cp s3://core-bazel-cache/__REMOTE_BUILD_NAME__/ray-opt.tgz /tmp/ray-opt.tgz && \
     tar -xvzf /tmp/ray-opt.tgz -C /tmp/patches && \

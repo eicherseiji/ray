@@ -2,6 +2,8 @@ import os
 import subprocess
 import json
 import requests
+import random
+import string
 from typing import Tuple
 
 import anyscale
@@ -194,6 +196,10 @@ def _create_workspace(build_name: str, ray_base_commit: str, is_ray_turbo: bool)
     log("Go to your workspace and rebuild with the following Dockerfile:")
     with open(f"{_CURRENT_DIR}/bray.Dockerfile", "r") as infile:
         content = infile.read()
+        content = content.replace(
+            "__REMOTE_RANDOM_ECHO__",
+            "".join(random.choices(string.ascii_letters + string.digits, k=8)),
+        )
         content = content.replace("__REMOTE_BUILD_NAME__", build_name)
         content = content.replace(
             "__REMOTE_BUILD_COMMIT_BASE__",

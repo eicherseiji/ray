@@ -18,7 +18,6 @@ _BRAY_PREFIX = "bray"
 
 _BUILD_JOB_CLOUD = "anyscale_v2_default_cloud"
 _BUILD_JOB_INSTANCE_TYPE = "m5.xlarge"
-_RAY_TURBO_SYNC_BOT = "reef+rayturbo-syncbot@anyscale.com"
 _COMMIT_MAP_LENGTH = 1000
 _COMMIT_MAP_FILE_NAME = "ray_commit_map.json"
 
@@ -69,7 +68,9 @@ def upload_ray_commit_map(working_dir: str) -> None:
     anyscale.job.wait(id=id)
 
 
-def compute_ray_commit_map(ray_turbo_dir: str, working_dir: str) -> RayCommitMap:
+def compute_ray_commit_map(
+    ray_turbo_dir: str, ray_dir: str, working_dir: str
+) -> RayCommitMap:
     """
     Compute a mapping from Ray commit to Ray Turbo commit.
 
@@ -83,24 +84,29 @@ def compute_ray_commit_map(ray_turbo_dir: str, working_dir: str) -> RayCommitMap
         ray_turbo_head="",
         ray_to_ray_turbo_commit_map={},
     )
-    commits = (
+    ray_commits = (
         subprocess.check_output(
-            ["git", "log", "-n", f"{_COMMIT_MAP_LENGTH}", "--pretty=format:%H %ae"],
+            ["git", "log", "-n", f"{2 * _COMMIT_MAP_LENGTH}", "--pretty=format:%H"],
+            cwd=ray_dir,
+        )
+        .strip()
+        .decode("utf-8")
+    ).split("\n")
+    ray_turbo_commits = (
+        subprocess.check_output(
+            ["git", "log", "-n", f"{_COMMIT_MAP_LENGTH}", "--pretty=format:%H"],
             cwd=ray_turbo_dir,
         )
         .strip()
         .decode("utf-8")
     ).split("\n")
-    commits.reverse()
-    for commit in commits:
-        commit_hash, email = commit.split(" ")
-        if email == _RAY_TURBO_SYNC_BOT:
-            commit_map.ray_turbo_head = commit_hash
+    ray_turbo_commits.reverse()
+    for commit in ray_turbo_commits:
+        if commit not in ray_commits:
+            commit_map.ray_turbo_head = commit
             continue
         if commit_map.ray_turbo_head:
-            commit_map.ray_to_ray_turbo_commit_map[
-                commit_hash
-            ] = commit_map.ray_turbo_head
+            commit_map.ray_to_ray_turbo_commit_map[commit] = commit_map.ray_turbo_head
 
     with open(f"{working_dir}/{_COMMIT_MAP_FILE_NAME}", "w") as f:
         json.dump(asdict(commit_map), f)
@@ -114,11 +120,16 @@ def compute_ray_commit_map(ray_turbo_dir: str, working_dir: str) -> RayCommitMap
     required=True,
     help="Directory containing the Ray code to be built.",
 )
-def main(ray_turbo_dir: str) -> None:
+@click.option(
+    "--ray-dir",
+    required=True,
+    help="Directory containing the Ray source code.",
+)
+def main(ray_turbo_dir: str, ray_dir: str) -> None:
     with tempfile.TemporaryDirectory() as working_dir:
         # Compute the Ray commit map
         log("Computing Ray commit map ...")
-        compute_ray_commit_map(ray_turbo_dir, working_dir)
+        compute_ray_commit_map(ray_turbo_dir, ray_dir, working_dir)
 
         # Copy the Ray source code and the build scripts to the temporary directory
         log("Constructing working directory ...")
