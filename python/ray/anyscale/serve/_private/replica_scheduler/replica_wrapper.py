@@ -11,8 +11,8 @@ from ray.anyscale.serve._private.constants import (
 from ray.anyscale.serve._private.replica_result import gRPCReplicaResult
 from ray.exceptions import ActorUnavailableError
 from ray.serve._private.common import ReplicaQueueLengthInfo, RunningReplicaInfo
-from ray.serve._private.replica_scheduler.common import PendingRequest
-from ray.serve._private.replica_scheduler.replica_wrapper import (
+from ray.serve._private.request_router.common import PendingRequest
+from ray.serve._private.request_router.replica_wrapper import (
     ActorReplicaWrapper,
     ReplicaWrapper,
     RunningReplica,

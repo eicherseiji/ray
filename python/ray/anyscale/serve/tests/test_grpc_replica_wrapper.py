@@ -19,7 +19,7 @@ from ray.serve._private.common import (
     RequestMetadata,
     RunningReplicaInfo,
 )
-from ray.serve._private.replica_scheduler.common import PendingRequest
+from ray.serve._private.request_router.common import PendingRequest
 from ray.serve._private.test_utils import send_signal_on_cancellation
 from ray.serve.generated import serve_proprietary_pb2, serve_proprietary_pb2_grpc
 from ray.serve.tests.conftest import *  # noqa

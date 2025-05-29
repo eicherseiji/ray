@@ -124,14 +124,16 @@ class DifferentiableLearner(Checkpointable):
         if self._is_built:
             logger.debug("DifferentiableLearner already built. Skipping built.")
 
-        if device is not None:
+        # If a dvice was passed, set the `DifferentiableLearner`'s device.
+        if device:
             self._device = device
+
         # TODO (simon): Move the `build_learner_connector` to the
         # `DifferentiableLearnerConfig`.
         self._learner_connector = self.learner_config.build_learner_connector(
             input_observation_space=None,
             input_action_space=None,
-            device=None,
+            device=self._device,
         )
 
         # This instance is now ready for use.
@@ -628,9 +630,13 @@ class DifferentiableLearner(Checkpointable):
         elif (
             isinstance(training_data.batch, MultiAgentBatch)
             and training_data.batch.policy_batches
-            and isinstance(
-                next(iter(training_data.batch.policy_batches.values()))["obs"],
-                numpy.ndarray,
+            and (
+                isinstance(
+                    next(iter(training_data.batch.policy_batches.values()))["obs"],
+                    numpy.ndarray,
+                )
+                or next(iter(training_data.batch.policy_batches.values()))["obs"].device
+                != self._device
             )
         ):
             batch = self._convert_batch_type(training_data.batch)
