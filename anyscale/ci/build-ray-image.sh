@@ -38,12 +38,15 @@ else
     exit 1
 fi
 
-if [[ "$(uname -m)" == "x86_64" ]]; then
+if [[ "$MACHTYPE" =~ ^x86_64 ]]; then
     HOSTTYPE="x86_64"
-    IMG_SUFFIX=""
-else
+    ARCH_SUFFIX=""
+elif [[ "$MACHTYPE" =~ ^aarch64 ]]; then
     HOSTTYPE="aarch64"
-    IMG_SUFFIX="-aarch64"
+    ARCH_SUFFIX="-aarch64"
+else
+    echo "Unsupported architecture $MACHTYPE" >/dev/stderr
+    exit 1
 fi
 
 if [[ "${PY_VERSION}" == "3.9" ]]; then
@@ -159,11 +162,11 @@ aws s3 cp "${S3_TEMP}/${WHEEL_FILE}" "${BUILD_TMP}/runtime-whl/${WHEEL_FILE}"
 if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
     readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_slim_20250515.tar.gz"
     readonly DATAPLANE_TGZ_WANT="c2060c5a70d39eaeeeee2834b9f3bb4ad27b8f44d2e41f6e6c25449d781fb2d7"
-    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-min-py${PY_VERSION}-${IMG_TYPE}-base"
+    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-min-py${PY_VERSION}-${IMG_TYPE}-base${ARCH_SUFFIX}"
 else
     readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_20250515.tar.gz"
     readonly DATAPLANE_TGZ_WANT="b6afd94c7acdb0040d032f72a24cf701a03e60794b3f21cce8cdb5ab8796f938"
-    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-${BASE_TYPE}-py${PY_VERSION}-${IMG_TYPE}-base"
+    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-${BASE_TYPE}-py${PY_VERSION}-${IMG_TYPE}-base${ARCH_SUFFIX}"
 fi
 
 aws s3 cp "${ANYSCALE_DATAPLANE_LAYER}" "${BUILD_TMP}/dataplane.tar.gz"
@@ -189,11 +192,11 @@ fi
 export DOCKER_BUILDKIT=1
 
 if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
-    BUILD_TAG="${IMAGE_PREFIX}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}-min${IMG_SUFFIX}"
-    SITEPKG_TGZ="${BASE_TYPE}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}-min${IMG_SUFFIX}.tar.gz"
+    BUILD_TAG="${IMAGE_PREFIX}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}-min${ARCH_SUFFIX}"
+    SITEPKG_TGZ="${BASE_TYPE}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}-min${ARCH_SUFFIX}.tar.gz"
 else
-    BUILD_TAG="${IMAGE_PREFIX}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${IMG_SUFFIX}"
-    SITEPKG_TGZ="${BASE_TYPE}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${IMG_SUFFIX}.tar.gz"
+    BUILD_TAG="${IMAGE_PREFIX}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${ARCH_SUFFIX}"
+    SITEPKG_TGZ="${BASE_TYPE}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${ARCH_SUFFIX}.tar.gz"
 fi
 RAY_IMG="${RAYTURBO_REPO}:${BUILD_TAG}"
 ANYSCALE_IMG="${RAYTURBO_REPO}:${BUILD_TAG}-as"
@@ -277,15 +280,15 @@ cp python/requirements_compiled.txt "${CONTEXT_TMP}/."
 cp anyscale/docker/NOTICE "${CONTEXT_TMP}/."
 cp anyscale/docker/ray-prestart "${CONTEXT_TMP}/."
 cp LICENSE.runtime "${CONTEXT_TMP}/LICENSE"
-aws s3 cp "${S3_TEMP}/download_anyscale_data" "${CONTEXT_TMP}/download_anyscale_data"
+aws s3 cp "${S3_TEMP}/download_anyscale_data${ARCH_SUFFIX}" "${CONTEXT_TMP}/download_anyscale_data"
 chmod +x "${CONTEXT_TMP}/download_anyscale_data"
 
 # Must keep this consistent with anyscale/ci/upload-rayturbo-artifacts.sh
 if [[ "${RAY_RELEASE_BUILD:-}" == "true" ]]; then
   if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
-    ANYSCALE_PRESTART_DATA_PATH="common/ray-opt/${RAY_VERSION}/${FULL_COMMIT}/ray-opt-${PY_VERSION_CODE}-min.tar.gz"
+    ANYSCALE_PRESTART_DATA_PATH="common/ray-opt/${RAY_VERSION}/${FULL_COMMIT}/ray-opt-${PY_VERSION_CODE}-min${ARCH_SUFFIX}.tar.gz"
   else
-    ANYSCALE_PRESTART_DATA_PATH="common/ray-opt/${RAY_VERSION}/${FULL_COMMIT}/ray-opt-${PY_VERSION_CODE}.tar.gz"
+    ANYSCALE_PRESTART_DATA_PATH="common/ray-opt/${RAY_VERSION}/${FULL_COMMIT}/ray-opt-${PY_VERSION_CODE}${ARCH_SUFFIX}.tar.gz"
   fi
 else
     ANYSCALE_PRESTART_DATA_PATH=""  # stub an empty label
@@ -344,16 +347,16 @@ if [[ "${PUSH_COMMIT_TAGS}" == "true" ]]; then
     fi
 
     if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
-        COMMIT_TAG="${SHORT_COMMIT}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}-min${IMG_SUFFIX}"
+        COMMIT_TAG="${SHORT_COMMIT}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}-min${ARCH_SUFFIX}"
     else
-        COMMIT_TAG="${SHORT_COMMIT}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${IMG_SUFFIX}"
+        COMMIT_TAG="${SHORT_COMMIT}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${ARCH_SUFFIX}"
     fi
 
     docker_push_as "${RAY_IMG}" "${RAYTURBO_REPO}:${COMMIT_TAG}"
     IMG_ANNOTATE=true docker_push_as "${ANYSCALE_IMG}" "${RAYTURBO_REPO}:${COMMIT_TAG}-as"
 
     if [[ "${IMG_TYPE_CODE}" == "${ML_CUDA_VERSION}" ]]; then
-        COMMIT_GPU_TAG="${SHORT_COMMIT}-${PY_VERSION_CODE}-gpu${IMG_SUFFIX}"
+        COMMIT_GPU_TAG="${SHORT_COMMIT}-${PY_VERSION_CODE}-gpu${ARCH_SUFFIX}"
         docker_push_as "${RAY_IMG}" "${RAYTURBO_REPO}:${COMMIT_GPU_TAG}"
         IMG_ANNOTATE=true docker_push_as "${ANYSCALE_IMG}" "${RAYTURBO_REPO}:${COMMIT_GPU_TAG}-as"
     fi

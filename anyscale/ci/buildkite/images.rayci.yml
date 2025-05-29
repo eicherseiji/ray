@@ -67,8 +67,8 @@ steps:
       - "3.11"
       - "3.12"
 
-  - label: ":tapioca: rayturbo py{{matrix}} wheel arm64"
-    key: rayturbo-wheels-arm64
+  - label: ":tapioca: rayturbo py{{matrix}} wheel aarch64"
+    key: rayturbo-wheels-aarch64
     commands:
       - bazel run //ci/ray_ci:build_in_docker -- wheel --architecture aarch64 --python-version {{matrix}}
       - bash anyscale/ci/upload-wheels.sh
@@ -92,7 +92,7 @@ steps:
     depends_on:
       - forge
 
-  - label: ":tapioca: rayturbo py{{matrix.py}} {{matrix.base}} image"
+  - label: ":tapioca: rayturbo py{{matrix.py}} {{matrix.base}} image (amd64)"
     key: rayturbo-image
     tags: docker
     commands:
@@ -122,6 +122,38 @@ steps:
           - "cu12.4.1-cudnn"
           - "cu12.5.1-cudnn"
           - "cu12.8.1-cudnn"
+
+  - label: ":tapioca: rayturbo py{{matrix.py}} {{matrix.base}} image (aarch64)"
+    key: rayturbo-image-aarch64
+    tags: docker
+    commands:
+      - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}}
+    instance_type: medium-arm64
+    depends_on:
+      - rayturbo-wheels-aarch64
+      - rayturbo-helper
+      - raycpubase-aarch64
+      - raycudabase-aarch64
+      - check-ray-wheels
+    job_env: forge-aarch64
+    mount_buildkite_agent: true
+    matrix:
+      setup:
+        py:
+          - "3.9"
+          - "3.10"
+          - "3.11"
+          - "3.12"
+        base:
+          - "cpu"
+          - "cu11.7.1-cudnn8"
+          - "cu11.8.0-cudnn8"
+          - "cu12.1.1-cudnn8"
+          - "cu12.3.2-cudnn9"
+          - "cu12.4.1-cudnn"
+          - "cu12.5.1-cudnn"
+          - "cu12.8.1-cudnn"
+
   - label: ":tapioca: minimized rayturbo py{{matrix.py}} {{matrix.base}} image"
     key: rayturbo-min-image
     tags: docker
@@ -200,6 +232,7 @@ steps:
   - label: ":tapioca: check rayturbo site package tarball"
     depends_on:
       - rayturbo-image
+      - rayturbo-image-aarch64
       - rayturbo-llm-image
       - rayturbo-min-image
       - rayturbo-ml-image

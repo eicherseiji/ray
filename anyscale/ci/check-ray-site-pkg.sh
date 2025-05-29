@@ -5,33 +5,46 @@ set -euo pipefail
 source anyscale/ci/setup-env.sh
 
 PY_VERSION_CODES=(py39 py310 py311 py312)
+SUM_FILES=(sums-min.txt sums-aarch64.txt sums-default.txt)
 
-TMP="$(mktemp -d)"
+tmp_dir="$(mktemp -d)"
 
 # Download and check ray-oss site package files.
-for RAY_VAR in ray-oss ray-opt ; do
-    for PY_VERSION_CODE in "${PY_VERSION_CODES[@]}"; do
-        mkdir -p "${TMP}/${RAY_VAR}/${PY_VERSION_CODE}"
+for ray_type in ray-oss ray-opt ; do
+    for py_version_code in "${PY_VERSION_CODES[@]}"; do
+        mkdir -p "${tmp_dir}/${ray_type}/${py_version_code}"
         (
-            cd "${TMP}/${RAY_VAR}/${PY_VERSION_CODE}"
+            cd "${tmp_dir}/${ray_type}/${py_version_code}"
 
-            aws s3 sync "${S3_TEMP}/${RAY_VAR}/${PY_VERSION_CODE}" .
-            sha256sum ./*.tar.gz | tee sums.txt
+            aws s3 sync "${S3_TEMP}/${ray_type}/${py_version_code}" .
 
-            for IS_MINIMIZED in "true" "false" ; do
-              if [[ "${IS_MINIMIZED}" == "true" ]]; then
-                  COUNT="$(awk '/min/{print $1}' sums.txt | sort | uniq | wc -l)"
-              else
-                  COUNT="$(awk '!/min/{print $1}' sums.txt | sort | uniq | wc -l)"
-              fi
-              if [[ "${COUNT}" != "1" ]]; then
-                echo "Digest mismatch for ${RAY_VAR} ${PY_VERSION_CODE} (minimized: ${IS_MINIMIZED}): ${COUNT} unique digests" >/dev/stderr
-                  exit 1
-              fi
+            for sums_file in "${SUM_FILES[@]}"; do
+                # Create empty sum files.
+                : > "${sums_file}"
+            done
+
+            for file in *.tar.gz; do
+                if [[ "${file}" == *-min.tar.gz ]]; then
+                    sha256sum "${file}" | tee -a sums-min.txt
+                elif [[ "${file}" == *-aarch64.tar.gz ]]; then
+                    sha256sum "${file}" | tee -a sums-aarch64.txt
+                else
+                    sha256sum "${file}" | tee -a sums-default.txt
+                fi
+            done
+
+            for sums_file in "${SUM_FILES[@]}"; do
+                count="$(awk '{print $1}' "${sums_file}" | sort | uniq | wc -l)"
+                if [[ "${count}" != "1" ]]; then
+                    echo "Digest mismatch for ${ray_type} ${py_version_code} in file: ${sums_file})" >/dev/stderr
+                    exit 1
+                fi
             done
         )
+        echo "Successfully checked ${ray_type} ${py_version_code}"
+        rm -rf "${tmp_dir:?}/${ray_type:?}/${py_version_code:?}"
     done
 done
 
 # Cleanup temp dir.
-rm -rf "${TMP}"
+rm -rf "${tmp_dir}"

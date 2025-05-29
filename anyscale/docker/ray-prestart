@@ -7,6 +7,17 @@ if [[ "${ANYSCALE_DISABLE_OPTIMIZED_RAY:-}" == "true" || "${ANYSCALE_DISABLE_OPT
     exit 0
 fi
 
+if [[ "$MACHTYPE" =~ ^x86_64 ]]; then
+    HOSTTYPE="x86_64"
+    ARCH_SUFFIX=""
+elif [[ "$MACHTYPE" =~ ^aarch64 ]]; then
+    HOSTTYPE="aarch64"
+    ARCH_SUFFIX="-aarch64"
+else
+    echo "Unsupported architecture $MACHTYPE" >/dev/stderr
+    exit 1
+fi
+
 source /opt/anyscale/version-envs.sh
 
 if [[ "${ANYSCALE_RAY_SITE_PKG_DIR:-}" == "" ]]; then
@@ -35,10 +46,11 @@ if [[ ! -f "${ANYSCALE_INLINED_RAY_OPT}" ]]; then
     if [[ "${ANYSCALE_PRESTART_DATA_PATH:-}" == "" ]]; then
         # If not explicitly set, auto forge a default one.
         ANYSCALE_PRESTART_DATA_PATH_BASE="common/ray-opt/${ANYSCALE_RAY_VERSION}/${ANYSCALE_RAY_COMMIT}"
+
         if [[ "${ANYSCALE_RAY_MINIMIZED:-}" == "1" ]]; then
-            ANYSCALE_PRESTART_DATA_PATH="${ANYSCALE_PRESTART_DATA_PATH_BASE}/ray-opt-${ANYSCALE_PY_VERSION_CODE}-min.tar.gz"
+            ANYSCALE_PRESTART_DATA_PATH="${ANYSCALE_PRESTART_DATA_PATH_BASE}/ray-opt-${ANYSCALE_PY_VERSION_CODE}-min${ARCH_SUFFIX}.tar.gz"
         else
-            ANYSCALE_PRESTART_DATA_PATH="${ANYSCALE_PRESTART_DATA_PATH_BASE}/ray-opt-${ANYSCALE_PY_VERSION_CODE}.tar.gz"
+            ANYSCALE_PRESTART_DATA_PATH="${ANYSCALE_PRESTART_DATA_PATH_BASE}/ray-opt-${ANYSCALE_PY_VERSION_CODE}${ARCH_SUFFIX}.tar.gz"
         fi
     fi
 fi
