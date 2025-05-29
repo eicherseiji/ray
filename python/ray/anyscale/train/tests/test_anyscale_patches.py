@@ -1,4 +1,5 @@
 import pytest
+import sys
 
 import ray.train
 
@@ -59,4 +60,4 @@ def test_dataset_setup_callback_patch(num_workers, excluded_resources):
 
 
 if __name__ == "__main__":
-    pytest.main(["-v", "-x", __file__])
+    sys.exit(pytest.main(["-v", "-x", __file__]))

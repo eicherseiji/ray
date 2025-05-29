@@ -33,6 +33,8 @@ class ElasticScalingPolicy(ScalingPolicy):
     AUTOSCALING_REQUESTS_INTERVAL_S = 20
     # Timeout in seconds for getting the result of a call to the AutoscalingCoordinator.
     AUTOSCALING_REQUESTS_GET_TIMEOUT_S = 5
+    # Minimum interval in seconds between logging warnings about insufficient workers.
+    INSUFFICIENT_WORKERS_WARNING_INTERVAL_S = 30
 
     def __init__(self, scaling_config: ScalingConfig):
         super().__init__(scaling_config)
@@ -42,6 +44,7 @@ class ElasticScalingPolicy(ScalingPolicy):
         # TODO: define the UUID in TrainController.
         self._requester_id = "train-" + uuid.uuid4().hex
         self._latest_autoscaling_request_time = float("-inf")
+        self._latest_insufficient_workers_warning_time = float("-inf")
 
     def _count_possible_workers(
         self, allocated_resources: List[Dict[str, float]]
@@ -85,13 +88,20 @@ class ElasticScalingPolicy(ScalingPolicy):
         decision = self._get_resize_decision(allocated_resources)
 
         if decision.num_workers < self.scaling_config.min_workers:
-            logger.info(
-                f"Detected ready resources for {decision.num_workers} workers "
-                "in the cluster. "
-                "Deciding NOT to start/restart training due to the number of workers "
-                "falling below the minimum "
-                f"(min_workers={self.scaling_config.min_workers})."
-            )
+            now = time_monotonic()
+            # Only log this warning periodically to avoid spamming logs
+            if (
+                now - self._latest_insufficient_workers_warning_time
+                >= self.INSUFFICIENT_WORKERS_WARNING_INTERVAL_S
+            ):
+                logger.info(
+                    f"Detected ready resources for {decision.num_workers} workers "
+                    "in the cluster. "
+                    "Deciding NOT to start/restart training due to the number of workers "
+                    "falling below the minimum "
+                    f"(min_workers={self.scaling_config.min_workers})."
+                )
+                self._latest_insufficient_workers_warning_time = now
             return NoopDecision()
 
         logger.info(

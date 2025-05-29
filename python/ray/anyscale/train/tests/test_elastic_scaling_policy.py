@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import sys
 from freezegun import freeze_time
 
 from ray.anyscale.air._internal.autoscaling_coordinator import ResourceRequestPriority
@@ -288,4 +289,4 @@ def test_request_and_clear():
 
 
 if __name__ == "__main__":
-    pytest.main(["-v", __file__])
+    sys.exit(pytest.main(["-v", __file__]))

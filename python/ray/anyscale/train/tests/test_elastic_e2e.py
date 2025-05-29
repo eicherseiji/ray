@@ -1,6 +1,7 @@
 import time
 from pathlib import Path
 from typing import List
+import sys
 
 import pytest
 
@@ -180,4 +181,4 @@ def test_elastic_training(monkeypatch, tmp_path, cluster):
 
 
 if __name__ == "__main__":
-    pytest.main(["-v", "-x", __file__])
+    sys.exit(pytest.main(["-v", "-x", __file__]))
