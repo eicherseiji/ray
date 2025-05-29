@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from anyscale.ci.ray_wheels_lib import (
+    HOST_TYPES,
     PYTHON_VERSIONS,
     _get_wheel_names,
     check_wheels_exist_on_s3,
@@ -15,7 +16,9 @@ def test_get_wheel_names():
     ray_version = "1.11.0"
     wheel_names = _get_wheel_names(ray_version)
 
-    assert len(wheel_names) == len(PYTHON_VERSIONS)
+    assert len(wheel_names) == len(PYTHON_VERSIONS) * len(HOST_TYPES)
+
+    platforms = [f"manylinux2014_{host_type}" for host_type in HOST_TYPES]
 
     for wheel_name in wheel_names:
         assert len(wheel_name.split("-")) == 5
@@ -31,7 +34,7 @@ def test_get_wheel_names():
         assert ray_type == "ray"
         assert ray_version == ray_version
         assert f"{python_version}-{python_version2}" in PYTHON_VERSIONS
-        assert platform == "manylinux2014_x86_64"
+        assert platform in platforms
 
 
 @pytest.fixture
