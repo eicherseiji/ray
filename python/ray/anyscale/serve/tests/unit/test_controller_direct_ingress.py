@@ -773,7 +773,7 @@ def test_get_target_groups_app_with_no_running_replicas(
         ),
         TargetGroup(
             protocol=RequestProtocol.HTTP,
-            route_prefix="/",
+            route_prefix="/app2",
             targets=[
                 Target(ip="10.0.0.1", port=8000, instance_id=""),
                 Target(ip="10.0.0.2", port=8000, instance_id=""),
@@ -781,7 +781,7 @@ def test_get_target_groups_app_with_no_running_replicas(
         ),
         TargetGroup(
             protocol=RequestProtocol.GRPC,
-            route_prefix="/",
+            route_prefix="/app2",
             targets=[
                 Target(ip="10.0.0.1", port=9000, instance_id=""),
                 Target(ip="10.0.0.2", port=9000, instance_id=""),

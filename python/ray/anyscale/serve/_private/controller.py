@@ -56,7 +56,7 @@ class AnyscaleServeController(ServeController):
         running replicas, we return target groups for proxy and for applications
         that have running replicas, we return target groups for direct ingress.
         If there are multiple applications with no running replicas, we return
-        only one target group for proxy.
+        one target group per application with unique route prefix.
         """
         proxy_target_groups = super().get_target_groups()
         if not self._direct_ingress_enabled:
@@ -71,16 +71,15 @@ class AnyscaleServeController(ServeController):
             return proxy_target_groups
         # Create target groups for each application
         target_groups = []
-        atleast_one_app_has_no_running_replica = False
         for app_name in apps:
             app_target_groups = self.get_target_groups_for_app(app_name)
             if app_target_groups:
                 target_groups.extend(app_target_groups)
             else:
-                atleast_one_app_has_no_running_replica = True
+                target_groups.extend(
+                    self.get_target_groups_for_app_with_no_running_replicas(app_name)
+                )
 
-        if atleast_one_app_has_no_running_replica:
-            target_groups.extend(proxy_target_groups)
         return target_groups
 
     def get_running_replica_details_for_ingress_deployment(
@@ -108,7 +107,13 @@ class AnyscaleServeController(ServeController):
         ]
 
     def get_target_groups_for_app(self, app_name: str) -> List[TargetGroup]:
-        """Create HTTP and gRPC target groups for a specific application."""
+        """
+        Create HTTP and gRPC target groups for a specific application.
+
+        This function can return empty list if there are no running replicas.
+        Or replicas have not fully initialized yet, where their ports are not
+        allocated yet.
+        """
         route_prefix = self.application_state_manager.get_route_prefix(app_name)
 
         # Get running replicas for the ingress deployment
@@ -147,6 +152,36 @@ class AnyscaleServeController(ServeController):
                     )
                 )
 
+        return target_groups
+
+    def get_target_groups_for_app_with_no_running_replicas(
+        self, app_name: str
+    ) -> List[TargetGroup]:
+        """
+        For applications that have no running replicas, we return target groups
+        for proxy. This will allow applications to be discoverable via the
+        proxy in situations where their replicas have scaled down to 0.
+        """
+        target_groups = []
+        route_prefix = self.application_state_manager.get_route_prefix(app_name)
+        http_targets = self.proxy_state_manager.get_targets(RequestProtocol.HTTP)
+        grpc_targets = self.proxy_state_manager.get_targets(RequestProtocol.GRPC)
+        if http_targets:
+            target_groups.append(
+                TargetGroup(
+                    protocol=RequestProtocol.HTTP,
+                    route_prefix=route_prefix,
+                    targets=http_targets,
+                )
+            )
+        if grpc_targets:
+            target_groups.append(
+                TargetGroup(
+                    protocol=RequestProtocol.GRPC,
+                    route_prefix=route_prefix,
+                    targets=grpc_targets,
+                )
+            )
         return target_groups
 
     def _get_targets_for_protocol(
