@@ -374,7 +374,7 @@ RAY_SERVE_ENABLE_TASK_EVENTS = (
 
 # Use compact instead of spread scheduling strategy
 RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY = (
-    os.environ.get("RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "0") == "1"
+    os.environ.get("RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "1") == "1"
 )
 
 
@@ -432,4 +432,9 @@ RAY_SERVE_METRICS_EXPORT_INTERVAL_MS = int(
 # The default request router class to use if none is specified.
 DEFAULT_REQUEST_ROUTER_PATH = (
     "ray.serve._private.request_router:PowerOfTwoChoicesRequestRouter"
+)
+
+# How long to wait after deployments become stable before attempting node compaction
+RAY_SERVE_NODE_COMPACTION_DELAY_S = int(
+    os.environ.get("RAY_SERVE_NODE_COMPACTION_DELAY_S", "300")
 )

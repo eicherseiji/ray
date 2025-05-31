@@ -6,6 +6,7 @@ import torch
 import torchvision
 from torch.utils.data import IterableDataset
 import ray.data
+from ray.data.context import DataContext
 
 from constants import DatasetKey
 from config import DataloaderType, BenchmarkConfig
@@ -39,6 +40,7 @@ class LocalFSImageClassificationRayDataLoaderFactory(
 
     def get_ray_datasets(self) -> Dict[str, ray.data.Dataset]:
         """Get Ray datasets for training and validation from local filesystem."""
+        DataContext.get_current()._enable_read_files_fusion_override = True
         dataloader_config = self.get_dataloader_config()
         override_num_blocks = (
             dataloader_config.ray_data_override_num_blocks
