@@ -33,8 +33,8 @@ fi
 install_tools
 aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 830883877497.dkr.ecr.us-west-2.amazonaws.com
 
-curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-467.0.0-linux-x86_64.tar.gz
-tar -xf google-cloud-cli-467.0.0-linux-x86_64.tar.gz
+curl -sSL -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-524.0.0-linux-x86_64.tar.gz
+tar -xzf google-cloud-cli-524.0.0-linux-x86_64.tar.gz
 ./google-cloud-sdk/install.sh -q
 PATH="$(pwd)/google-cloud-sdk/bin:$PATH"
 export PATH
@@ -43,7 +43,6 @@ gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
 
 PATH="$HOME/.local/bin:$PATH"
 export PATH
-pip3 install --user -U pip
 
 if [[ "${BUILDKITE_PIPELINE_ID}" == "0194d305-a31d-40b8-9ffd-122388f1f14e" ]]; then
     export RELEASE_QUEUE_DEFAULT="rayturbo_small_queue"
