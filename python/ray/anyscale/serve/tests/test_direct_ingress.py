@@ -1,10 +1,10 @@
 import grpc
 import pytest
-import requests
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 from uuid import UUID
+import httpx
 
 from fastapi import FastAPI
 from starlette.requests import Request
@@ -23,7 +23,6 @@ from ray.anyscale.serve._private.constants import (
     RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
 )
 from ray.serve.schema import ApplicationStatus, RequestProtocol
-from ray.serve._private.client import ServeControllerClient
 from ray.serve.schema import ServeInstanceDetails
 from ray.dashboard.modules.serve.sdk import ServeSubmissionClient
 from ray.serve.schema import DeploymentStatus
@@ -95,9 +94,7 @@ def test_proxy_is_started_on_head_only_mode(_skip_if_ff_not_enabled, serve_insta
     assert len(serve.status().proxies) == 1
 
 
-def get_http_ports(
-    serve_instance: ServeControllerClient, route_prefix=None, first_only=True
-):
+def get_http_ports(route_prefix=None, first_only=True):
     serve_details = ServeInstanceDetails(
         **ServeSubmissionClient("http://localhost:8265").get_serve_details()
     )
@@ -124,9 +121,7 @@ def get_http_ports(
         return http_ports
 
 
-def get_grpc_ports(
-    serve_instance: ServeControllerClient, route_prefix=None, first_only=True
-):
+def get_grpc_ports(route_prefix=None, first_only=True):
     serve_details = ServeInstanceDetails(
         **ServeSubmissionClient("http://localhost:8265").get_serve_details()
     )
@@ -156,44 +151,48 @@ def get_grpc_ports(
 def test_basic(_skip_if_ff_not_enabled, serve_instance):
     serve.run(Hybrid.bind(message="Hello world!"))
 
-    http_port = get_http_ports(serve_instance)[0]
-    grpc_port = get_grpc_ports(serve_instance)[0]
+    http_ports = get_http_ports(first_only=False)
+    grpc_ports = get_grpc_ports(first_only=False)
 
     # Basic HTTP request.
-    r = requests.get(f"http://localhost:{http_port}/")
-    r.raise_for_status()
-    assert r.text == "Hello world!"
+    for http_port in http_ports:
+        r = httpx.get(f"http://localhost:{http_port}/")
+        r.raise_for_status()
+        assert r.text == "Hello world!"
 
     # Basic gRPC request.
-    channel = grpc.insecure_channel(f"localhost:{grpc_port}")
-    stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
-    assert stub.Method1(serve_pb2.UserDefinedMessage()).greeting == "Hello world!"
+    for grpc_port in grpc_ports:
+        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+        stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
+        assert stub.Method1(serve_pb2.UserDefinedMessage()).greeting == "Hello world!"
+        channel.close()
 
 
 def test_internal_server_error(_skip_if_ff_not_enabled, serve_instance):
-    pytest.skip("TODO(abrar): fix this test")
     serve.run(Hybrid.bind(raise_error=True))
 
-    http_port = get_http_ports(serve_instance)[0]
-    grpc_port = get_grpc_ports(serve_instance)[0]
+    http_ports = get_http_ports(first_only=False)
+    grpc_ports = get_grpc_ports(first_only=False)
 
     # Basic HTTP request.
-    r = requests.get(f"http://localhost:{http_port}/")
-    assert r.status_code == 500
-    assert r.text == "Internal Server Error"
+    for http_port in http_ports:
+        r = httpx.get(f"http://localhost:{http_port}/")
+        assert r.status_code == 500
+        assert r.text == "Internal Server Error"
 
     # Basic gRPC request.
-    channel = grpc.insecure_channel(f"localhost:{grpc_port}")
-    stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
-    try:
-        with pytest.raises(grpc.RpcError) as exception_info:
-            stub.Method1(serve_pb2.UserDefinedMessage())
+    for grpc_port in grpc_ports:
+        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+        stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
+        try:
+            with pytest.raises(grpc.RpcError) as exception_info:
+                stub.Method1(serve_pb2.UserDefinedMessage())
 
-        rpc_error = exception_info.value
-        assert rpc_error.code() == grpc.StatusCode.UNKNOWN
-    finally:
-        # Force close the gRPC channel to ensure ports are released
-        channel.close()
+            rpc_error = exception_info.value
+            assert rpc_error.code() == grpc.StatusCode.UNKNOWN
+        finally:
+            # Force close the gRPC channel to ensure ports are released
+            channel.close()
 
 
 def test_fastapi_app(_skip_if_ff_not_enabled, serve_instance):
@@ -215,17 +214,19 @@ def test_fastapi_app(_skip_if_ff_not_enabled, serve_instance):
             )
 
     serve.run(FastAPIDeployment.bind())
-    http_port = get_http_ports(serve_instance)[0]
+    http_ports = get_http_ports(first_only=False)
 
     # Test GET /.
-    r = requests.get(f"http://localhost:{http_port}/")
-    r.raise_for_status()
-    assert r.text == "Hello from root!"
+    for http_port in http_ports:
+        r = httpx.get(f"http://localhost:{http_port}/")
+        r.raise_for_status()
+        assert r.text == "Hello from root!"
 
     # Test POST /{wildcard}.
-    r = requests.post(f"http://localhost:{http_port}/foobar")
-    assert r.status_code == 201
-    assert r.text == "Hello from foobar!"
+    for http_port in http_ports:
+        r = httpx.post(f"http://localhost:{http_port}/foobar")
+        assert r.status_code == 201
+        assert r.text == "Hello from foobar!"
 
 
 @pytest.mark.parametrize("use_fastapi", [False, True])
@@ -249,17 +250,17 @@ def test_http_request_id(_skip_if_ff_not_enabled, serve_instance, use_fastapi: b
                 return PlainTextResponse(request.headers.get("x-request-id", ""))
 
     serve.run(EchoRequestID.bind())
-    http_port = get_http_ports(serve_instance)[0]
+    http_port = get_http_ports()[0]
 
     # Case 1: no x-request-id passed, should get populated and returned as a header.
-    r = requests.get(f"http://localhost:{http_port}/")
+    r = httpx.get(f"http://localhost:{http_port}/")
     r.raise_for_status()
     assert r.text != "" and r.text == r.headers["x-request-id"]
     # This call would raise if the request ID isn't a valid UUID.
     UUID(r.text, version=4)
 
     # Case 2: x-request-id passed, result and header should match it.
-    r = requests.get(
+    r = httpx.get(
         f"http://localhost:{http_port}/", headers={"x-request-id": "TEST-HEADER"}
     )
     r.raise_for_status()
@@ -308,13 +309,15 @@ def test_health_check(_skip_if_ff_not_enabled, serve_instance):
             return call.code(), response.message
         except grpc.RpcError as e:
             return e.code(), ""
+        finally:
+            channel.close()
 
     # Wait for replica constructor to start. The direct ingress server should not be
     # listening on the port at all yet.
     wait_for_condition(lambda: ray.get(initialize_signal.cur_num_waiters.remote()) == 1)
     for _ in range(10):
-        with pytest.raises(requests.ConnectionError):
-            requests.get(f"http://localhost:{http_port}/-/healthz")
+        with pytest.raises(httpx.ConnectError):
+            httpx.get(f"http://localhost:{http_port}/-/healthz")
 
         code, _ = _do_grpc_hc()
         assert code == grpc.StatusCode.UNAVAILABLE
@@ -326,7 +329,7 @@ def test_health_check(_skip_if_ff_not_enabled, serve_instance):
     ) -> bool:
         # Check HTTP health check.
         expected_status = 200 if passing else 503
-        r = requests.get(f"http://localhost:{http_port}/-/healthz")
+        r = httpx.get(f"http://localhost:{http_port}/-/healthz")
         assert r.status_code == expected_status
         assert r.text == message
 
@@ -381,10 +384,10 @@ def test_max_ongoing_requests(_skip_if_ff_not_enabled, serve_instance):
             message="done waiting!", wait_signal=wait_signal
         )
     )
-    http_port = get_http_ports(serve_instance)[0]
+    http_port = get_http_ports()[0]
 
     def _do_http_request() -> bool:
-        r = requests.get(f"http://localhost:{http_port}/")
+        r = httpx.get(f"http://localhost:{http_port}/")
         if r.status_code == 200:
             return True
         elif r.status_code == 503:
@@ -392,7 +395,7 @@ def test_max_ongoing_requests(_skip_if_ff_not_enabled, serve_instance):
         else:
             raise RuntimeError(f"Unexpected status code: {r.status_code}")
 
-    grpc_port = get_grpc_ports(serve_instance)[0]
+    grpc_port = get_grpc_ports()[0]
 
     def _do_grpc_request() -> bool:
         channel = grpc.insecure_channel(f"localhost:{grpc_port}")
@@ -406,6 +409,8 @@ def test_max_ongoing_requests(_skip_if_ff_not_enabled, serve_instance):
                 return False
 
             raise RuntimeError(f"Unexpected status code: {e.code()}")
+        finally:
+            channel.close()
 
     for _do_request in [_do_grpc_request, _do_http_request]:
         with ThreadPoolExecutor() as tpe:
@@ -472,7 +477,7 @@ def test_port_retry_logic(_skip_if_ff_not_enabled, serve_instance):
         )
 
         # Verify the service still works through shared ingress
-        r = requests.get(f"http://localhost:{http_target_group.targets[0].port}/")
+        r = httpx.get(f"http://localhost:{http_target_group.targets[0].port}/")
         r.raise_for_status()
         assert r.text == "Hello world!"
 
@@ -606,8 +611,8 @@ def test_replica_releases_ports_on_shutdown(_skip_if_ff_not_enabled, serve_insta
     """Test that replicas release ports on shutdown."""
     serve.run(Hybrid.options(num_replicas=4).bind(message="Hello world!"))
 
-    http_ports = get_http_ports(serve_instance)
-    grpc_ports = get_grpc_ports(serve_instance)
+    http_ports = get_http_ports()
+    grpc_ports = get_grpc_ports()
     assert set(http_ports) == {30000, 30001, 30002, 30003}
     assert set(grpc_ports) == {40000, 40001, 40002, 40003}
 
@@ -626,6 +631,16 @@ def test_replica_releases_ports_on_shutdown(_skip_if_ff_not_enabled, serve_insta
     for grpc_port in grpc_ports:
         assert _is_port_in_use(grpc_port)
 
+    # make requests to the application
+    for http_port in http_ports:
+        req = httpx.get(f"http://localhost:{http_port}/")
+        assert req.status_code == 200
+        assert req.text == "Hello world!"
+    for grpc_port in grpc_ports:
+        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+        stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
+        assert stub.Method1(serve_pb2.UserDefinedMessage()).greeting == "Hello world!"
+        channel.close()
     # Shutdown the replica
     serve.delete("default", _blocking=True)
 
@@ -634,6 +649,17 @@ def test_replica_releases_ports_on_shutdown(_skip_if_ff_not_enabled, serve_insta
         assert not _is_port_in_use(http_port)
     for grpc_port in grpc_ports:
         assert not _is_port_in_use(grpc_port)
+
+    # redeploy the application
+    serve.run(Hybrid.options(num_replicas=4).bind(message="Hello world!"))
+
+    http_ports = get_http_ports()
+    grpc_ports = get_grpc_ports()
+    assert set(http_ports) == {30000, 30001, 30002, 30003}
+    assert set(grpc_ports) == {40000, 40001, 40002, 40003}
+
+    assert len(http_ports) == 4
+    assert len(grpc_ports) == 4
 
 
 def test_get_serve_instance_details(_skip_if_ff_not_enabled, serve_instance):
@@ -690,13 +716,13 @@ def test_only_ingress_deployment_replicas_are_used_for_target_groups(
     assert len(serve_details.target_groups[1].targets) == 3
 
     # test that the target groups are unique and contain the correct ports for ingress deployment
-    http_ports = get_http_ports(serve_instance)
-    grpc_ports = get_grpc_ports(serve_instance)
+    http_ports = get_http_ports()
+    grpc_ports = get_grpc_ports()
     assert len(set(http_ports) & {30000, 30001, 30002, 30003, 30004}) == 3
     assert len(set(grpc_ports) & {40000, 40001, 40002, 40003, 40004}) == 3
 
     for http_port in http_ports:
-        req = requests.get(f"http://localhost:{http_port}/")
+        req = httpx.get(f"http://localhost:{http_port}/")
         assert req.status_code == 200
         assert req.text == "ingress-deployment-downstream-deployment"
 
@@ -707,6 +733,7 @@ def test_only_ingress_deployment_replicas_are_used_for_target_groups(
             stub.Method1(serve_pb2.UserDefinedMessage()).greeting
             == "ingress-deployment-downstream-deployment"
         )
+        channel.close()
 
 
 def test_crashed_replica_port_is_released_and_reused(
@@ -715,8 +742,8 @@ def test_crashed_replica_port_is_released_and_reused(
     """Test that crashed replica port is released and reused."""
     serve.run(Hybrid.options(num_replicas=4).bind(message="Hello world!"))
 
-    http_ports = get_http_ports(serve_instance)
-    grpc_ports = get_grpc_ports(serve_instance)
+    http_ports = get_http_ports()
+    grpc_ports = get_grpc_ports()
     assert set(http_ports) == {30000, 30001, 30002, 30003}
     assert set(grpc_ports) == {40000, 40001, 40002, 40003}
 
@@ -726,8 +753,8 @@ def test_crashed_replica_port_is_released_and_reused(
     # run the deployment again
     serve.run(Hybrid.options(num_replicas=4).bind(message="Hello world!"))
 
-    new_http_ports = get_http_ports(serve_instance)
-    new_grpc_ports = get_grpc_ports(serve_instance)
+    new_http_ports = get_http_ports()
+    new_grpc_ports = get_grpc_ports()
 
     assert set(http_ports) == set(new_http_ports)
     assert set(grpc_ports) == set(new_grpc_ports)
@@ -783,8 +810,8 @@ def test_crashed_replica_port_is_released_and_reused(
     wait_for_condition(lambda: _func2(), timeout=30)
 
     # check that the ports are released
-    after_crash_http_ports = get_http_ports(serve_instance)
-    after_crash_grpc_ports = get_grpc_ports(serve_instance)
+    after_crash_http_ports = get_http_ports()
+    after_crash_grpc_ports = get_grpc_ports()
 
     assert len(after_crash_http_ports) == 4
     assert len(after_crash_grpc_ports) == 4
@@ -792,6 +819,17 @@ def test_crashed_replica_port_is_released_and_reused(
     # show that smart port selection is working even with crashed ports
     assert set(after_crash_http_ports) == set(http_ports)
     assert set(after_crash_grpc_ports) == set(grpc_ports)
+
+    # make requests to the application
+    for http_port in http_ports:
+        req = httpx.get(f"http://localhost:{http_port}/")
+        assert req.status_code == 200
+        assert req.text == "Hello world!"
+    for grpc_port in grpc_ports:
+        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+        stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
+        assert stub.Method1(serve_pb2.UserDefinedMessage()).greeting == "Hello world!"
+        channel.close()
 
 
 def test_multiple_applications_on_same_node(_skip_if_ff_not_enabled, serve_instance):
@@ -816,10 +854,10 @@ def test_multiple_applications_on_same_node(_skip_if_ff_not_enabled, serve_insta
         route_prefix="/app-2",
     )
 
-    http_ports_1 = get_http_ports(serve_instance, "/app-1")
-    http_ports_2 = get_http_ports(serve_instance, "/app-2")
-    grpc_ports_1 = get_grpc_ports(serve_instance, "/app-1")
-    grpc_ports_2 = get_grpc_ports(serve_instance, "/app-2")
+    http_ports_1 = get_http_ports("/app-1")
+    http_ports_2 = get_http_ports("/app-2")
+    grpc_ports_1 = get_grpc_ports("/app-1")
+    grpc_ports_2 = get_grpc_ports("/app-2")
 
     assert set(http_ports_1) == {30000, 30001}
     assert set(http_ports_2) == {30002, 30003}
@@ -827,14 +865,16 @@ def test_multiple_applications_on_same_node(_skip_if_ff_not_enabled, serve_insta
     assert set(grpc_ports_2) == {40002, 40003}
 
     # make a request to the ingress deployment
-    req = requests.get(f"http://localhost:{http_ports_1[0]}/app-1")
-    assert req.status_code == 200
-    assert req.text == "deployment-1"
+    for http_port in http_ports_1:
+        req = httpx.get(f"http://localhost:{http_port}/app-1")
+        assert req.status_code == 200
+        assert req.text == "deployment-1"
 
     # make a request to the other ingress deployment
-    req = requests.get(f"http://localhost:{http_ports_2[0]}/app-2")
-    assert req.status_code == 200
-    assert req.text == "deployment-2"
+    for http_port in http_ports_2:
+        req = httpx.get(f"http://localhost:{http_port}/app-2")
+        assert req.status_code == 200
+        assert req.text == "deployment-2"
 
 
 def test_app_with_composite_deployments(_skip_if_ff_not_enabled, serve_instance):
@@ -870,21 +910,26 @@ def test_app_with_composite_deployments(_skip_if_ff_not_enabled, serve_instance)
     )
 
     # test that the target groups are unique and contain the correct ports for ingress deployment
-    http_ports = get_http_ports(serve_instance)
-    grpc_ports = get_grpc_ports(serve_instance)
+    http_ports = get_http_ports()
+    grpc_ports = get_grpc_ports()
     # difficult to say which ports are used for the target groups
     assert len(set(http_ports) & {30000, 30001, 30002, 30003, 30004}) == 2
     assert len(set(grpc_ports) & {40000, 40001, 40002, 40003, 40004}) == 2
 
     # make a request to the ingress deployment
-    req = requests.get(f"http://localhost:{http_ports[0]}/app-1")
-    assert req.status_code == 200
-    assert req.text == "child-deployment"
+    for http_port in http_ports:
+        req = httpx.get(f"http://localhost:{http_port}/app-1")
+        assert req.status_code == 200
+        assert req.text == "child-deployment"
 
     # grpc request
-    channel = grpc.insecure_channel(f"localhost:{grpc_ports[0]}")
-    stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
-    assert stub.Method1(serve_pb2.UserDefinedMessage()).greeting == "child-deployment"
+    for grpc_port in grpc_ports:
+        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+        stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
+        assert (
+            stub.Method1(serve_pb2.UserDefinedMessage()).greeting == "child-deployment"
+        )
+        channel.close()
 
 
 def test_only_running_apps_are_used_for_target_groups(
@@ -931,8 +976,8 @@ def test_only_running_apps_are_used_for_target_groups(
     assert serve_details.applications["app-2"].status == ApplicationStatus.DEPLOYING
     assert serve_details.applications["app-1"].status == ApplicationStatus.RUNNING
 
-    http_ports = get_http_ports(serve_instance, first_only=False)
-    grpc_ports = get_grpc_ports(serve_instance, first_only=False)
+    http_ports = get_http_ports(first_only=False)
+    grpc_ports = get_grpc_ports(first_only=False)
     assert set(http_ports) == {30000, 30001, 8000}
     assert set(grpc_ports) == {40000, 40001, 9000}
 
@@ -947,15 +992,27 @@ def test_only_running_apps_are_used_for_target_groups(
 
     wait_for_condition(_func, timeout=10)
 
-    http_ports = get_http_ports(serve_instance, "/app-1", first_only=False)
-    grpc_ports = get_grpc_ports(serve_instance, "/app-1", first_only=False)
+    http_ports = get_http_ports("/app-1", first_only=False)
+    grpc_ports = get_grpc_ports("/app-1", first_only=False)
     assert set(http_ports) == {30000, 30001}
     assert set(grpc_ports) == {40000, 40001}
 
-    http_ports = get_http_ports(serve_instance, "/app-2", first_only=False)
-    grpc_ports = get_grpc_ports(serve_instance, "/app-2", first_only=False)
+    # make requests to the application
+    for http_port in http_ports:
+        req = httpx.get(f"http://localhost:{http_port}/app-1")
+        assert req.status_code == 200
+        assert req.text == "deployment-1"
+
+    http_ports = get_http_ports("/app-2", first_only=False)
+    grpc_ports = get_grpc_ports("/app-2", first_only=False)
     assert set(http_ports) == {30002, 30003}
     assert set(grpc_ports) == {40002, 40003}
+
+    # make requests to the application
+    for http_port in http_ports:
+        req = httpx.get(f"http://localhost:{http_port}/app-2")
+        assert req.status_code == 200
+        assert req.text == "deployment-2"
 
 
 def test_some_replicas_not_running(_skip_if_ff_not_enabled, serve_instance):
@@ -977,8 +1034,8 @@ def test_some_replicas_not_running(_skip_if_ff_not_enabled, serve_instance):
     )
 
     def _func():
-        http_ports = get_http_ports(serve_instance, "/app-1", first_only=False)
-        grpc_ports = get_grpc_ports(serve_instance, "/app-1", first_only=False)
+        http_ports = get_http_ports("/app-1", first_only=False)
+        grpc_ports = get_grpc_ports("/app-1", first_only=False)
         assert set(http_ports) == {30000, 30001}
         assert set(grpc_ports) == {40000, 40001}
         return True
