@@ -292,6 +292,12 @@ def create_replica_impl(**kwargs):  # noqa: F811
     return AnyscaleReplica(**kwargs)
 
 
+def create_replica_metrics_manager(**kwargs):  # noqa: F811
+    from ray.anyscale.serve._private.replica import AnyscaleReplicaMetricsManager
+
+    return AnyscaleReplicaMetricsManager(**kwargs)
+
+
 def create_dynamic_handle_options(**kwargs):  # noqa: F811
     from ray.anyscale.serve._private.handle_options import AnyscaleDynamicHandleOptions
 

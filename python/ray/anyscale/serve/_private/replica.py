@@ -49,7 +49,11 @@ from ray.serve._private.constants import (
     SERVE_CONTROLLER_NAME,
     SERVE_NAMESPACE,
 )
-from ray.serve._private.replica import ReplicaBase, StatusCodeCallback
+from ray.serve._private.replica import (
+    ReplicaBase,
+    ReplicaMetricsManager,
+    StatusCodeCallback,
+)
 from ray.serve._private.utils import generate_request_id, is_grpc_enabled
 from ray.serve.generated import serve_proprietary_pb2, serve_proprietary_pb2_grpc
 from ray.serve.grpc_util import RayServegRPCContext
@@ -125,6 +129,21 @@ def _wrap_grpc_call(f):
         return wrapper
 
 
+class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
+    def should_collect_metrics(self) -> bool:
+        """
+        For direct ingress deployments, metrics must be collected from replicas regardless
+        of whether autoscaling metrics are being collected via handles. This is necessary
+        because direct ingress traffic bypasses deployment handles and goes directly to
+        the replicas.
+        """
+        return (
+            self._ingress
+            and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
+            and self._autoscaling_config
+        ) or super().should_collect_metrics()
+
+
 class AnyscaleReplica(ReplicaBase):
     def __init__(self, **kwargs):
         self._server = grpc.aio.server(
@@ -171,6 +190,9 @@ class AnyscaleReplica(ReplicaBase):
             logger.info(
                 "Direct ingress is disabled, skipping direct ingress server start"
             )
+            return
+
+        if not self._ingress:
             return
 
         async def allocate_and_start_server(start_server_fn, protocol):

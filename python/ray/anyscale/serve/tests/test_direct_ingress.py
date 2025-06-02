@@ -7,6 +7,11 @@ from uuid import UUID
 import httpx
 
 from fastapi import FastAPI
+from ray.serve._private.test_utils import (
+    check_deployment_status,
+    check_num_replicas_gte,
+    check_num_replicas_lte,
+)
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
@@ -931,6 +936,23 @@ def test_app_with_composite_deployments(_skip_if_ff_not_enabled, serve_instance)
         )
         channel.close()
 
+    def _is_port_in_use(ports):
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        for port in ports:
+            if sock.connect_ex(("0.0.0.0", port)) == 0:
+                return True
+        return False
+
+    # assert that child deployment is not occupying ports
+    assert not _is_port_in_use(
+        [30002, 30003, 30004]
+    ), "Child deployment is occupying ports"
+    assert not _is_port_in_use(
+        [40002, 40003, 40004]
+    ), "Child deployment is occupying ports"
+
 
 def test_only_running_apps_are_used_for_target_groups(
     _skip_if_ff_not_enabled, serve_instance
@@ -1051,6 +1073,154 @@ def test_some_replicas_not_running(_skip_if_ff_not_enabled, serve_instance):
         == DeploymentStatus.UPDATING
     )
     assert serve_details.applications["app-1"].status == ApplicationStatus.DEPLOYING
+
+
+class TestDirectIngressAutoscaling:
+    @pytest.mark.parametrize("min_replicas", [1, 2])
+    def test_autoscaling_scale_up_down_basic(
+        self, _skip_if_ff_not_enabled, serve_instance, min_replicas
+    ):
+        """Send 100 requests and check that we autoscale up, and then back down."""
+
+        signal = SignalActor.remote()
+
+        @serve.deployment(
+            autoscaling_config={
+                "metrics_interval_s": 0.1,
+                "min_replicas": min_replicas,
+                "max_replicas": 3,
+                "look_back_period_s": 0.2,
+                "downscale_delay_s": 0.5,
+                "upscale_delay_s": 0,
+                "target_num_ongoing_requests": 100,
+            },
+            # We will send over a lot of queries. This will make sure replicas are
+            # killed quickly during cleanup.
+            graceful_shutdown_timeout_s=1,
+            max_ongoing_requests=1000,
+        )
+        class A:
+            async def __call__(self, request: Request):
+                await signal.wait.remote()
+                return "ok"
+
+        serve.run(A.options(name="A").bind(), name="app-1", route_prefix="/app-1")
+        wait_for_condition(
+            check_deployment_status,
+            name="A",
+            expected_status=DeploymentStatus.HEALTHY,
+            app_name="app-1",
+        )
+
+        http_ports = get_http_ports()
+        # Send 100 concurrent HTTP requests
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    httpx.get, f"http://localhost:{http_ports[0]}/app-1", timeout=None
+                )
+                for _ in range(100)
+            ]
+
+            # scale up one more replica from min_replicas
+            wait_for_condition(
+                check_num_replicas_gte,
+                name="A",
+                target=min_replicas + 1,
+                app_name="app-1",
+            )
+            signal.send.remote()
+
+            # verify that all requests completed successfully
+            for future in futures:
+                assert future.result().status_code == 200
+
+        # As the queue is drained, we should scale back down.
+        wait_for_condition(
+            check_num_replicas_lte, name="A", target=min_replicas, app_name="app-1"
+        )
+
+    def test_autoscaling_scale_from_and_to_zero(
+        self, _skip_if_ff_not_enabled, serve_instance
+    ):
+        signal = SignalActor.remote()
+
+        @serve.deployment(
+            autoscaling_config={
+                "metrics_interval_s": 0.1,
+                "min_replicas": 0,
+                "max_replicas": 3,
+                "look_back_period_s": 0.2,
+                "downscale_delay_s": 0.5,
+                "upscale_delay_s": 0,
+                "target_num_ongoing_requests": 100,
+            },
+            # We will send over a lot of queries. This will make sure replicas are
+            # killed quickly during cleanup.
+            graceful_shutdown_timeout_s=1,
+            max_ongoing_requests=1000,
+        )
+        class A:
+            async def __call__(self, request: Request):
+                await signal.wait.remote()
+                return "ok"
+
+        serve.run(A.options(name="A").bind(), name="app-1", route_prefix="/app-1")
+        wait_for_condition(
+            check_deployment_status,
+            name="A",
+            expected_status=DeploymentStatus.HEALTHY,
+            app_name="app-1",
+        )
+
+        http_ports = get_http_ports(route_prefix="/app-1")
+        grpc_ports = get_grpc_ports(route_prefix="/app-1")
+        assert http_ports[0] == 8000  # proxy port
+        assert len(http_ports) == 1
+        assert grpc_ports[0] == 9000  # proxy port
+        assert len(grpc_ports) == 1
+        # Send 100 concurrent HTTP requests
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    httpx.get, f"http://localhost:{http_ports[0]}/app-1", timeout=None
+                )
+                for _ in range(50)
+            ]
+
+            # scale up one more replica from min_replicas
+            wait_for_condition(
+                check_num_replicas_gte, name="A", target=1, app_name="app-1"
+            )
+
+            # now that replicas are running, check that http ports are occupied
+            def _func():
+                http_ports = get_http_ports(route_prefix="/app-1")
+                assert http_ports[0] == 30000
+                grpc_ports = get_grpc_ports(route_prefix="/app-1")
+                assert grpc_ports[0] == 40000
+                return True
+
+            wait_for_condition(_func, timeout=10)
+
+            signal.send.remote()
+
+            # verify that all requests completed successfully
+            for future in futures:
+                assert future.result().status_code == 200
+
+        # As the queue is drained, we should scale back down.
+        wait_for_condition(check_num_replicas_lte, name="A", target=0, app_name="app-1")
+
+        # check that http ports are released
+        http_ports = get_http_ports(route_prefix="/app-1")
+        assert len(http_ports) == 1
+        assert http_ports[0] == 8000  # proxy port
+
+        # check that grpc ports are released
+        grpc_ports = get_grpc_ports(route_prefix="/app-1")
+        assert len(grpc_ports) == 1
+        assert grpc_ports[0] == 9000  # proxy port
 
 
 if __name__ == "__main__":
