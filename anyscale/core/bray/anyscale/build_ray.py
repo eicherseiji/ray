@@ -143,6 +143,36 @@ def _upload_build_artifacts():
     )
 
 
+def _run_tests():
+    """
+    Run the tests specified in the RAY_REMOTE_TESTS environment variable. If no tests are
+    specified, this function does nothing.
+    """
+    tests = os.environ.get("RAY_REMOTE_TESTS", "").strip()
+    if not tests:
+        log("No tests to run.")
+        return
+
+    log(f"Running tests: {tests}")
+    test_list = tests.split()
+    process = subprocess.Popen(
+        [
+            "bazel",
+            "test",
+            "--config=ci",
+            "--test_output",
+            "streamed",
+            "--remote_cache",
+            _BAZEL_CACHE_SERVER,
+            f"--test_env=PYTHONPATH={_RAY_CHECKOUT_DIR}/python:/home/ray/anaconda3/lib/python3.12/site-packages",
+            *test_list,
+        ],
+        cwd=_RAY_CHECKOUT_DIR,
+    )
+    if process.wait() != 0:
+        raise RuntimeError("Tests failed")
+
+
 def _get_base_commit(ray_base_commit: str, is_ray_turbo: bool) -> str:
     if is_ray_turbo:
         return ray_base_commit[:6]
@@ -214,6 +244,7 @@ def main():
     if not is_success:
         raise RuntimeError("Build failed")
     _upload_build_artifacts()
+    _run_tests()
     no_workspace = os.environ.get("NO_WORKSPACE", "0") == "1"
     if no_workspace:
         log("Skipping workspace creation.")

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import subprocess
+from typing import Tuple
 
 import click
 import anyscale
@@ -15,7 +16,7 @@ _CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 _BRAY_PREFIX = "bray"
 
-_BUILD_JOB_IMAGE = "anyscale/image/ray-build-env:1"
+_BUILD_JOB_IMAGE = "anyscale/image/ray-build-env:3"
 _BUILD_JOB_CLOUD = "anyscale_v2_default_cloud"
 _BUILD_JOB_INSTANCE_TYPE = "m7a.12xlarge"
 
@@ -39,7 +40,11 @@ def log(message: str) -> None:
 
 
 def build_ray(
-    build_name: str, working_dir: str, ray_dir: str, no_workspace: bool
+    build_name: str,
+    working_dir: str,
+    ray_dir: str,
+    tests: Tuple[str],
+    no_workspace: bool,
 ) -> None:
     """
     Submit a job to build Ray on Anyscale.
@@ -66,6 +71,7 @@ def build_ray(
         env_vars={
             "RAY_REMOTE_BUILD_NAME": build_name,
             "RAY_BASE_COMMIT": build_base_commit,
+            "RAY_REMOTE_TESTS": " ".join(list(tests)),
             "IS_RAY_TURBO": "1" if _is_ray_turbo(working_dir) else "0",
             "NO_WORKSPACE": "1" if no_workspace else "0",
         },
@@ -95,6 +101,15 @@ def build_ray(
     "--ray-dir", required=True, help="Directory containing the Ray code to be built."
 )
 @click.option(
+    "--test",
+    multiple=True,
+    help=(
+        "List of tests to run after building Ray, e.g. --test=TEST1 --test=TEST2. "
+        "Note that TEST1/TEST2 is the bazel target, e.g. //python/ray/tests:test01 or "
+        "//src/ray/core:test01. If not provided, no tests will be run."
+    ),
+)
+@click.option(
     "--no-workspace",
     is_flag=True,
     default=False,
@@ -103,6 +118,7 @@ def build_ray(
 def main(
     build_name: str,
     ray_dir: str,
+    test: Tuple[str],
     no_workspace: bool,
 ) -> None:
     with tempfile.TemporaryDirectory() as working_dir:
@@ -113,7 +129,7 @@ def main(
 
         # Submit the build job
         log("Build ray remotely ...")
-        build_ray(build_name, working_dir, ray_dir, no_workspace)
+        build_ray(build_name, working_dir, ray_dir, test, no_workspace)
 
 
 if __name__ == "__main__":
