@@ -2,7 +2,7 @@ import pytest
 
 import ray
 from ray import serve
-from ray._private.test_utils import SignalActor
+from ray._common.test_utils import SignalActor
 from ray.anyscale._private.constants import ANYSCALE_RAY_NODE_AVAILABILITY_ZONE_LABEL
 from ray.cluster_utils import Cluster
 from ray.serve.handle import DeploymentHandle

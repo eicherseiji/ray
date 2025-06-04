@@ -8,7 +8,8 @@ import pytest
 
 import ray
 from ray import serve
-from ray._private.test_utils import SignalActor, kill_raylet, wait_for_condition
+from ray._common.test_utils import SignalActor
+from ray._private.test_utils import kill_raylet, wait_for_condition
 from ray._raylet import GcsClient
 from ray.anyscale._private.constants import ANYSCALE_RAY_NODE_AVAILABILITY_ZONE_LABEL
 from ray.cluster_utils import AutoscalingCluster, Cluster
