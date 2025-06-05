@@ -23,6 +23,7 @@
 #include "absl/synchronization/mutex.h"
 #include "ray/common/ray_config.h"
 #include "ray/rpc/grpc_client.h"
+#include "ray/util/logging.h"
 
 namespace ray::rpc {
 
@@ -41,10 +42,26 @@ class GrpcStubManager {
                   ClientCallManager &client_call_manager) {
     const int conn_num = ::RayConfig::instance().object_manager_client_connection_num();
     grpc_clients_.reserve(conn_num);
-    for (int idx = 0; idx < conn_num; ++idx) {
-      grpc_clients_.emplace_back(
-          std::make_unique<GrpcClient<T>>(address, port, client_call_manager));
+    // TODO(irabbani): This is set in RayTurbo only right now. As part of CORE-1524, this
+    // will be converted into a separate implementation behind an interface.
+    bool use_multiple_connections =
+        ::RayConfig::instance().experimental_object_manager_enable_multiple_connections();
+    if (use_multiple_connections) {
+      grpc::ChannelArguments args;
+      args.SetInt(GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL, 1);
+      for (int idx = 0; idx < conn_num; ++idx) {
+        grpc_clients_.emplace_back(std::make_unique<GrpcClient<T>>(
+            address, port, client_call_manager, false, std::move(args)));
+      }
+      // End RayTurbo
+    } else {
+      for (int idx = 0; idx < conn_num; ++idx) {
+        grpc_clients_.emplace_back(
+            std::make_unique<GrpcClient<T>>(address, port, client_call_manager));
+      }
     }
+    RAY_LOG(INFO) << "Starting gRPC client manager with enable_multiple_conns="
+                  << use_multiple_connections << ", num_clients=" << conn_num;
   }
 
   GrpcStubManager(const GrpcStubManager &) = delete;
