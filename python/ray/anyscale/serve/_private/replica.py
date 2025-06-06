@@ -6,8 +6,10 @@ import time
 from contextlib import contextmanager
 from functools import wraps
 from typing import Any, AsyncGenerator, Callable, Generator, Optional, Tuple
+from collections import deque
 
 import grpc
+from ray.serve._private.request_router.common import PendingRequest
 from ray.serve.config import HTTPOptions, gRPCOptions
 from starlette.types import Receive, Scope, Send
 
@@ -144,6 +146,100 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
         ) or super().should_collect_metrics()
 
 
+class RequestQueue:
+    def __init__(
+        self,
+        max_queued_requests: int,
+        event_loop: asyncio.AbstractEventLoop,
+        replica: ReplicaBase,
+    ):
+        self._max_queued_requests = max_queued_requests
+        self._queue: deque[PendingRequest] = deque()
+        self._event_loop = event_loop
+        self._replica = replica
+        self._shutdown = False
+        self._queue_not_empty = asyncio.Event()
+
+        self._processor_task = self._event_loop.create_task(self._process_queue())
+
+    def notify_capacity_available(self):
+        self._queue_not_empty.set()
+
+    def try_enqueue(
+        self, request_metadata: RequestMetadata, *args, **kwargs
+    ) -> Optional[PendingRequest]:
+        if self._shutdown or (
+            self._max_queued_requests != -1
+            and self.get_queue_length() >= self._max_queued_requests
+        ):
+            return None
+
+        pending = PendingRequest(metadata=request_metadata, args=args, kwargs=kwargs)
+        self._queue.append(pending)
+
+        # Notify the processor
+        self._queue_not_empty.set()
+
+        return pending
+
+    async def _process_queue(self):
+        while not self._shutdown:
+            # event will be set when one of two things happen:
+            # 1. a new request is enqueued
+            # 2. a request has finished processing
+            await self._queue_not_empty.wait()
+            self._queue_not_empty.clear()
+
+            while self._queue and not self._shutdown:
+                # Remove cancelled futures
+                while self._queue and self._queue[0].future.cancelled():
+                    self._queue.popleft()
+
+                if not self._queue:
+                    break
+
+                req = self._queue[0]
+                processed = await self._try_process_request(req)
+                if processed:
+                    self._queue.popleft()
+                else:
+                    # Wait until another enqueue or capacity signal
+                    break
+
+    async def _try_process_request(self, queued_request: PendingRequest) -> bool:
+        try:
+            result_gen = self._replica.handle_request_with_rejection(
+                queued_request.metadata, *queued_request.args, **queued_request.kwargs
+            )
+            first_result = await result_gen.__anext__()
+
+            if (
+                isinstance(first_result, ReplicaQueueLengthInfo)
+                and first_result.accepted
+            ):
+                if not queued_request.future.done():
+                    context = ray.serve.context._serve_request_context.get()
+                    queued_request.future.set_result((result_gen, context))
+                return True
+            return False
+        except Exception as e:
+            if not queued_request.future.done():
+                queued_request.future.set_exception(e)
+            return True
+
+    def get_queue_length(self) -> int:
+        return len(self._queue)
+
+    def shutdown(self):
+        self._shutdown = True
+        if not self._processor_task.done():
+            self._processor_task.cancel()
+        while self._queue:
+            req = self._queue.popleft()
+            if not req.future.done():
+                req.future.cancel()
+
+
 class AnyscaleReplica(ReplicaBase):
     def __init__(self, **kwargs):
         self._server = grpc.aio.server(
@@ -159,6 +255,13 @@ class AnyscaleReplica(ReplicaBase):
         self._direct_ingress_grpc_server_task: Optional[asyncio.Task] = None
 
         super().__init__(**kwargs)
+
+        # Initialize request queue
+        self._request_queue = RequestQueue(
+            replica=self,
+            max_queued_requests=self._deployment_config.max_queued_requests,
+            event_loop=self._event_loop,
+        )
 
         # Silence spammy false positive errors from gRPC Python
         self._event_loop.set_exception_handler(asyncio_grpc_exception_handler)
@@ -184,6 +287,85 @@ class AnyscaleReplica(ReplicaBase):
 
         # get node ID
         self._node_id = ray.get_runtime_context().get_node_id()
+
+    def get_total_requests(self):
+        return (
+            self._metrics_manager.get_num_ongoing_requests()
+            + self._request_queue.get_queue_length()
+        )
+
+    async def handle_request_with_rejection_and_queueing(
+        self, request_metadata: RequestMetadata, *request_args, **request_kwargs
+    ):
+        # immediately try to service the request, short-circuit before queuing
+        result_gen = self.handle_request_with_rejection(
+            request_metadata, *request_args, **request_kwargs
+        )
+        first_result: ReplicaQueueLengthInfo = await result_gen.__anext__()
+        # if the request was accepted, we can yield the result immediately
+        if isinstance(first_result, ReplicaQueueLengthInfo) and first_result.accepted:
+            yield first_result
+            async for result in result_gen:
+                yield result
+            self._request_queue.notify_capacity_available()
+            return
+
+        # if the request was rejected, we need to queue it
+        queued_request = self._request_queue.try_enqueue(
+            request_metadata, *request_args, **request_kwargs
+        )
+
+        if queued_request is None:
+            # Queue is full, reject the request
+            yield ReplicaQueueLengthInfo(
+                accepted=False,
+                num_ongoing_requests=self.get_total_requests(),
+            )
+            return
+
+        # Request was successfully queued
+        yield ReplicaQueueLengthInfo(
+            accepted=True,
+            num_ongoing_requests=self.get_total_requests(),
+        )
+
+        # Wait for the queued request to be processed
+        result_gen, context = await queued_request.future
+        ray.serve.context._serve_request_context.set(context)
+        async for result in result_gen:
+            yield result
+        self._request_queue.notify_capacity_available()
+
+    async def _drain_ongoing_requests(self):
+        """Wait for any ongoing requests to finish.
+
+        Sleep for a grace period before the first time we check the number of ongoing
+        requests to allow the notification to remove this replica to propagate to
+        callers first.
+        """
+        # TODO(abrar): upstream code needs to be refactored for avoiding code duplication
+        if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+            await super()._drain_ongoing_requests()
+            return
+
+        wait_loop_period_s = self._deployment_config.graceful_shutdown_wait_loop_s
+        while True:
+            await asyncio.sleep(wait_loop_period_s)
+
+            num_ongoing_requests = self._metrics_manager.get_num_ongoing_requests()
+            num_queued_requests = self._request_queue.get_queue_length()
+            if self.get_total_requests() > 0:
+                logger.info(
+                    f"Waiting for an additional {wait_loop_period_s}s to shut down "
+                    f"because there are {num_ongoing_requests} ongoing requests "
+                    f"and {num_queued_requests} queued requests."
+                )
+            else:
+                logger.info(
+                    "Graceful shutdown complete; replica exiting.",
+                    extra={"log_to_stderr": False},
+                )
+                break
 
     async def _maybe_start_direct_ingress_servers(self):
         if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
@@ -457,7 +639,7 @@ class AnyscaleReplica(ReplicaBase):
         exception or an error intentionally raised by Serve, it will be returned as
         a gRPC response instead of raised directly.
         """
-        result_gen = self.handle_request_with_rejection(
+        result_gen = self.handle_request_with_rejection_and_queueing(
             request_metadata, *request_args, **request_kwargs
         )
         queue_len_info: ReplicaQueueLengthInfo = await result_gen.__anext__()
@@ -527,15 +709,13 @@ class AnyscaleReplica(ReplicaBase):
             # TODO(edoakes): populate this.
             multiplexed_model_id="",
         )
-        result_gen = self.handle_request_with_rejection(
+        result_gen = self.handle_request_with_rejection_and_queueing(
             request_metadata, gRPCRequest(request_proto)
         )
         queue_len_info: ReplicaQueueLengthInfo = await result_gen.__anext__()
-        # TODO(edoakes): update the behavior to more closely mimic the existing path:
-        # add an internal queue and drop requests based on max_queued_requests.
         if not queue_len_info.accepted:
             context.set_code(grpc.StatusCode.RESOURCE_EXHAUSTED)
-            context.set_details("Replica exceeded capacity of max_ongoing_requests.")
+            context.set_details("Replica exceeded capacity. Request rejected.")
             return
 
         result = await result_gen.__anext__()
@@ -661,15 +841,13 @@ class AnyscaleReplica(ReplicaBase):
         )
 
         try:
-            result_gen = self.handle_request_with_rejection(
+            result_gen = self.handle_request_with_rejection_and_queueing(
                 request_metadata, http_request
             )
             queue_len_info: ReplicaQueueLengthInfo = await result_gen.__anext__()
-            # TODO(edoakes): update the behavior to more closely mimic the existing path:
-            # add an internal queue and drop requests based on max_queued_requests.
             if not queue_len_info.accepted:
                 for msg in convert_object_to_asgi_messages(
-                    "Replica exceeded capacity of max_ongoing_requests.",
+                    "Replica exceeded capacity. Request rejected.",
                     status_code=503,
                 ):
                     await send(msg)
@@ -687,6 +865,8 @@ class AnyscaleReplica(ReplicaBase):
 
     async def perform_graceful_shutdown(self):
         await super().perform_graceful_shutdown()
+        # Shutdown the request queue
+        self._request_queue.shutdown()
         if self._direct_ingress_http_server_task:
             self._direct_ingress_http_server_task.cancel()
         if self._direct_ingress_grpc_server_task:

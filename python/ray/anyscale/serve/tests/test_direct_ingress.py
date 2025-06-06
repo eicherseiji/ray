@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 from uuid import UUID
 import httpx
+import asyncio
 
 from fastapi import FastAPI
 from ray.serve._private.test_utils import (
@@ -18,8 +19,11 @@ from starlette.responses import PlainTextResponse
 import ray
 from ray import serve
 from ray.actor import ActorHandle
+from ray._private.test_utils import (
+    Collector,
+    wait_for_condition,
+)
 from ray._common.test_utils import SignalActor, Semaphore
-from ray._private.test_utils import wait_for_condition
 from ray.serve.generated import serve_pb2, serve_pb2_grpc
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
@@ -380,64 +384,6 @@ def test_health_check(_skip_if_ff_not_enabled, serve_instance):
     wait_for_condition(
         lambda: len(serve.status().applications) == 0,
     )
-
-
-def test_max_ongoing_requests(_skip_if_ff_not_enabled, serve_instance):
-    wait_signal = SignalActor.remote()
-
-    serve.run(
-        Hybrid.options(max_ongoing_requests=5).bind(
-            message="done waiting!", wait_signal=wait_signal
-        )
-    )
-    http_port = get_http_ports()[0]
-
-    def _do_http_request() -> bool:
-        r = httpx.get(f"http://localhost:{http_port}/")
-        if r.status_code == 200:
-            return True
-        elif r.status_code == 503:
-            return False
-        else:
-            raise RuntimeError(f"Unexpected status code: {r.status_code}")
-
-    grpc_port = get_grpc_ports()[0]
-
-    def _do_grpc_request() -> bool:
-        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
-        stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
-
-        try:
-            stub.Method1(serve_pb2.UserDefinedMessage())
-            return True
-        except grpc.RpcError as e:
-            if e.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
-                return False
-
-            raise RuntimeError(f"Unexpected status code: {e.code()}")
-        finally:
-            channel.close()
-
-    for _do_request in [_do_grpc_request, _do_http_request]:
-        with ThreadPoolExecutor() as tpe:
-            # Submit `max_ongoing_requests` blocking requests.
-            futures = [tpe.submit(_do_request) for _ in range(5)]
-            wait_for_condition(
-                lambda: ray.get(wait_signal.cur_num_waiters.remote()) == 5
-            )
-            assert all(not f.done() for f in futures)
-
-            # Send another request beyond `max_ongoing_requests`, should error.
-            assert _do_request() is False
-
-            # Unblock the requests, check they finish successfully.
-            ray.get(wait_signal.send.remote())
-            assert all(f.result() is True for f in futures)
-
-        # Now a new request showld succeed.
-        assert _do_request() is True
-
-        ray.get(wait_signal.send.remote(clear=True))
 
 
 def test_port_retry_logic(_skip_if_ff_not_enabled, serve_instance):
@@ -1074,6 +1020,594 @@ def test_some_replicas_not_running(_skip_if_ff_not_enabled, serve_instance):
         == DeploymentStatus.UPDATING
     )
     assert serve_details.applications["app-1"].status == ApplicationStatus.DEPLOYING
+
+
+class TestDirectIngressBackpressure:
+    def _do_http_request(self, http_port: int, app_name: str = "") -> bool:
+        r = httpx.get(f"http://localhost:{http_port}/{app_name}", timeout=10)
+        if r.status_code == 200:
+            return True
+        elif r.status_code == 503:
+            return False
+        else:
+            raise RuntimeError(f"Unexpected status code: {r.status_code}")
+
+    def _do_grpc_request(self, grpc_port: int) -> bool:
+        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+        stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
+        try:
+            stub.Method1(serve_pb2.UserDefinedMessage(), timeout=10)
+            return True
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
+                return False
+
+            raise RuntimeError(f"Unexpected status code: {e.code()}")
+        finally:
+            channel.close()
+
+    def test_max_ongoing_requests(self, _skip_if_ff_not_enabled, serve_instance):
+        wait_signal = SignalActor.remote()
+
+        serve.run(
+            Hybrid.options(max_ongoing_requests=5).bind(
+                message="done waiting!", wait_signal=wait_signal
+            )
+        )
+        http_port = get_http_ports()[0]
+
+        grpc_port = get_grpc_ports()[0]
+
+        for _do_request in [self._do_grpc_request, self._do_http_request]:
+            port = grpc_port if _do_request == self._do_grpc_request else http_port
+            num_requests = 5
+            with ThreadPoolExecutor(num_requests) as tpe:
+                # Submit `max_ongoing_requests` blocking requests.
+                futures = [tpe.submit(_do_request, port) for _ in range(num_requests)]
+                wait_for_condition(
+                    lambda: ray.get(wait_signal.cur_num_waiters.remote())
+                    == num_requests
+                )
+                assert all(not f.done() for f in futures)
+
+                # Send another request beyond `max_ongoing_requests`
+                queued_requests = [
+                    tpe.submit(_do_request, port) for _ in range(num_requests + 5)
+                ]
+
+                # Unblock the requests, check they finish successfully.
+                ray.get(wait_signal.send.remote())
+                assert all(f.result() is True for f in futures)
+                assert all(f.result() is True for f in queued_requests)
+
+            # Now a new request showld succeed.
+            assert _do_request(port) is True
+
+            ray.get(wait_signal.send.remote(clear=True))
+
+    def test_backpressure_queued_requests(
+        self, _skip_if_ff_not_enabled, serve_instance
+    ):
+        """Test that the backpressure logic works"""
+        signal = SignalActor.remote()
+
+        serve.run(
+            Hybrid.options(max_ongoing_requests=1).bind(
+                message="done waiting!", wait_signal=signal
+            )
+        )
+        http_port = get_http_ports()[0]
+        grpc_port = get_grpc_ports()[0]
+        assert http_port != 8000
+        assert grpc_port != 9000
+        for _do_request in [self._do_grpc_request, self._do_http_request]:
+            port = grpc_port if _do_request == self._do_grpc_request else http_port
+            num_requests = 1000
+            with ThreadPoolExecutor(num_requests) as tpe:
+                futures = [tpe.submit(_do_request, port) for _ in range(num_requests)]
+                wait_for_condition(
+                    lambda: ray.get(signal.cur_num_waiters.remote()) == 1
+                )
+                signal.send.remote()
+                wait_for_condition(
+                    lambda: ray.get(signal.cur_num_waiters.remote()) == 0
+                )
+                assert sum(f.result() is True for f in futures) == num_requests
+
+            signal.send.remote(clear=True)
+
+    def test_drop_after_max_queued_requests(
+        self, _skip_if_ff_not_enabled, serve_instance
+    ):
+        """Test that the backpressure logic works"""
+        signal = SignalActor.remote()
+
+        serve.run(
+            Hybrid.options(max_ongoing_requests=10, max_queued_requests=10).bind(
+                message="done waiting!", wait_signal=signal
+            )
+        )
+        http_port = get_http_ports()[0]
+        grpc_port = get_grpc_ports()[0]
+        assert http_port != 8000
+        assert grpc_port != 9000
+        for _do_request in [self._do_grpc_request, self._do_http_request]:
+            port = grpc_port if _do_request == self._do_grpc_request else http_port
+            num_requests = 1000
+            with ThreadPoolExecutor(num_requests) as tpe:
+                futures = [tpe.submit(_do_request, port) for _ in range(num_requests)]
+                wait_for_condition(
+                    lambda: ray.get(signal.cur_num_waiters.remote()) == 10
+                )
+
+                def _func():
+                    count = sum(
+                        f.done() and f.result(timeout=0) is False for f in futures
+                    )
+                    assert count == num_requests - 20
+                    return True
+
+                wait_for_condition(_func, timeout=10)
+                signal.send.remote()
+                wait_for_condition(
+                    lambda: ray.get(signal.cur_num_waiters.remote()) == 0
+                )
+                # assert 2 requests succeeded
+                assert sum(f.result() is True for f in futures) == 20
+
+            signal.send.remote(clear=True)
+
+    def test_mixed_http_grpc_backpressure(
+        self, _skip_if_ff_not_enabled, serve_instance
+    ):
+        """Test backpressure with simultaneous HTTP and gRPC requests"""
+        signal = SignalActor.remote()
+
+        serve.run(
+            Hybrid.options(max_ongoing_requests=5, max_queued_requests=5).bind(
+                message="done waiting!", wait_signal=signal
+            )
+        )
+        http_port = get_http_ports()[0]
+        grpc_port = get_grpc_ports()[0]
+
+        assert http_port != 8000
+        assert grpc_port != 9000
+
+        num_requests = 500
+        with ThreadPoolExecutor(num_requests) as tpe:
+            # Submit mixed HTTP and gRPC requests
+            http_futures = []
+            grpc_futures = []
+            http_futures.extend(
+                [
+                    tpe.submit(self._do_http_request, http_port)
+                    for _ in range(num_requests // 2)
+                ]
+            )
+            grpc_futures.extend(
+                [
+                    tpe.submit(self._do_grpc_request, grpc_port)
+                    for _ in range(num_requests // 2)
+                ]
+            )
+
+            # Wait for ongoing requests to block (should be 10 total across both protocols)
+            wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 5)
+
+            def _func():
+                # Only check results for futures that are actually done
+                http_rejected = sum(
+                    f.done() and f.result(timeout=0) is False for f in http_futures
+                )
+                grpc_rejected = sum(
+                    f.done() and f.result(timeout=0) is False for f in grpc_futures
+                )
+                total_rejected = http_rejected + grpc_rejected
+                # Should have 10 ongoing + 10 queued = 20 allowed, so 10 rejected
+                assert total_rejected == num_requests - 10
+                return True
+
+            wait_for_condition(_func, timeout=20)
+
+            # Unblock and verify
+            ray.get(signal.send.remote())
+
+            http_successful = sum(1 for f in http_futures if f.result() is True)
+            grpc_successful = sum(1 for f in grpc_futures if f.result() is True)
+            total_successful = http_successful + grpc_successful
+
+            # Should have exactly 20 successful (10 ongoing + 10 queued)
+            assert total_successful == 10
+
+    def test_health_check_during_backpressure(
+        self, _skip_if_ff_not_enabled, serve_instance
+    ):
+        """Test that health checks work correctly during backpressure"""
+        signal = SignalActor.remote()
+        fail_hc_signal = SignalActor.remote()
+
+        serve.run(
+            Hybrid.options(
+                max_ongoing_requests=1, max_queued_requests=2, health_check_period_s=0.5
+            ).bind(
+                message="done waiting!",
+                wait_signal=signal,
+                fail_hc_signal=fail_hc_signal,
+            )
+        )
+        http_port = get_http_ports()[0]
+        num_requests = 100
+        with ThreadPoolExecutor(num_requests) as tpe:
+            # Submit requests to create backpressure
+            futures = [
+                tpe.submit(self._do_http_request, http_port)
+                for _ in range(num_requests)
+            ]
+
+            # Wait for backpressure
+            wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 1)
+
+            # Health check should still pass during backpressure
+            hc_response = httpx.get(f"http://localhost:{http_port}/-/healthz")
+            assert hc_response.status_code == 200
+            assert hc_response.text == "OK"
+
+            # Fail health check
+            ray.get(fail_hc_signal.send.remote())
+
+            # Health check should fail even during backpressure
+            def _check_unhealthy():
+                hc_response = httpx.get(f"http://localhost:{http_port}/-/healthz")
+                assert hc_response.status_code == 503
+                assert hc_response.text == "UNHEALTHY"
+                return True
+
+            wait_for_condition(_check_unhealthy, timeout=2)
+
+            # Restore health check
+            ray.get(fail_hc_signal.send.remote(clear=True))
+
+            # Unblock requests
+            ray.get(signal.send.remote())
+
+            # Verify some requests succeeded
+            successful = sum(1 for f in futures if f.result() is True)
+            assert successful == 3
+
+            # check remaining requests are rejected
+            rejected = sum(1 for f in futures if f.done() and f.result() is False)
+            assert rejected == num_requests - 3
+
+    def test_multiple_deployment_backpressure_isolation(
+        self, _skip_if_ff_not_enabled, serve_instance
+    ):
+        """Test that backpressure is isolated between different deployments"""
+        signal1 = SignalActor.remote()
+        signal2 = SignalActor.remote()
+
+        @serve.deployment(name="deployment-1")
+        class Deployment1:
+            def __init__(self, signal):
+                self.signal = signal
+
+            async def __call__(self, request):
+                await self.signal.wait.remote()
+                return "deployment-1"
+
+            async def Method1(self, request):
+                await self.signal.wait.remote()
+                return serve_pb2.UserDefinedResponse(greeting="deployment-1")
+
+        @serve.deployment(name="deployment-2")
+        class Deployment2:
+            def __init__(self, signal):
+                self.signal = signal
+
+            async def __call__(self, request):
+                await self.signal.wait.remote()
+                return "deployment-2"
+
+            async def Method1(self, request):
+                await self.signal.wait.remote()
+                return serve_pb2.UserDefinedResponse(greeting="deployment-2")
+
+        # Deploy with different backpressure settings
+        serve.run(
+            Deployment1.options(max_ongoing_requests=1, max_queued_requests=1).bind(
+                signal1
+            ),
+            name="app-1",
+            route_prefix="/app-1",
+        )
+        serve.run(
+            Deployment2.options(max_ongoing_requests=5, max_queued_requests=5).bind(
+                signal2
+            ),
+            name="app-2",
+            route_prefix="/app-2",
+        )
+
+        http_ports_1 = get_http_ports("/app-1")
+        http_ports_2 = get_http_ports("/app-2")
+        grpc_ports_1 = get_grpc_ports("/app-1")
+        grpc_ports_2 = get_grpc_ports("/app-2")
+
+        assert http_ports_1[0] != 8000
+        assert http_ports_2[0] != 8000
+        assert grpc_ports_1[0] != 9000
+        assert grpc_ports_2[0] != 9000
+
+        for do_request in [self._do_http_request, self._do_grpc_request]:
+            port1 = (
+                http_ports_1[0]
+                if do_request == self._do_http_request
+                else grpc_ports_1[0]
+            )
+            port2 = (
+                http_ports_2[0]
+                if do_request == self._do_http_request
+                else grpc_ports_2[0]
+            )
+            num_requests = 20
+            is_grpc = do_request == self._do_grpc_request
+            with ThreadPoolExecutor(num_requests) as tpe:
+                # Saturate deployment-1 (should cause backpressure)
+                futures_1 = [
+                    tpe.submit(do_request, port1, "app-1")
+                    if not is_grpc
+                    else tpe.submit(do_request, port1)
+                    for _ in range(num_requests // 2)
+                ]
+
+                # Submit to deployment-2 (should not be affected by deployment-1's backpressure)
+                futures_2 = [
+                    tpe.submit(do_request, port2, "app-2")
+                    if not is_grpc
+                    else tpe.submit(do_request, port2)
+                    for _ in range(num_requests // 2)
+                ]
+
+                # Wait for both to have ongoing requests
+                wait_for_condition(
+                    lambda: ray.get(signal1.cur_num_waiters.remote()) == 1
+                )
+                wait_for_condition(
+                    lambda: ray.get(signal2.cur_num_waiters.remote()) == 5
+                )
+
+                def _func():
+                    # deployment-1 should have rejected requests
+                    rejected_1 = sum(
+                        1
+                        for f in futures_1
+                        if f.done() and f.result(timeout=0) is False
+                    )
+                    assert rejected_1 == 8  # Most should be rejected (10 - 2 allowed)
+
+                    # deployment-2 should not have rejected requests yet (higher limits)
+                    rejected_2 = sum(
+                        1
+                        for f in futures_2
+                        if f.done() and f.result(timeout=0) is False
+                    )
+                    assert rejected_2 == 0  # None should be rejected yet
+
+                    return True
+
+                wait_for_condition(_func, timeout=20)
+
+                # Unblock both
+                ray.get(signal1.send.remote())
+                ray.get(signal2.send.remote())
+
+                # Verify deployment-2 succeeded more than deployment-1
+                successful_1 = sum(1 for f in futures_1 if f.result() is True)
+                successful_2 = sum(1 for f in futures_2 if f.result() is True)
+
+                assert successful_1 == 2  # At most 2 for deployment-1
+                assert successful_2 == 10
+
+            ray.get(signal1.send.remote(clear=True))
+            ray.get(signal2.send.remote(clear=True))
+
+    def test_backpressure_with_composite_deployments(
+        self, _skip_if_ff_not_enabled, serve_instance
+    ):
+        """Test backpressure with composite deployments"""
+        signal = SignalActor.remote()
+
+        @serve.deployment(max_ongoing_requests=1, max_queued_requests=2)
+        class ChildDeployment:
+            def __init__(self, signal):
+                self.signal = signal
+
+            async def __call__(self):
+                await self.signal.wait.remote()
+                return "child-deployment"
+
+        @serve.deployment(max_ongoing_requests=1000)
+        class CompositeDeployment:
+            def __init__(self, child_deployment: ChildDeployment):
+                self.child_deployment = child_deployment
+
+            async def __call__(self):
+                await self.child_deployment.remote()
+                return "composite-deployment"
+
+            async def Method1(self, request):
+                await self.child_deployment.remote()
+                return serve_pb2.UserDefinedResponse(greeting="composite-deployment")
+
+        serve.run(
+            CompositeDeployment.options(name="composite-deployment").bind(
+                ChildDeployment.options(name="child-deployment").bind(signal)
+            ),
+            name="composite-app",
+            route_prefix="/composite-app",
+        )
+
+        http_port = get_http_ports("/composite-app")[0]
+        grpc_port = get_grpc_ports("/composite-app")[0]
+        assert http_port != 8000
+        assert grpc_port != 9000
+
+        num_requests = 10
+        for do_request in [self._do_grpc_request, self._do_http_request]:
+            if do_request == self._do_grpc_request:
+                # TODO(abrar): fix the grpc test
+                continue
+            port = http_port if do_request == self._do_http_request else grpc_port
+            is_grpc = do_request == self._do_grpc_request
+            with ThreadPoolExecutor(num_requests) as tpe:
+                futures = [
+                    tpe.submit(do_request, port)
+                    if is_grpc
+                    else tpe.submit(do_request, port, "composite-app")
+                    for _ in range(num_requests)
+                ]
+                wait_for_condition(
+                    lambda: ray.get(signal.cur_num_waiters.remote()) == 1
+                )
+
+                def _func():
+                    rejected = sum(
+                        [f.done() and f.result(timeout=0) is False for f in futures]
+                    )
+                    assert rejected == num_requests - 2
+                    return True
+
+                wait_for_condition(_func, timeout=5)
+
+                ray.get(signal.send.remote())
+
+                successful = sum(1 for f in futures if f.result() is True)
+                assert successful == 2
+
+            ray.get(signal.send.remote(clear=True))
+
+    def test_client_disconnect_during_request(
+        self, _skip_if_ff_not_enabled, serve_instance
+    ):
+        """Test that client disconnects during request are handled correctly"""
+        # TODO(abrar): fix the test
+        pytest.skip("Skipping test because disconnects are not supported yet")
+        collector = Collector.remote()
+        signal = SignalActor.remote()
+
+        @serve.deployment(max_ongoing_requests=1, max_queued_requests=20)
+        class A:
+            async def __call__(self):
+                # get request_id
+                request_id = ray.serve.context._get_serve_request_context().request_id
+                await collector.add.remote(request_id)
+                await signal.wait.remote()
+                return "ok"
+
+        serve.run(A.options(name="A").bind(), name="app-1", route_prefix="/app-1")
+        http_port = get_http_ports("/app-1")[0]
+        assert http_port != 8000
+
+        with ThreadPoolExecutor() as tpe:
+            _ = [
+                tpe.submit(httpx.get, f"http://localhost:{http_port}/app-1", timeout=1)
+                for _ in range(100)
+            ]
+
+        wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 1)
+        assert len(ray.get(collector.get.remote())) == 1
+
+        ray.get(signal.send.remote())
+
+        with ThreadPoolExecutor() as tpe:
+            # make new requests
+            _ = [
+                tpe.submit(httpx.get, f"http://localhost:{http_port}/app-1")
+                for _ in range(100)
+            ]
+
+            def _func():
+                assert len(ray.get(collector.get.remote())) == 101
+                return True
+
+            wait_for_condition(_func, timeout=10)
+
+    def test_graceful_shutdown_wait_loop(self, _skip_if_ff_not_enabled, serve_instance):
+        """Test that the graceful shutdown wait loop works"""
+        signal = SignalActor.remote()
+
+        @serve.deployment(
+            graceful_shutdown_timeout_s=20,
+            graceful_shutdown_wait_loop_s=0.01,
+            max_ongoing_requests=10,
+            max_queued_requests=10,
+        )
+        class A:
+            async def __call__(self):
+                await signal.wait.remote()
+                return "ok"
+
+        serve.run(A.options(name="A").bind(), name="app-1", route_prefix="/app-1")
+        http_port = get_http_ports("/app-1")[0]
+        assert http_port != 8000
+
+        num_requests = 20
+        with ThreadPoolExecutor(num_requests) as tpe:
+            futures = [
+                tpe.submit(
+                    httpx.get, f"http://localhost:{http_port}/app-1", timeout=None
+                )
+                for _ in range(num_requests)
+            ]
+
+            def _func():
+                count = ray.get(signal.cur_num_waiters.remote())
+                assert count == 10
+                return True
+
+            wait_for_condition(_func, timeout=10)
+
+            serve.delete("app-1", _blocking=False)
+            # send the signal
+            ray.get(signal.send.remote())
+
+            # wait for all requests to finish
+            for future in futures:
+                assert future.result().status_code == 200
+
+    def test_requests_are_not_running_serially(
+        self, _skip_if_ff_not_enabled, serve_instance
+    ):
+        """Test that requests are processed concurrently, not serially"""
+
+        @serve.deployment(
+            max_ongoing_requests=20,
+        )
+        class A:
+            async def __call__(self):
+                await asyncio.sleep(1)
+                return "ok"
+
+        serve.run(A.options(name="A").bind(), name="app-1", route_prefix="/app-1")
+        http_port = get_http_ports("/app-1")[0]
+        assert http_port != 8000
+
+        num_requests = 20
+
+        with ThreadPoolExecutor(num_requests) as tpe:
+            futures = [
+                tpe.submit(
+                    httpx.get, f"http://localhost:{http_port}/app-1", timeout=None
+                )
+                for _ in range(num_requests)
+            ]
+
+            def _func():
+                for future in futures:
+                    assert future.result().status_code == 200
+                return True
+
+            wait_for_condition(_func, timeout=5)
 
 
 class TestDirectIngressAutoscaling:
