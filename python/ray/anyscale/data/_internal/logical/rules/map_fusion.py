@@ -14,7 +14,8 @@ from ray.data._internal.execution.operators.map_transformer import (
     RowMapTransformFn,
 )
 from ray.data._internal.logical.rules.zero_copy_map_fusion import ZeroCopyMapFusionRule
-from ray.data.block import DataBatch
+from ray.data.block import DataBatch, Block
+from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
 
 
 class RedundantMapTransformPruning(ZeroCopyMapFusionRule):
@@ -413,5 +414,68 @@ class BatchesToRowsMapTransformPrunning(ZeroCopyMapFusionRule):
                 # Keep the current function unchanged
                 result.append(transform_fns[i])
                 i += 1
+
+        return result
+
+
+class BatchesToBlocksMapTransformFn(MapTransformFn):
+    """A MapTransformFn that converts batches to blocks."""
+
+    def __init__(self):
+        super().__init__(
+            input_type=MapTransformFnDataType.Batch,
+            output_type=MapTransformFnDataType.Block,
+            category=MapTransformFnCategory.PostProcess,
+            is_udf=False,
+        )
+
+    def __call__(
+        self, batches: Iterable[DataBatch], ctx: TaskContext
+    ) -> Iterable[Block]:
+        for batch in batches:
+            block_builder = DelegatingBlockBuilder()
+            block_builder.add_batch(batch)
+            yield block_builder.build()
+
+    @classmethod
+    def instance(cls) -> "BatchesToBlocksMapTransformFn":
+        """Returns a singleton instance of BatchesToBlocksMapTransformFn."""
+        if not hasattr(cls, "_instance"):
+            cls._instance = cls()
+        return cls._instance
+
+
+class BatchesToBatchesMapTransformTuning(ZeroCopyMapFusionRule):
+    """This rule optimizes the sequence:
+
+    BatchMapTransformFn ->
+    BuildOutputBlocksMapTransformFn(input_type=MapTransformFnDataType.Batch) ->
+    BlocksToBatchesMapTransformFn ->
+    BatchMapTransformFn
+
+    Here we replace the first BuildOutputBlocksMapTransformFn with
+    BatchesToBlocksMapTransformFn, so it does not honor `target_max_block_size` or
+    `target_num_rows_per_block`, because immediately following
+    BlocksToBatchesMapTransformFn has to honor batch size for BatchMapTransformFn.
+
+    Example logical plans that have this pattern are `MapBatches->MapBatches`.
+    """
+
+    def _optimize(self, transform_fns: List[MapTransformFn]) -> List[MapTransformFn]:
+        result = []
+        i = 0
+        while i < len(transform_fns):
+            # Check if we have the pattern to optimize
+            if (
+                i + 1 < len(transform_fns)
+                and isinstance(transform_fns[i], BuildOutputBlocksMapTransformFn)
+                and transform_fns[i].input_type == MapTransformFnDataType.Batch
+                and isinstance(transform_fns[i + 1], BlocksToBatchesMapTransformFn)
+            ):
+                # Replace the BuildOutputBlocksMapTransformFn with BatchesToBlocksMapTransformFn
+                result.append(BatchesToBlocksMapTransformFn.instance())
+            else:
+                result.append(transform_fns[i])
+            i += 1
 
         return result

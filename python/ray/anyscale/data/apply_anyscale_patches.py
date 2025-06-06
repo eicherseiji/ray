@@ -26,6 +26,7 @@ from ray.anyscale.data._internal.logical.rules.configure_map_task_memory import 
 )
 from ray.anyscale.data._internal.logical.rules.map_fusion import (
     BatchesToRowsMapTransformPrunning,
+    BatchesToBatchesMapTransformTuning,
 )
 from ray.anyscale.data.api.context_mixin import DataContextMixin
 from ray.anyscale.data.api.dataset_mixin import DatasetMixin
@@ -157,6 +158,7 @@ def apply_anyscale_patches():
     physical_ruleset.add(RedundantMapTransformPruning)
     physical_ruleset.add(FuseRepartitionOutputBlocks)
     physical_ruleset.add(BatchesToRowsMapTransformPrunning)
+    physical_ruleset.add(BatchesToBatchesMapTransformTuning)
     if ANYSCALE_MAP_TASK_MEMORY_CONFIGURATION_ENABLED:
         physical_ruleset.remove(ConfigureMapTaskMemoryUsingOutputSize)
         physical_ruleset.add(ConfigureMapTaskMemoryWithProfiling)

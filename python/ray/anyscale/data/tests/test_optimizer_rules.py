@@ -9,6 +9,7 @@ import ray
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
 from ray.anyscale.data._internal.logical.rules.map_fusion import (
     BatchesToRowsTransformFn,
+    BatchesToBlocksMapTransformFn,
 )
 from ray.data import Dataset, DataContext
 from ray.data._internal.execution.operators.map_transformer import (
@@ -840,19 +841,20 @@ def test_map_batches_transformer_non_fusion(ray_start_regular_shared):
     )
 
     fns = plan.dag.get_map_transformer().get_transform_fns()
+
     expected_fns = [
         BlocksToBatchesMapTransformFn,
         BatchMapTransformFn,
-        BuildOutputBlocksMapTransformFn,
+        BatchesToBlocksMapTransformFn,
         BlocksToBatchesMapTransformFn,
         BatchMapTransformFn,
-        BuildOutputBlocksMapTransformFn,
+        BatchesToBlocksMapTransformFn,
         BlocksToBatchesMapTransformFn,
         BatchMapTransformFn,
-        BuildOutputBlocksMapTransformFn,
+        BatchesToBlocksMapTransformFn,
         BlocksToBatchesMapTransformFn,
         BatchMapTransformFn,
-        BuildOutputBlocksMapTransformFn,
+        BatchesToBlocksMapTransformFn,
         BlocksToBatchesMapTransformFn,
         BatchMapTransformFn,
         BuildOutputBlocksMapTransformFn,
