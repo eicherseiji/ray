@@ -62,12 +62,12 @@ def test_repartition_shuffle(
     ds2 = ds.repartition(5, shuffle=True)
     assert ds2._plan.initial_num_blocks() == 5
     assert ds2.sum() == 190
-    assert ds2._block_num_rows() == [10, 10, 0, 0, 0]
+    assert ds2._block_num_rows() == [10, 10] + [0] * 3
 
     ds3 = ds2.repartition(20, shuffle=True)
     assert ds3._plan.initial_num_blocks() == 20
     assert ds3.sum() == 190
-    assert ds3._block_num_rows() == [2] * 10 + [0] * 10
+    assert ds3._block_num_rows() == [10, 10] + [0] * 18
 
     large = ray.data.range(10000, override_num_blocks=10)
     large = large.repartition(20, shuffle=True)
@@ -153,12 +153,12 @@ def test_repartition_shuffle_arrow(
     ds2 = ds.repartition(5, shuffle=True)
     assert ds2._plan.initial_num_blocks() == 5
     assert ds2.count() == 20
-    assert ds2._block_num_rows() == [10, 10, 0, 0, 0]
+    assert ds2._block_num_rows() == [10, 10] + [0] * 3
 
     ds3 = ds2.repartition(20, shuffle=True)
     assert ds3._plan.initial_num_blocks() == 20
     assert ds3.count() == 20
-    assert ds3._block_num_rows() == [2] * 10 + [0] * 10
+    assert ds3._block_num_rows() == [10, 10] + [0] * 18
 
     large = ray.data.range(10000, override_num_blocks=10)
     large = large.repartition(20, shuffle=True)

@@ -8,6 +8,7 @@ import torchvision
 from torch.utils.data import IterableDataset
 import ray
 import ray.data
+from ray.data.context import DataContext
 import ray.train
 
 # Local imports
@@ -48,6 +49,7 @@ class ImageClassificationParquetRayDataLoaderFactory(
                 - "val": Validation dataset without transforms
         """
         # Create training dataset with image decoding and transforms
+        DataContext.get_current()._enable_read_files_fusion_override = True
         train_ds = (
             ray.data.read_parquet(
                 IMAGENET_PARQUET_SPLIT_S3_DIRS[DatasetKey.TRAIN],

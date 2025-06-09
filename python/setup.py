@@ -805,6 +805,19 @@ build_dir = os.path.join(ROOT_DIR, "build")
 if os.path.isdir(build_dir):
     shutil.rmtree(build_dir)
 
+_LICENSE = """
+Copyright (2023 and onwards) Anyscale, Inc.
+
+The use of any code contained within this package is subject to the
+Anyscale Terms of Service (anyscale.com/terms) or other written agreement
+between you and Anyscale.
+
+Notwithstanding any terms in any license file contained within this package,
+you may not use any code in this package except within the Anyscale Platform.
+Unless specifically described otherwise in the Anyscale Documentation, you may
+not copy, modify or remove any file contained in this package.
+"""
+
 setuptools.setup(
     name=setup_spec.name,
     version=setup_spec.version,
@@ -854,5 +867,5 @@ setuptools.setup(
         "": ["BUILD"],
     },
     zip_safe=False,
-    license="Apache 2.0",
+    license=_LICENSE.lstrip(),
 ) if __name__ == "__main__" else None
