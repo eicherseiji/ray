@@ -22,7 +22,7 @@ from ray.core.generated import autoscaler_pb2
 from ray.serve.context import _get_global_client
 from ray.serve.schema import ServeInstanceDetails
 from ray.serve._private.common import ReplicaState
-from ray._private.test_utils import wait_for_condition
+from ray._common.test_utils import wait_for_condition
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 from ray.serve._private.default_impl import create_cluster_node_info_cache
 
