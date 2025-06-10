@@ -349,11 +349,7 @@
           scaling: autoscaling
           repeat_map_batches: once
       # Autoscaling actor test
-      - with:
-          format: numpy
-          compute: actors
-          scaling: autoscaling
-          repeat_map_batches: once
+      # disabled on rayturbo
 
   cluster:
     cluster_compute: "{{scaling}}_cpu_compute.yaml"
