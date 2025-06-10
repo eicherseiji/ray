@@ -5,7 +5,7 @@ import threading
 import pytest
 
 from ray import ActorID, cloudpickle
-from ray._private.test_utils import wait_for_condition
+from ray._common.test_utils import wait_for_condition
 from ray.anyscale.serve._private.replica_result import gRPCReplicaResult
 from ray.serve._private.common import RequestMetadata
 from ray.serve.generated import serve_proprietary_pb2

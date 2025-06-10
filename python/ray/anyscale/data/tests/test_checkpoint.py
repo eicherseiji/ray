@@ -10,7 +10,7 @@ from pyarrow.fs import FileSelector
 from pytest_lazy_fixtures import lf as lazy_fixture
 
 import ray
-from ray._private.test_utils import wait_for_condition
+from ray._common.test_utils import wait_for_condition
 from ray.anyscale.data._internal.execution.rules.insert_checkpointing import (
     InsertCheckpointingLayerRule,
 )
