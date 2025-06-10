@@ -85,7 +85,7 @@ def autoscaling_cluster_with_metrics(monkeypatch):
 
         serve.shutdown()
         ray.shutdown()
-        ray._private.utils.reset_ray_address()
+        ray._common.utils.reset_ray_address()
 
 
 @pytest.fixture
