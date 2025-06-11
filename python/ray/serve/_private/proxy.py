@@ -1071,6 +1071,8 @@ class HTTPProxy(GenericProxy):
                         code="1000",  # [Sihan] is there a better code for this?
                         is_error=True,
                     )
+            else:
+                status_code = status.code
 
             del self.asgi_receive_queues[internal_request_id]
 

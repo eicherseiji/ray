@@ -37,7 +37,7 @@
        "request_route_path": "/",
        "resource.name": "proxy_http_request BasicModel POST /",
        "http.method": "POST",
-       "http.status_code": "200",
+       "http.status_code": 200,
        "http.route": "/"
      },
      "events": [],
