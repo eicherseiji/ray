@@ -9,7 +9,9 @@ ARG PYTHON_VERSION
 
 RUN <<EOF
 #!/bin/bash
-set -eux
+set -euo pipefail
+set -x
+
 apt-get update
 apt-get install -y --no-install-recommends \
 		ca-certificates \
@@ -20,6 +22,10 @@ apt-get install -y --no-install-recommends \
 useradd -ms /bin/bash -d /home/ray ray --uid 1000 --gid 100
 usermod -aG sudo ray
 echo 'ray ALL=NOPASSWD: ALL' >> /etc/sudoers
+
+# Install uv
+curl -sSL -o- https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL="/usr/local/bin" sh
+
 EOF
 
 # Switch to ray user
@@ -29,7 +35,9 @@ WORKDIR /home/ray
 
 RUN <<EOF
 #!/bin/bash
-set -eux
+set -euo pipefail
+set -x
+
 MINIFORGE_VERSION="24.11.3-0"
 
 # Install miniforge
@@ -43,9 +51,6 @@ rm /tmp/miniforge.sh
 eval "$(/home/ray/anaconda3/bin/conda shell.bash activate)"
 /home/ray/anaconda3/bin/conda install -y "python=${PYTHON_VERSION}"
 /home/ray/anaconda3/bin/conda clean -a
-
-# Install uv
-wget -qO- https://astral.sh/uv/install.sh | sudo env UV_UNMANAGED_INSTALL="/usr/local/bin" sh
 
 EOF
 
