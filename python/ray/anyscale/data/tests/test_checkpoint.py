@@ -6,7 +6,7 @@ from typing import List
 import pandas as pd
 import pytest
 import pyarrow
-from pyarrow.fs import FileSelector
+from pyarrow.fs import FileSelector, LocalFileSystem
 from pytest_lazy_fixtures import lf as lazy_fixture
 
 import ray
@@ -700,6 +700,25 @@ def test_skip_checkpoint_flag(
     # Calling `ds.write_xxx()` afterwards should enable checkpointing.
     ds.write_parquet(os.path.join(data_path, "output"), filesystem=fs)
     assert len(read_ids_from_checkpoint_files(ctx.checkpoint_config)) == 5
+
+
+def test_dict_checkpoint_config():
+    """Test that a dict checkpoint config can be used to create a CheckpointConfig."""
+    context = ray.data.DataContext.get_current()
+    checkpoint_path = "/tmp/checkpoint"
+    fs = LocalFileSystem()
+    context.checkpoint_config = {
+        "id_column": "id",
+        "checkpoint_path": checkpoint_path,
+        "override_filesystem": fs,
+        "override_backend": "CLOUD_OBJECT_STORAGE_ROW",
+    }
+    assert context.checkpoint_config.id_column == "id"
+    assert context.checkpoint_config.checkpoint_path == checkpoint_path
+    assert context.checkpoint_config.filesystem is fs
+    assert (
+        context.checkpoint_config.backend == CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW
+    )
 
 
 if __name__ == "__main__":
