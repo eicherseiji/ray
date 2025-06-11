@@ -1,4 +1,5 @@
 import functools
+import importlib.util
 import inspect
 import time
 import warnings
@@ -20,6 +21,7 @@ from ray.anyscale.data._internal.planner.file_indexer import (
     NonSamplingFileIndexer,
 )
 from ray.anyscale.data._internal.readers import (
+    ArrowJSONReader,
     AudioReader,
     AvroReader,
     BinaryInMemorySizeEstimator,
@@ -28,8 +30,9 @@ from ray.anyscale.data._internal.readers import (
     FileReader,
     ImageReader,
     InMemorySizeEstimator,
-    JSONReader,
     NumpyReader,
+    OrjsonJSONLReader,
+    PandasJSONLReader,
     ParquetInMemorySizeEstimator,
     ParquetReader,
     SamplingInMemorySizeEstimator,
@@ -489,7 +492,7 @@ def read_json(
     *,
     lines: bool = False,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
-    ray_remote_args: Dict[str, Any] = None,
+    ray_remote_args: Optional[Dict[str, Any]] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
     partitioning: Partitioning = Partitioning("hive"),
@@ -500,24 +503,37 @@ def read_json(
     concurrency: Optional[int] = None,
     **arrow_json_args,
 ) -> Dataset:
-
     if lines:
-        incompatible_params = {
-            "filesystem": filesystem,
-            "arrow_open_stream_args": arrow_open_stream_args,
-            "arrow_json_args": arrow_json_args,
-        }
-        for param, value in incompatible_params.items():
-            if value:
-                raise ValueError(f"`{param}` is not supported when `lines=True`. ")
+        if arrow_json_args:
+            raise ValueError("If `lines=True`, you can't specify `arrow_json_args`.")
 
-    reader = JSONReader(
-        arrow_json_args,
-        is_jsonl=lines,
-        include_paths=include_paths,
-        partitioning=partitioning,
-        open_args=arrow_open_stream_args,
-    )
+        is_orjson_available = importlib.util.find_spec("orjson") is not None
+        if is_orjson_available:
+            reader = OrjsonJSONLReader(
+                include_paths=include_paths,
+                partitioning=partitioning,
+                open_args=arrow_open_stream_args,
+            )
+        else:
+            warnings.warn(
+                "orjson provides the fastest `read_json` implementation, but it’s not "
+                "installed. Falling back to pandas. To use orjson, run: `pip install "
+                "orjson`."
+            )
+            reader = PandasJSONLReader(
+                include_paths=include_paths,
+                partitioning=partitioning,
+                open_args=arrow_open_stream_args,
+            )
+
+    else:
+        reader = ArrowJSONReader(
+            arrow_json_args,
+            include_paths=include_paths,
+            partitioning=partitioning,
+            open_args=arrow_open_stream_args,
+        )
+
     return read_files(
         paths,
         reader,

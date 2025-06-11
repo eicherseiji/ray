@@ -138,6 +138,9 @@ class ArrowRow(TableRow):
     def __len__(self):
         return self._row.num_columns
 
+    def as_pydict(self) -> Dict[str, Any]:
+        return dict(self.items())
+
 
 class ArrowBlockBuilder(TableBlockBuilder):
     def __init__(self):

@@ -4,6 +4,8 @@ from collections import defaultdict
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional
 
+import pyarrow as pa
+
 from .native_file_reader import NativeFileReader
 from ray.data.block import DataBatch
 
@@ -12,52 +14,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# TODO(rliaw): Arbitrarily chosen. Make this configurable
-_JSONL_ROWS_PER_CHUNK = 10000
 
-
-class JSONReader(NativeFileReader):
+class ArrowJSONReader(NativeFileReader):
     def __init__(
         self,
         arrow_json_args: Optional[Dict[str, Any]] = None,
-        is_jsonl: bool = False,
         **file_reader_kwargs,
     ):
         super().__init__(**file_reader_kwargs)
-        from pyarrow import json
 
         if arrow_json_args is None:
             arrow_json_args = {}
 
-        self.is_jsonl = is_jsonl
-
-        self.read_options = arrow_json_args.pop(
-            "read_options", json.ReadOptions(use_threads=False)
+        self._read_options = arrow_json_args.pop(
+            "read_options", pa.json.ReadOptions(use_threads=False)
         )
-        self.arrow_json_args = arrow_json_args
+        self._arrow_json_args = arrow_json_args
 
     # TODO(ekl) The PyArrow JSON reader doesn't support streaming reads.
     def read_stream(self, f: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
-        import pyarrow as pa
-
         buffer: pa.lib.Buffer = f.read_buffer()
 
-        # Check if the buffer is empty
         if buffer.size == 0:
             return
 
-        if self.is_jsonl:
-            yield from self._read_jsonlines_pandas(buffer)
-        else:
-            try:
-                yield from self._read_with_pyarrow_read_json(buffer)
-            except pa.ArrowInvalid as e:
-                logger.warning(
-                    f"Error reading with pyarrow.json.read_json(). "
-                    f"Falling back to native json.load(), which may be slower. "
-                    f"PyArrow error was:\n{e}"
-                )
-                yield from self._read_with_python_json(buffer)
+        try:
+            yield from self._read_with_pyarrow_read_json(buffer)
+        except pa.ArrowInvalid as e:
+            logger.warning(
+                f"Error reading with pyarrow.json.read_json(). "
+                f"Falling back to native json.load(), which may be slower. "
+                f"PyArrow error was:\n{e}"
+            )
+            yield from self._read_with_python_json(buffer)
 
     def _read_with_pyarrow_read_json(
         self, buffer: "pyarrow.lib.Buffer"
@@ -65,8 +54,6 @@ class JSONReader(NativeFileReader):
         """Read with PyArrow JSON reader, trying to auto-increase the
         read block size in the case of the read object
         straddling block boundaries."""
-        import pyarrow as pa
-
         # When reading large files, the default block size configured in PyArrow can be
         # too small, resulting in the following error: `pyarrow.lib.ArrowInvalid:
         # straddling object straddles two block boundaries (try to increase block
@@ -83,32 +70,32 @@ class JSONReader(NativeFileReader):
         # ...     read_options=pajson.ReadOptions(block_size=block_size)
         # ... )
 
-        init_block_size = self.read_options.block_size
+        init_block_size = self._read_options.block_size
         max_block_size = self.data_context.target_max_block_size
         while True:
             try:
                 table = pa.json.read_json(
                     BytesIO(buffer),
-                    read_options=self.read_options,
-                    **self.arrow_json_args,
+                    read_options=self._read_options,
+                    **self._arrow_json_args,
                 )
                 yield table
-                self.read_options.block_size = init_block_size
+                self._read_options.block_size = init_block_size
                 break
             except pa.ArrowInvalid as e:
                 if "straddling object straddles two block boundaries" in str(e):
-                    if self.read_options.block_size < max_block_size:
+                    if self._read_options.block_size < max_block_size:
                         # Increase the block size in case it was too small.
                         logger.debug(
                             f"JSONDatasource read failed with "
-                            f"block_size={self.read_options.block_size}. Retrying with "
-                            f"block_size={self.read_options.block_size * 2}."
+                            f"block_size={self._read_options.block_size}. Retrying with "
+                            f"block_size={self._read_options.block_size * 2}."
                         )
-                        self.read_options.block_size *= 2
+                        self._read_options.block_size *= 2
                     else:
                         raise pa.ArrowInvalid(
                             f"{e} - Auto-increasing block size to "
-                            f"{self.read_options.block_size} bytes failed. "
+                            f"{self._read_options.block_size} bytes failed. "
                             f"Please try manually increasing the block size through "
                             f"the `read_options` parameter to a larger size. "
                             f"For example: `read_json(..., read_options="
@@ -119,24 +106,6 @@ class JSONReader(NativeFileReader):
                 else:
                     # unrelated error, simply reraise
                     raise e
-
-    def _read_jsonlines_pandas(
-        self, buffer: "pyarrow.lib.Buffer"
-    ) -> Iterable[DataBatch]:
-        """Read JSONL files with pandas."""
-        import pandas as pd
-
-        reader = pd.read_json(
-            BytesIO(buffer),
-            chunksize=_JSONL_ROWS_PER_CHUNK,
-            lines=True,
-        )
-        for df in reader:
-            # Note: PandasBlockAccessor doesn't support RangeIndex, so we need to convert
-            # to string.
-            if isinstance(df.columns, pd.RangeIndex):
-                df.columns = df.columns.astype(str)
-            yield df
 
     def _read_with_python_json(
         self, buffer: "pyarrow.lib.Buffer"

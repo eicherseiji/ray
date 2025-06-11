@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional
 import pandas as pd
 import pyarrow
 
+from .file_reader import FileReader
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
@@ -16,8 +17,6 @@ from ray.data._internal.util import (
 from ray.data.block import DataBatch
 from ray.data.context import DataContext
 from ray.data.datasource import Partitioning, PathPartitionParser
-
-from .file_reader import FileReader
 
 
 class NativeFileReader(FileReader):
@@ -32,9 +31,9 @@ class NativeFileReader(FileReader):
     def __init__(
         self,
         *,
-        include_paths: bool,
-        partitioning: Optional[Partitioning],
-        open_args: Optional[Dict[str, Any]],
+        include_paths: bool = False,
+        partitioning: Optional[Partitioning] = None,
+        open_args: Optional[Dict[str, Any]] = None,
     ):
         if open_args is None:
             open_args = {}

@@ -1,3 +1,4 @@
+from .arrow_json_reader import ArrowJSONReader
 from .audio_reader import AudioReader
 from .avro_reader import AvroReader
 from .binary_reader import BinaryInMemorySizeEstimator, BinaryReader
@@ -8,8 +9,9 @@ from .in_memory_size_estimator import (
     InMemorySizeEstimator,
     SamplingInMemorySizeEstimator,
 )
-from .json_reader import JSONReader
 from .numpy_reader import NumpyReader
+from .orjson_jsonl_reader import OrjsonJSONLReader
+from .pandas_jsonl_reader import PandasJSONLReader
 from .parquet_reader import ParquetInMemorySizeEstimator, ParquetReader
 from .supports_metadata import SupportsMetadata
 from .text_reader import TextReader
@@ -17,6 +19,7 @@ from .video_reader import VideoReader
 from .webdataset_reader import WebDatasetReader
 
 __all__ = [
+    "ArrowJSONReader",
     "AudioReader",
     "AvroReader",
     "BinaryInMemorySizeEstimator",
@@ -26,8 +29,9 @@ __all__ = [
     "FileReader",
     "ImageReader",
     "InMemorySizeEstimator",
-    "JSONReader",
     "NumpyReader",
+    "OrjsonJSONLReader",
+    "PandasJSONLReader",
     "ParquetReader",
     "ParquetInMemorySizeEstimator",
     "SamplingInMemorySizeEstimator",
