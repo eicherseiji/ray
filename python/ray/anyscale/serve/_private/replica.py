@@ -639,7 +639,7 @@ class AnyscaleReplica(ReplicaBase):
         exception or an error intentionally raised by Serve, it will be returned as
         a gRPC response instead of raised directly.
         """
-        result_gen = self.handle_request_with_rejection_and_queueing(
+        result_gen = self.handle_request_with_rejection(
             request_metadata, *request_args, **request_kwargs
         )
         queue_len_info: ReplicaQueueLengthInfo = await result_gen.__anext__()
