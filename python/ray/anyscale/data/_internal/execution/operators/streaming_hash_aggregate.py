@@ -19,7 +19,7 @@ from ray.data._internal.execution.interfaces.physical_operator import (
 from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 from ray.data._internal.output_buffer import BlockOutputBuffer, OutputBlockSizeOption
 from ray.data._internal.stats import StatsDict
-from ray.data.block import Block, BlockAccessor, BlockMetadata
+from ray.data.block import Block, BlockAccessor, BlockMetadata, BlockMetadataWithSchema
 from ray.data.context import DataContext
 from ray.types import ObjectRef
 
@@ -81,7 +81,7 @@ class Aggregator:
                     # Yield output blocks from the output buffer.
                     while self._output_buffer.has_next():
                         b_out = self._output_buffer.next()
-                        m_out = BlockAccessor.for_block(b_out).get_metadata()
+                        m_out = BlockMetadataWithSchema.from_block(b_out)
                         yield b_out
                         yield m_out
         if should_finalize:
@@ -91,7 +91,7 @@ class Aggregator:
             self._output_buffer.finalize()
             if self._output_buffer.has_next():
                 b_out = self._output_buffer.next()
-                m_out = BlockAccessor.for_block(b_out).get_metadata()
+                m_out = BlockMetadataWithSchema.from_block(b_out)
                 yield b_out
                 yield m_out
         if should_checkpoint:
@@ -295,7 +295,9 @@ class StreamingHashAggregate(PhysicalOperator):
             metadata_list = ray.get(metadata_list_ref)
             assert len(metadata_list) == self._num_aggregators, metadata_list
             ref_bundles = [
-                RefBundle([(block_ref, metadata)], owns_blocks=True)
+                RefBundle(
+                    [(block_ref, metadata)], owns_blocks=True, schema=input_refs.schema
+                )
                 for block_ref, metadata in zip(block_refs, metadata_list)
             ]
 
@@ -350,7 +352,7 @@ class StreamingHashAggregate(PhysicalOperator):
             logger.debug(f"Finalizing aggregator {idx}")
             self._aggregator_finalized[idx] = True
 
-        empty_ref_bundle = RefBundle(blocks=tuple(), owns_blocks=True)
+        empty_ref_bundle = RefBundle(blocks=tuple(), owns_blocks=True, schema=None)
         try:
             # TODO(hchen): dispatch multiple inputs at once.
             input_ref_bundle = self._pending_aggregate_inputs[idx].popleft()

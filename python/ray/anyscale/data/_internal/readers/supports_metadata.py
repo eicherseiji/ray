@@ -2,7 +2,7 @@ import abc
 from enum import Enum
 from typing import Iterator, List, Optional, Set
 import pyarrow.fs
-from ray.data.block import BlockMetadata
+from ray.data.block import BlockMetadata, Schema
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
@@ -12,7 +12,6 @@ from .file_reader import FileReader
 class MetadataType(Enum):
     NUM_ROWS = 0
     NUM_BYTES = 1
-    SCHEMA = 2
 
 
 class SupportsMetadata(abc.ABC):
@@ -27,7 +26,6 @@ class SupportsMetadata(abc.ABC):
         file_manifest: FileManifest,
         *,
         filesystem: pyarrow.fs.FileSystem,
-        columns: Optional[List[str]],
     ) -> Iterator[BlockMetadata]:
         """Count the number of rows in the files at the given paths.
 
@@ -35,11 +33,11 @@ class SupportsMetadata(abc.ABC):
         file when only the number of rows is needed.
 
         Args:
-            path: A list of file paths to count rows from.
+            file_manifest: A manifest of files to count rows from.
             filesystem: The filesystem to read from.
 
         Returns:
-            The number of rows in the files.
+            An iterator to BlockMetadata
         """
         ...
 
@@ -54,5 +52,29 @@ class SupportsMetadata(abc.ABC):
 
         Under-the-hood, the count pushdown rule uses the `MapBatches` logical operator.
         The semantics for the batch size are the same.
+        """
+        ...
+
+
+class SupportsSchema(abc.ABC):
+    """A mix-in to infer the schema of file readers."""
+
+    @abc.abstractmethod
+    def read_schema(
+        self: FileReader,
+        file_manifest: FileManifest,
+        *,
+        filesystem: pyarrow.fs.FileSystem,
+        columns: Optional[List[str]],
+    ) -> "Schema":
+        """Infer the schema of the files.
+
+        Args:
+            file_manifest: A manifest of files to count rows from.
+            filesystem: The filesystem to read from.
+            columns: A list of columns to read from the files. If None, all columns are read.
+
+        Returns:
+            The Schema
         """
         ...

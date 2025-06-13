@@ -130,6 +130,7 @@ def create_input_data_buffer(
             # DAG. We shouldn't eagerly free them. Otherwise, the DAG cannot
             # be reconstructed.
             owns_blocks=False,
+            schema=BlockAccessor.for_block(block).schema(),
         )
         input_data.append(ref_bundle)
     return InputDataBuffer(data_context, input_data=input_data)

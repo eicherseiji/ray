@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Iterator, Iterable, List, Optional, Set
+from typing import TYPE_CHECKING, Iterator, Iterable, Optional, Set
 
 import numpy as np
 
@@ -24,13 +24,11 @@ class BinaryReader(NativeFileReader, SupportsMetadata):
         file_manifest: FileManifest,
         *,
         filesystem,
-        columns: Optional[List[str]],
     ) -> Iterator[BlockMetadata]:
         yield BlockMetadata(
             num_rows=len(file_manifest.paths),
             size_bytes=None,
             exec_stats=None,
-            schema=None,
             input_files=None,
         )
 

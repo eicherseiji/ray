@@ -5,11 +5,12 @@ import numpy as np
 import pyarrow as pa
 
 from ray.data import FileShuffleConfig
-from ray.data._internal.logical.interfaces import LogicalOperator
+from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
 from ray.data.block import Block, BlockAccessor, BlockColumnAccessor
 from ray.data.datasource import PathPartitionFilter
 
 if TYPE_CHECKING:
+    from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
     from ray.anyscale.data._internal.partitioners import FilePartitioner
     from ray.anyscale.data._internal.planner.file_indexer import FileIndexer
 
@@ -73,7 +74,7 @@ class FileManifest:
         return cls(block)
 
 
-class ListFiles(LogicalOperator):
+class ListFiles(SourceOperator, LogicalOperator):
     """List files and get file sizes.
 
     If an input path is a directory, recursively list all files in the directory and
@@ -108,3 +109,7 @@ class ListFiles(LogicalOperator):
         self.file_extensions = file_extensions
         self.partition_filter = partition_filter
         self.shuffle_config_factory = shuffle_config_factory
+
+    def output_data(self) -> Optional[List["RefBundle"]]:
+        """The output data of this operator if already known, or ``None``."""
+        return None

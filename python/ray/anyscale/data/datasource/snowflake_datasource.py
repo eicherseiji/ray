@@ -78,8 +78,8 @@ class SnowflakeDatasource(Datasource):
             read_fn = _create_read_fn(result_batches_split)
             num_rows = sum(b.rowcount for b in result_batches_split)
             size_bytes = estimated_size_bytes_per_row * num_rows
-            metadata = BlockMetadata(num_rows, size_bytes, schema, None, None)
-            tasks.append(ReadTask(read_fn, metadata))
+            metadata = BlockMetadata(num_rows, size_bytes, None, None)
+            tasks.append(ReadTask(read_fn, metadata, schema=schema))
 
         return tasks
 

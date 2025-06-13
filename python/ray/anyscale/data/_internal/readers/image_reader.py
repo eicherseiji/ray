@@ -1,5 +1,5 @@
 import io
-from typing import Iterator, Iterable, List, Optional, Set, Tuple
+from typing import Iterator, Iterable, Optional, Set, Tuple
 
 import numpy as np
 import pyarrow
@@ -63,13 +63,11 @@ class ImageReader(NativeFileReader, SupportsMetadata):
         file_manifest: FileManifest,
         *,
         filesystem,
-        columns: Optional[List[str]],
     ) -> Iterator[BlockMetadata]:
         yield BlockMetadata(
             num_rows=len(file_manifest.paths),
             size_bytes=None,
             exec_stats=None,
-            schema=None,
             input_files=file_manifest.paths,
         )
 

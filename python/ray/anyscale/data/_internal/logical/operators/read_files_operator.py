@@ -6,24 +6,25 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
 )
 from ray.anyscale.data._internal.planner.file_indexer import filter_file_manifest
 from ray.anyscale.data._internal.readers import FileReader
-from ray.anyscale.data._internal.readers.supports_metadata import SupportsMetadata
+from ray.anyscale.data._internal.readers.supports_metadata import SupportsSchema
 from ray.data._internal.compute import TaskPoolStrategy
-from ray.data._internal.logical.interfaces import LogicalOperator
+from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
 from ray.data._internal.logical.operators.map_operator import AbstractMap
 from ray.data._internal.planner.plan_expression.expression_evaluator import (
     ExpressionEvaluator,
 )
-from ray.data.block import BlockAccessor, BlockMetadata
+from ray.data.block import BlockAccessor, Schema
 import logging
 
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
     import pyarrow.dataset as pd
 
 
-class ReadFiles(AbstractMap):
+class ReadFiles(SourceOperator, AbstractMap):
     def __init__(
         self,
         input_dependency: LogicalOperator,
@@ -68,9 +69,6 @@ class ReadFiles(AbstractMap):
         else:
             self.filter_expr = filter_expr
 
-    def is_read_op(self) -> bool:
-        return True
-
     def _create_filter_expr(self, filter_expr_strs: List[str]) -> "pd.Expression":
         # This is to handle a case where user specifies
         # read->rename(a->x)->filter("x>10")
@@ -92,11 +90,11 @@ class ReadFiles(AbstractMap):
             )
         return filter_expr
 
-    def aggregate_output_metadata(self) -> BlockMetadata:
+    def infer_schema(self) -> Optional["Schema"]:
         # This method is used by the execution plan to efficiently return metadata
         # without triggering execution.
         if isinstance(self.input_dependency, ListFiles) and isinstance(
-            self.reader, SupportsMetadata
+            self.reader, SupportsSchema
         ):
             paths = pa.array(self.input_dependency.paths)
             gen = self.input_dependency.file_indexer.list_files(
@@ -112,16 +110,13 @@ class ReadFiles(AbstractMap):
                 first_file_manifest = FileManifest(
                     BlockAccessor.for_block(first_file_manifest.as_block()).slice(0, 1)
                 )
-                first_block_metadata = next(
-                    self.reader.read_metadata(
-                        first_file_manifest,
-                        filesystem=self.filesystem,
-                        columns=self.columns,
-                    )
+                return self.reader.read_schema(
+                    first_file_manifest,
+                    filesystem=self.filesystem,
+                    columns=self.columns,
                 )
-                if first_block_metadata:
-                    first_block_metadata.num_rows = None
-                    first_block_metadata.size_bytes = None
-                    return first_block_metadata
+        return super().infer_schema()
 
-        return super().aggregate_output_metadata()
+    def output_data(self) -> Optional[List["RefBundle"]]:
+        """The output data of this operator if already known, or ``None``."""
+        return None

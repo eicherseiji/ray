@@ -55,7 +55,6 @@ class PushdownCountFiles(Rule):
             block_metadata_generator = read_files.reader.read_metadata(
                 FileManifest(batch),
                 filesystem=read_files.filesystem,
-                columns=None,
             )
             total_rows = 0
             for block_metadata in block_metadata_generator:

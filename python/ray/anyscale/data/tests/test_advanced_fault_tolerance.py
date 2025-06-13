@@ -125,7 +125,8 @@ def test_map_operator_counts_lineage_reconstruction_tasks(
     block = pa.Table.from_pylist([{"data": "\x00" * 128 * 1024 * 1024}])
     block_ref = ray.put(block)
     metadata = BlockAccessor.for_block(block).get_metadata()
-    bundle = RefBundle([(block_ref, metadata)], owns_blocks=False)
+    schema = BlockAccessor.for_block(block).schema()
+    bundle = RefBundle([(block_ref, metadata)], owns_blocks=False, schema=schema)
     input_op = InputDataBuffer(data_context, [bundle])
 
     # Create a signal actor so the map only finishes when we want it to.

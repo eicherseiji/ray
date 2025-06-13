@@ -25,6 +25,7 @@ from ray.data.block import (
     BlockColumn,
     AggType,
     BlockColumnAccessor,
+    BlockMetadataWithSchema,
 )
 
 
@@ -122,7 +123,7 @@ class OptimizedTableBlockMixin(TableBlockAccessor):
         sort_key: "SortKey",
         aggs: Tuple["AggregateFn"],
         finalize: bool = True,
-    ) -> Tuple[Block, BlockMetadata]:
+    ) -> Tuple[Block, BlockMetadataWithSchema]:
         """Combine previously aggregated blocks.
 
         This assumes blocks are already sorted by key in ascending order,
@@ -163,13 +164,13 @@ class OptimizedTableBlockMixin(TableBlockAccessor):
         blocks = [b for b in blocks if BlockAccessor.for_block(b).num_rows() > 0]
 
         if len(blocks) == 0:
-            return cls._empty_table(), BlockMetadata(
+            meta = BlockMetadata(
                 num_rows=0,
                 size_bytes=0,
                 exec_stats=None,
-                schema=None,
                 input_files=None,
             )
+            return cls._empty_table(), BlockMetadataWithSchema(metadata=meta)
 
         # Normalize blocks to make sure these are of the Arrow type
         blocks = cls.normalize_block_types(blocks, target_block_type=BlockType.ARROW)
@@ -217,8 +218,8 @@ class OptimizedTableBlockMixin(TableBlockAccessor):
 
         final_block = builder.build()
 
-        return final_block, BlockAccessor.for_block(final_block).get_metadata(
-            exec_stats=stats.build()
+        return final_block, BlockMetadataWithSchema.from_block(
+            final_block, stats=stats.build()
         )
 
     def _iter_groups_sorted(

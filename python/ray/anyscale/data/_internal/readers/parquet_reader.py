@@ -2,7 +2,17 @@ import functools
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Dict, Iterator, Iterable, List, Optional, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Tuple,
+)
 
 import numpy as np
 import pyarrow
@@ -25,7 +35,7 @@ from ray.data._internal.util import (
     iterate_with_retry,
     make_async_gen,
 )
-from ray.data.block import Block, BlockMetadata, DataBatch
+from ray.data.block import Block, BlockMetadata, DataBatch, Schema
 from ray.data.context import DataContext
 from ray.data.datasource import Partitioning, PathPartitionParser
 from ray.data.datasource.path_util import _has_file_extension
@@ -35,7 +45,7 @@ from .file_reader import FileReader
 from .in_memory_size_estimator import (
     InMemorySizeEstimator,
 )
-from .supports_metadata import MetadataType, SupportsMetadata
+from .supports_metadata import MetadataType, SupportsMetadata, SupportsSchema
 
 # The number of rows to read per batch. This is the default we use in OSS.
 DEFAULT_BATCH_SIZE = 10_000
@@ -44,7 +54,7 @@ DEFAULT_BATCH_SIZE = 10_000
 logger = logging.getLogger(__name__)
 
 
-class ParquetReader(FileReader, SupportsMetadata):
+class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     """Reads Parquet files.
 
     This file reader implementation leverages PyArrow's `ParquetDataset` and
@@ -312,10 +322,8 @@ class ParquetReader(FileReader, SupportsMetadata):
         file_manifest: FileManifest,
         *,
         filesystem: pyarrow.fs.FileSystem,
-        columns: Optional[List[str]],
     ) -> Iterator[BlockMetadata]:
 
-        schema = self._schema
         parquet_dataset = call_with_retry(
             lambda: get_parquet_dataset(
                 file_manifest.paths.tolist(), filesystem, self._dataset_kwargs
@@ -323,15 +331,6 @@ class ParquetReader(FileReader, SupportsMetadata):
             "open ParquetDataset",
             match=self._retried_io_errors,
         )
-
-        if not schema:
-            schema = _infer_schema(
-                parquet_dataset,
-                None,
-                columns,
-                self._partitioning,
-                self._block_udf,
-            )
 
         def get_metadata_for_path(
             fragment: "pa.dataset.ParquetFileFragment",
@@ -357,13 +356,39 @@ class ParquetReader(FileReader, SupportsMetadata):
                     num_rows=num_rows,
                     size_bytes=None,
                     exec_stats=None,
-                    schema=schema,
                     input_files=None,
                 )
                 yield metadata
 
+    def read_schema(
+        self,
+        file_manifest: FileManifest,
+        *,
+        filesystem: pyarrow.fs.FileSystem,
+        columns: Optional[List[str]],
+    ) -> "Schema":
+
+        schema = self._schema
+        parquet_dataset = call_with_retry(
+            lambda: get_parquet_dataset(
+                file_manifest.paths.tolist(), filesystem, self._dataset_kwargs
+            ),
+            "open ParquetDataset",
+            match=self._retried_io_errors,
+        )
+
+        if not schema:
+            schema = _infer_schema(
+                parquet_dataset,
+                None,
+                columns,
+                self._partitioning,
+                self._block_udf,
+            )
+        return schema
+
     def available_metadata(self) -> Set[MetadataType]:
-        available = {MetadataType.SCHEMA}
+        available = set()
         if "filter" not in self._to_batches_kwargs:
             available.add(MetadataType.NUM_ROWS)
             available.add(MetadataType.NUM_BYTES)
