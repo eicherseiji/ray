@@ -12,6 +12,7 @@ from ray.serve._private.test_utils import (
     check_deployment_status,
     check_num_replicas_gte,
     check_num_replicas_lte,
+    send_signal_on_cancellation,
 )
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
@@ -1108,13 +1109,13 @@ class TestDirectIngressBackpressure:
                 wait_for_condition(
                     lambda: ray.get(signal.cur_num_waiters.remote()) == 1
                 )
-                signal.send.remote()
+                ray.get(signal.send.remote())
                 wait_for_condition(
                     lambda: ray.get(signal.cur_num_waiters.remote()) == 0
                 )
                 assert sum(f.result() is True for f in futures) == num_requests
 
-            signal.send.remote(clear=True)
+            ray.get(signal.send.remote(clear=True))
 
     def test_drop_after_max_queued_requests(
         self, _skip_if_ff_not_enabled, serve_instance
@@ -1756,6 +1757,88 @@ class TestDirectIngressAutoscaling:
         grpc_ports = get_grpc_ports(route_prefix="/app-1")
         assert len(grpc_ports) == 1
         assert grpc_ports[0] == 9000  # proxy port
+
+
+def test_disconnect(_skip_if_ff_not_enabled, serve_instance):
+    """Test gRPC client disconnect/cancellation behavior."""
+    running_signal = SignalActor.remote()
+    cancelled_signal = SignalActor.remote()
+
+    @serve.deployment(name="disconnect-deployment")
+    class DisconnectTest:
+        async def wait_for_signal(self):
+            async with send_signal_on_cancellation(cancelled_signal):
+                await running_signal.wait.remote()
+
+        async def __call__(self, request: Request):
+            await self.wait_for_signal()
+            return "completed"
+
+        async def Method1(
+            self, request: serve_pb2.UserDefinedMessage
+        ) -> serve_pb2.UserDefinedResponse:
+            await self.wait_for_signal()
+            return serve_pb2.UserDefinedResponse(greeting="completed")
+
+    serve.run(DisconnectTest.bind())
+
+    http_port = get_http_ports()[0]
+    assert http_port != 8000
+
+    grpc_port = get_grpc_ports()[0]
+    assert grpc_port != 9000
+
+    # Test gRPC cancellation
+    channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
+
+    # Send request and wait for it to start executing
+    request = serve_pb2.UserDefinedMessage()
+    future = stub.Method1.future(request=request)
+
+    # Wait for the request to start processing
+    wait_for_condition(
+        lambda: ray.get(running_signal.cur_num_waiters.remote()) == 1, timeout=10
+    )
+
+    # Cancel the request
+    future.cancel()
+
+    # Verify that cancellation was detected by the deployment
+    ray.get(cancelled_signal.wait.remote(), timeout=5)
+
+    # Verify the future was cancelled
+    with pytest.raises(grpc.FutureCancelledError):
+        future.result()
+
+    channel.close()
+
+    # Clean up signals
+    ray.get(running_signal.send.remote(clear=True))
+    ray.get(cancelled_signal.send.remote(clear=True))
+
+    # Test HTTP cancellation
+    http_port = get_http_ports()[0]
+    assert http_port != 8000
+
+    try:
+        httpx.get(f"http://localhost:{http_port}", timeout=1)
+    except httpx.TimeoutException:
+        pass
+    else:
+        raise RuntimeError("Request should have been cancelled")
+
+    wait_for_condition(
+        lambda: ray.get(running_signal.cur_num_waiters.remote()) == 1, timeout=10
+    )
+
+    try:
+        ray.get(cancelled_signal.wait.remote(), timeout=5)
+    except ray.exceptions.GetTimeoutError:
+        assert False, "Cancelled signal should have been sent"
+
+    ray.get(running_signal.send.remote(clear=True))
+    ray.get(cancelled_signal.send.remote(clear=True))
 
 
 if __name__ == "__main__":

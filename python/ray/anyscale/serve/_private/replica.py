@@ -51,6 +51,9 @@ from ray.serve._private.constants import (
     SERVE_CONTROLLER_NAME,
     SERVE_NAMESPACE,
 )
+from ray.anyscale.serve._private.replica_response_generator import (
+    ReplicaResponseGenerator,
+)
 from ray.serve._private.replica import (
     ReplicaBase,
     ReplicaMetricsManager,
@@ -287,6 +290,8 @@ class AnyscaleReplica(ReplicaBase):
 
         # get node ID
         self._node_id = ray.get_runtime_context().get_node_id()
+        self._http_options: Optional[HTTPOptions] = None
+        self._grpc_options: Optional[gRPCOptions] = None
 
     def get_total_requests(self):
         return (
@@ -411,18 +416,18 @@ class AnyscaleReplica(ReplicaBase):
             )
 
         # Fetch configs
-        http_options, grpc_options = ray.get(
+        self._http_options, self._grpc_options = ray.get(
             [
                 self._controller_handle.get_http_config.remote(),
                 self._controller_handle.get_grpc_config.remote(),
             ]
         )
 
-        grpc_enabled = is_grpc_enabled(grpc_options)
+        grpc_enabled = is_grpc_enabled(self._grpc_options)
 
         # Allocate and start HTTP server
         async def start_http_server(port):
-            options = HTTPOptions(**{**http_options.dict(), "port": port})
+            options = HTTPOptions(**{**self._http_options.dict(), "port": port})
             return await start_asgi_http_server(
                 self._direct_ingress_asgi,
                 options,
@@ -442,7 +447,7 @@ class AnyscaleReplica(ReplicaBase):
         if grpc_enabled:
 
             async def start_grpc_server_fn(port):
-                options = gRPCOptions(**{**grpc_options.dict(), "port": port})
+                options = gRPCOptions(**{**self._grpc_options.dict(), "port": port})
                 return await start_grpc_server(
                     self._direct_ingress_service_handler_factory,
                     options,
@@ -712,22 +717,33 @@ class AnyscaleReplica(ReplicaBase):
         result_gen = self.handle_request_with_rejection_and_queueing(
             request_metadata, gRPCRequest(request_proto)
         )
-        queue_len_info: ReplicaQueueLengthInfo = await result_gen.__anext__()
+
+        # Use the generic disconnect detecting wrapper
+        replica_response_generator = ReplicaResponseGenerator(
+            result_gen,
+            timeout_s=self._grpc_options.request_timeout_s,
+        )
+        queue_len_info: ReplicaQueueLengthInfo = (
+            await replica_response_generator.__anext__()
+        )
+        # TODO(edoakes): update the behavior to more closely mimic the existing path:
+        # add an internal queue and drop requests based on max_queued_requests.
         if not queue_len_info.accepted:
             context.set_code(grpc.StatusCode.RESOURCE_EXHAUSTED)
             context.set_details("Replica exceeded capacity. Request rejected.")
             return
 
-        result = await result_gen.__anext__()
+        result = await replica_response_generator.__anext__()
         c._set_on_grpc_context(context)
 
         # NOTE(edoakes): we need to fully consume the generator otherwise the
         # finalizers that run after the `yield` statement won't run. There might
         # be a cleaner way to structure this.
         try:
-            await result_gen.__anext__()
+            await replica_response_generator.__anext__()
         except StopAsyncIteration:
             pass
+        # TODO(abrar): handle exceptions
 
         return result.SerializeToString()
 
@@ -844,21 +860,55 @@ class AnyscaleReplica(ReplicaBase):
             result_gen = self.handle_request_with_rejection_and_queueing(
                 request_metadata, http_request
             )
-            queue_len_info: ReplicaQueueLengthInfo = await result_gen.__anext__()
+
+            # Use the generic disconnect detecting wrapper
+            replica_response_generator = ReplicaResponseGenerator(
+                result_gen,
+                disconnected_task=proxy_asgi_receive_task,
+                timeout_s=self._http_options.request_timeout_s,
+            )
+
+            # Get queue length info
+            queue_len_info: ReplicaQueueLengthInfo = (
+                await replica_response_generator.__anext__()
+            )
+
+            # Check if request was rejected
             if not queue_len_info.accepted:
                 for msg in convert_object_to_asgi_messages(
                     "Replica exceeded capacity. Request rejected.",
                     status_code=503,
                 ):
                     await send(msg)
-
                 return
 
-            async for result in result_gen:
+            # Stream the response
+            expecting_trailers = False
+            async for result in replica_response_generator:
                 # TODO(edoakes): we should avoid serializing and deserializing the ASGI
                 # messages here. This requires some upstream refactoring.
-                for msg in pickle.loads(result):
+                asgi_messages = pickle.loads(result)
+                for msg in asgi_messages:
+                    # Stop checking for disconnect when response is complete
+                    if msg["type"] == "http.response.start":
+                        # Check if this response will include trailers
+                        expecting_trailers = msg.get("trailers", False)
+                    elif (
+                        msg["type"] == "http.response.body"
+                        and not msg.get("more_body", False)
+                        and not expecting_trailers
+                    ):
+                        # If the body is completed and we aren't expecting trailers,
+                        # response is done so we should stop listening for disconnects.
+                        replica_response_generator.stop_checking_for_disconnect()
+                    elif msg["type"] == "http.response.trailers":
+                        # If we are expecting trailers, the response is only done when
+                        # the trailers message has been sent.
+                        if not msg.get("more_trailers", False):
+                            replica_response_generator.stop_checking_for_disconnect()
+
                     await send(msg)
+            # TODO(abrar): handle exceptions
         finally:
             if not proxy_asgi_receive_task.done():
                 proxy_asgi_receive_task.cancel()
