@@ -16,7 +16,8 @@ from anyscale.compute_config.models import (
 _CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 _BRAY_PREFIX = "bray"
-_WORKSPACE_URL = "https://console.anyscale-staging.com/cld_kvedZWag2qA8i5BjxUevf5i7/prj_g7p6lsu6r8g7garwbxifppyz23/workspaces"
+_ANYSCALE_HOST = os.environ.get("ANYSCALE_HOST", "https://console.anyscale.com")
+_WORKSPACE_URL = f"{_ANYSCALE_HOST}/cld_kvedZWag2qA8i5BjxUevf5i7/prj_g7p6lsu6r8g7garwbxifppyz23/workspaces"
 _WORKSPACE_IMAGE = "anyscale/ray:2.46.0-slim-py312"
 _WORKSPACE_CLOUD = "anyscale_v2_default_cloud"
 _WORKSPACE_INSTANCE_TYPE = "m7i.2xlarge"
