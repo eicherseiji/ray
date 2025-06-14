@@ -575,16 +575,6 @@ class ProxyStateManager:
 
         assert isinstance(head_node_id, str)
 
-        from ray.anyscale.serve._private.constants import (
-            ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
-        )
-
-        if ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
-            logger.info(
-                "Direct ingress feature flag enabled, enabling proxy on head node only."
-            )
-            self._http_options.location = DeploymentMode.HeadOnly
-
     def reconfigure_logging_config(self, logging_config: LoggingConfig):
         self.logging_config = logging_config
 

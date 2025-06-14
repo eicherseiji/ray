@@ -1,23 +1,18 @@
-from collections import defaultdict
 import logging
+from collections import defaultdict
 from typing import Dict, List, Optional, Set
 
-from ray.serve._private.common import DeploymentID, RequestProtocol
-from ray.serve._private.controller import ServeController
-from ray.serve._private.constants import (
-    SERVE_LOGGER_NAME,
-)
-from ray.serve._private.deployment_state import DeploymentReplica
-from ray.serve._private.utils import is_grpc_enabled
-from ray.serve.schema import (
-    ReplicaDetails,
-    Target,
-    TargetGroup,
-)
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
 )
+from ray.serve._private.common import DeploymentID, RequestProtocol
+from ray.serve._private.constants import SERVE_LOGGER_NAME
+from ray.serve._private.controller import ServeController
+from ray.serve._private.deployment_state import DeploymentReplica
 from ray.serve._private.node_port_manager import NodePortManager
+from ray.serve._private.utils import is_grpc_enabled
+from ray.serve.config import DeploymentMode, HTTPOptions, gRPCOptions
+from ray.serve.schema import LoggingConfig, ReplicaDetails, Target, TargetGroup
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
 
@@ -30,11 +25,27 @@ class AnyscaleServeController(ServeController):
     to be directly accessible via the ingress controller.
     """
 
-    async def __init__(self, *args, **kwargs):
-        await super().__init__(*args, **kwargs)
+    async def __init__(
+        self,
+        *,
+        http_options: HTTPOptions,
+        global_logging_config: LoggingConfig,
+        grpc_options: Optional[gRPCOptions] = None,
+    ):
         self._direct_ingress_enabled = ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
         if self._direct_ingress_enabled:
-            logger.info("Direct ingress is enabled in AnyscaleServeController")
+            logger.info(
+                "Direct ingress is enabled in AnyscaleServeController, enabling proxy "
+                "on head node only."
+            )
+
+            http_options.location = DeploymentMode.HeadOnly
+
+        await super().__init__(
+            http_options=http_options,
+            global_logging_config=global_logging_config,
+            grpc_options=grpc_options,
+        )
 
     def get_target_groups(self) -> List[TargetGroup]:
         """Get target groups for direct ingress deployments.
