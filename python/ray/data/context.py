@@ -93,6 +93,10 @@ DEFAULT_LARGE_ARGS_THRESHOLD = 50 * 1024 * 1024
 
 DEFAULT_USE_POLARS = False
 
+DEFAULT_USE_POLARS_SORT = False
+
+DEFAULT_USE_POLARS_JOIN = False
+
 DEFAULT_EAGER_FREE = bool(int(os.environ.get("RAY_DATA_EAGER_FREE", "0")))
 
 DEFAULT_DECODING_SIZE_ESTIMATION_ENABLED = True
@@ -266,8 +270,9 @@ class DataContext:
         large_args_threshold: Size in bytes after which point task arguments are
             considered large. Choose a value so that the data transfer overhead is
             significant in comparison to task scheduling (i.e., low tens of ms).
-        use_polars: Whether to use Polars for tabular dataset sorts, groupbys, and
+        use_polars_sort: Whether to use Polars for tabular dataset sorts, groupbys, and
             aggregations.
+        use_polars_join: Whether to use Polars for join operations.
         eager_free: Whether to eagerly free memory.
         decoding_size_estimation: Whether to estimate in-memory decoding data size for
             data source.
@@ -385,6 +390,8 @@ class DataContext:
     )
     large_args_threshold: int = DEFAULT_LARGE_ARGS_THRESHOLD
     use_polars: bool = DEFAULT_USE_POLARS
+    use_polars_sort: bool = DEFAULT_USE_POLARS_SORT
+    use_polars_join: bool = DEFAULT_USE_POLARS_JOIN
     eager_free: bool = DEFAULT_EAGER_FREE
     decoding_size_estimation: bool = DEFAULT_DECODING_SIZE_ESTIMATION_ENABLED
     min_parallelism: int = DEFAULT_MIN_PARALLELISM
@@ -498,6 +505,14 @@ class DataContext:
                 "`shuffle_strategy` instead.",
                 DeprecationWarning,
             )
+
+        elif name == "use_polars":
+            warnings.warn(
+                "`use_polars` is deprecated, please configure "
+                "`use_polars_sort`  instead.",
+                DeprecationWarning,
+            )
+            self.use_polars_sort = value
 
         super().__setattr__(name, value)
 

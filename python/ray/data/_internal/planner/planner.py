@@ -136,6 +136,25 @@ def _register_default_plan_logical_op_fns():
         assert len(physical_children) == 2
         assert logical_op._num_outputs is not None
 
+        if data_context.use_polars_join:
+            from ray.anyscale.data._internal.execution.operators.join_operator import (
+                JoinOperatorWithPolars,
+            )
+
+            return JoinOperatorWithPolars(
+                data_context=data_context,
+                left_input_op=physical_children[0],
+                right_input_op=physical_children[1],
+                join_type=logical_op._join_type,
+                left_key_columns=logical_op._left_key_columns,
+                right_key_columns=logical_op._right_key_columns,
+                left_columns_suffix=logical_op._left_columns_suffix,
+                right_columns_suffix=logical_op._right_columns_suffix,
+                num_partitions=logical_op._num_outputs,
+                partition_size_hint=logical_op._partition_size_hint,
+                aggregator_ray_remote_args_override=logical_op._aggregator_ray_remote_args,
+            )
+
         return JoinOperator(
             data_context=data_context,
             left_input_op=physical_children[0],
