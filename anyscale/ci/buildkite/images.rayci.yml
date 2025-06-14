@@ -203,7 +203,7 @@ steps:
         py:
           - "3.11"
         base:
-          - "cu12.4.1-cudnn"
+          - "cu12.8.1-cudnn"
 
   - label: ":tapioca: rayturbo ml py{{matrix.py}} {{matrix.base}} image"
     key: rayturbo-ml-image
