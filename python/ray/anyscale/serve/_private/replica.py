@@ -49,6 +49,7 @@ from ray.serve._private.common import (
 from ray.serve._private.constants import (
     SERVE_LOGGER_NAME,
     SERVE_CONTROLLER_NAME,
+    SERVE_HTTP_REQUEST_ID_HEADER,
     SERVE_NAMESPACE,
 )
 from ray.anyscale.serve._private.replica_response_generator import (
@@ -838,9 +839,10 @@ class AnyscaleReplica(ReplicaBase):
                 )
             )
 
+        headers = dict(scope["headers"])
+        request_id = headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8"))
         request_metadata = RequestMetadata(
-            # TODO: pick up from header.
-            request_id=generate_request_id(),
+            request_id=request_id or generate_request_id(),
             internal_request_id=generate_request_id(),
             call_method="__call__",
             # TODO(edoakes): populate this.
