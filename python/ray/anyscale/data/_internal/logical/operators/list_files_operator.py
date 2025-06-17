@@ -10,9 +10,9 @@ from ray.data.block import Block, BlockAccessor, BlockColumnAccessor
 from ray.data.datasource import PathPartitionFilter
 
 if TYPE_CHECKING:
-    from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
+    from ray.anyscale.data._internal.file_indexer import FileIndexer
     from ray.anyscale.data._internal.partitioners import FilePartitioner
-    from ray.anyscale.data._internal.planner.file_indexer import FileIndexer
+    from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 
 PATH_COLUMN_NAME = "__path"
 FILE_SIZE_COLUMN_NAME = "__file_size"

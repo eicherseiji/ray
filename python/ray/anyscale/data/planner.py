@@ -8,8 +8,7 @@ from ray.anyscale.data._internal.logical.operators.read_files_operator import Re
 from ray.anyscale.data._internal.logical.operators.streaming_aggregate import (
     StreamingAggregate,
 )
-from ray.anyscale.data._internal.planner.plan_list_files_op import plan_list_files_op
-from ray.anyscale.data._internal.planner.plan_read_files_op import plan_read_files_op
+from ray.anyscale.data._internal.planner import plan_list_files_op, plan_read_files_op
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.planner.planner import register_plan_logical_op_fn
 from ray.data.context import DataContext

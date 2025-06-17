@@ -1,10 +1,13 @@
+import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
 import pyarrow as pa
+
+from ray.anyscale.data._internal.file_indexer import filter_file_manifest
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
     ListFiles,
 )
-from ray.anyscale.data._internal.planner.file_indexer import filter_file_manifest
 from ray.anyscale.data._internal.readers import FileReader
 from ray.anyscale.data._internal.readers.supports_metadata import SupportsSchema
 from ray.data._internal.compute import TaskPoolStrategy
@@ -14,14 +17,13 @@ from ray.data._internal.planner.plan_expression.expression_evaluator import (
     ExpressionEvaluator,
 )
 from ray.data.block import BlockAccessor, Schema
-import logging
-
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
     import pyarrow.dataset as pd
+
+    from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 
 
 class ReadFiles(SourceOperator, AbstractMap):

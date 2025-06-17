@@ -12,13 +12,13 @@ import ray.data.read_api as oss_read_api
 from ray._private.auto_init_hook import wrap_auto_init
 from ray._private.ray_constants import env_bool
 from ray._private.utils import INT32_MAX
+from ray.anyscale.data._internal.file_indexer import (
+    NonSamplingFileIndexer,
+)
 from ray.anyscale.data._internal.logical.operators.list_files_operator import ListFiles
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
 from ray.anyscale.data._internal.partitioners import (
     RoundRobinPartitioner,
-)
-from ray.anyscale.data._internal.planner.file_indexer import (
-    NonSamplingFileIndexer,
 )
 from ray.anyscale.data._internal.readers import (
     ArrowJSONReader,

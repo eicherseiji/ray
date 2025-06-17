@@ -7,16 +7,16 @@ import pyarrow as pa
 from pyarrow.fs import FileSystem
 
 import ray
+from ray.anyscale.data._internal.file_indexer import (
+    FileIndexer,
+    FileManifest,
+    filter_file_manifest,
+)
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     PATH_COLUMN_NAME,
     ListFiles,
 )
 from ray.anyscale.data._internal.partitioners import FilePartitioner
-from ray.anyscale.data._internal.planner.file_indexer import (
-    FileIndexer,
-    FileManifest,
-    filter_file_manifest,
-)
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
 from ray.data._internal.execution.interfaces import PhysicalOperator, RefBundle
 from ray.data._internal.execution.interfaces.task_context import TaskContext
