@@ -47,7 +47,7 @@ class AnyscaleServeController(ServeController):
             grpc_options=grpc_options,
         )
 
-    def get_target_groups(self) -> List[TargetGroup]:
+    def get_target_groups(self, app_name: Optional[str] = None) -> List[TargetGroup]:
         """Get target groups for direct ingress deployments.
         This overrides the base implementation to return target groups that
         point directly to replica ports rather than proxy ports when direct
@@ -74,10 +74,14 @@ class AnyscaleServeController(ServeController):
             return proxy_target_groups
 
         # Get all applications and their metadata
-        apps = [
-            app_name
-            for app_name, _ in self.application_state_manager.list_app_statuses().items()
-        ]
+        if app_name is None:
+            apps = [
+                _app_name
+                for _app_name, _ in self.application_state_manager.list_app_statuses().items()
+            ]
+        else:
+            apps = [app_name]
+
         if not apps:
             return proxy_target_groups
         # Create target groups for each application

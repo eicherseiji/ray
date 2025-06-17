@@ -37,6 +37,7 @@ from ray.serve.schema import ApplicationStatus, RequestProtocol
 from ray.serve.schema import ServeInstanceDetails
 from ray.dashboard.modules.serve.sdk import ServeSubmissionClient
 from ray.serve.schema import DeploymentStatus
+from ray.serve._private.test_utils import get_application_urls, get_application_url
 
 
 @pytest.fixture
@@ -162,18 +163,17 @@ def get_grpc_ports(route_prefix=None, first_only=True):
 def test_basic(_skip_if_ff_not_enabled, serve_instance):
     serve.run(Hybrid.bind(message="Hello world!"))
 
-    http_ports = get_http_ports(first_only=False)
-    grpc_ports = get_grpc_ports(first_only=False)
-
+    http_urls = get_application_urls("HTTP")
+    grpc_urls = get_application_urls("gRPC")
     # Basic HTTP request.
-    for http_port in http_ports:
-        r = httpx.get(f"http://localhost:{http_port}/")
+    for http_url in http_urls:
+        r = httpx.get(http_url)
         r.raise_for_status()
         assert r.text == "Hello world!"
 
     # Basic gRPC request.
-    for grpc_port in grpc_ports:
-        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    for grpc_url in grpc_urls:
+        channel = grpc.insecure_channel(grpc_url)
         stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
         assert stub.Method1(serve_pb2.UserDefinedMessage()).greeting == "Hello world!"
         channel.close()
@@ -182,18 +182,18 @@ def test_basic(_skip_if_ff_not_enabled, serve_instance):
 def test_internal_server_error(_skip_if_ff_not_enabled, serve_instance):
     serve.run(Hybrid.bind(raise_error=True))
 
-    http_ports = get_http_ports(first_only=False)
-    grpc_ports = get_grpc_ports(first_only=False)
+    http_urls = get_application_urls("HTTP")
+    grpc_urls = get_application_urls("gRPC")
 
     # Basic HTTP request.
-    for http_port in http_ports:
-        r = httpx.get(f"http://localhost:{http_port}/")
+    for http_url in http_urls:
+        r = httpx.get(http_url)
         assert r.status_code == 500
         assert r.text == "Internal Server Error"
 
     # Basic gRPC request.
-    for grpc_port in grpc_ports:
-        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    for grpc_url in grpc_urls:
+        channel = grpc.insecure_channel(grpc_url)
         stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
         try:
             with pytest.raises(grpc.RpcError) as exception_info:
@@ -225,17 +225,17 @@ def test_fastapi_app(_skip_if_ff_not_enabled, serve_instance):
             )
 
     serve.run(FastAPIDeployment.bind())
-    http_ports = get_http_ports(first_only=False)
+    http_urls = get_application_urls("HTTP")
 
     # Test GET /.
-    for http_port in http_ports:
-        r = httpx.get(f"http://localhost:{http_port}/")
+    for http_url in http_urls:
+        r = httpx.get(http_url)
         r.raise_for_status()
         assert r.text == "Hello from root!"
 
     # Test POST /{wildcard}.
-    for http_port in http_ports:
-        r = httpx.post(f"http://localhost:{http_port}/foobar")
+    for http_url in http_urls:
+        r = httpx.post(f"{http_url}foobar")
         assert r.status_code == 201
         assert r.text == "Hello from foobar!"
 
@@ -261,19 +261,17 @@ def test_http_request_id(_skip_if_ff_not_enabled, serve_instance, use_fastapi: b
                 return PlainTextResponse(request.headers.get("x-request-id", ""))
 
     serve.run(EchoRequestID.bind())
-    http_port = get_http_ports()[0]
+    http_url = get_application_url("HTTP")
 
     # Case 1: no x-request-id passed, should get populated and returned as a header.
-    r = httpx.get(f"http://localhost:{http_port}/")
+    r = httpx.get(http_url)
     r.raise_for_status()
     assert r.text != "" and r.text == r.headers["x-request-id"]
     # This call would raise if the request ID isn't a valid UUID.
     UUID(r.text, version=4)
 
     # Case 2: x-request-id passed, result and header should match it.
-    r = httpx.get(
-        f"http://localhost:{http_port}/", headers={"x-request-id": "TEST-HEADER"}
-    )
+    r = httpx.get(http_url, headers={"x-request-id": "TEST-HEADER"})
     r.raise_for_status()
     assert r.text == "TEST-HEADER" and r.text == r.headers["x-request-id"]
 
@@ -429,8 +427,10 @@ def test_port_retry_logic(_skip_if_ff_not_enabled, serve_instance):
             grpc_target_group.targets[0].port != RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT
         )
 
+        http_url = get_application_url("HTTP")
+
         # Verify the service still works through shared ingress
-        r = httpx.get(f"http://localhost:{http_target_group.targets[0].port}/")
+        r = httpx.get(http_url)
         r.raise_for_status()
         assert r.text == "Hello world!"
 
@@ -674,13 +674,16 @@ def test_only_ingress_deployment_replicas_are_used_for_target_groups(
     assert len(set(http_ports) & {30000, 30001, 30002, 30003, 30004}) == 3
     assert len(set(grpc_ports) & {40000, 40001, 40002, 40003, 40004}) == 3
 
-    for http_port in http_ports:
-        req = httpx.get(f"http://localhost:{http_port}/")
+    http_urls = get_application_urls("HTTP")
+    grpc_urls = get_application_urls("gRPC")
+
+    for http_url in http_urls:
+        req = httpx.get(http_url)
         assert req.status_code == 200
         assert req.text == "ingress-deployment-downstream-deployment"
 
-    for grpc_port in grpc_ports:
-        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    for grpc_url in grpc_urls:
+        channel = grpc.insecure_channel(grpc_url)
         stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
         assert (
             stub.Method1(serve_pb2.UserDefinedMessage()).greeting
@@ -869,15 +872,18 @@ def test_app_with_composite_deployments(_skip_if_ff_not_enabled, serve_instance)
     assert len(set(http_ports) & {30000, 30001, 30002, 30003, 30004}) == 2
     assert len(set(grpc_ports) & {40000, 40001, 40002, 40003, 40004}) == 2
 
+    http_urls = get_application_urls("HTTP", app_name="app-1")
+    grpc_urls = get_application_urls("gRPC", app_name="app-1")
+
     # make a request to the ingress deployment
-    for http_port in http_ports:
-        req = httpx.get(f"http://localhost:{http_port}/app-1")
+    for http_url in http_urls:
+        req = httpx.get(http_url)
         assert req.status_code == 200
         assert req.text == "child-deployment"
 
     # grpc request
-    for grpc_port in grpc_ports:
-        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    for grpc_url in grpc_urls:
+        channel = grpc.insecure_channel(grpc_url)
         stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
         assert (
             stub.Method1(serve_pb2.UserDefinedMessage()).greeting == "child-deployment"
@@ -967,9 +973,11 @@ def test_only_running_apps_are_used_for_target_groups(
     assert set(http_ports) == {30000, 30001}
     assert set(grpc_ports) == {40000, 40001}
 
+    http_urls = get_application_urls("HTTP", app_name="app-1")
+
     # make requests to the application
-    for http_port in http_ports:
-        req = httpx.get(f"http://localhost:{http_port}/app-1")
+    for http_url in http_urls:
+        req = httpx.get(http_url)
         assert req.status_code == 200
         assert req.text == "deployment-1"
 
@@ -978,9 +986,11 @@ def test_only_running_apps_are_used_for_target_groups(
     assert set(http_ports) == {30002, 30003}
     assert set(grpc_ports) == {40002, 40003}
 
+    http_urls = get_application_urls("HTTP", app_name="app-2")
+
     # make requests to the application
-    for http_port in http_ports:
-        req = httpx.get(f"http://localhost:{http_port}/app-2")
+    for http_url in http_urls:
+        req = httpx.get(http_url)
         assert req.status_code == 200
         assert req.text == "deployment-2"
 
@@ -1024,8 +1034,8 @@ def test_some_replicas_not_running(_skip_if_ff_not_enabled, serve_instance):
 
 
 class TestDirectIngressBackpressure:
-    def _do_http_request(self, http_port: int, app_name: str = "") -> bool:
-        r = httpx.get(f"http://localhost:{http_port}/{app_name}", timeout=10)
+    def _do_http_request(self, url: str) -> bool:
+        r = httpx.get(url, timeout=10)
         if r.status_code == 200:
             return True
         elif r.status_code == 503:
@@ -1033,8 +1043,8 @@ class TestDirectIngressBackpressure:
         else:
             raise RuntimeError(f"Unexpected status code: {r.status_code}")
 
-    def _do_grpc_request(self, grpc_port: int) -> bool:
-        channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    def _do_grpc_request(self, url: str) -> bool:
+        channel = grpc.insecure_channel(url)
         stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
         try:
             stub.Method1(serve_pb2.UserDefinedMessage(), timeout=10)
@@ -1055,16 +1065,15 @@ class TestDirectIngressBackpressure:
                 message="done waiting!", wait_signal=wait_signal
             )
         )
-        http_port = get_http_ports()[0]
-
-        grpc_port = get_grpc_ports()[0]
+        http_url = get_application_url("HTTP")
+        grpc_url = get_application_url("gRPC")
 
         for _do_request in [self._do_grpc_request, self._do_http_request]:
-            port = grpc_port if _do_request == self._do_grpc_request else http_port
+            url = grpc_url if _do_request == self._do_grpc_request else http_url
             num_requests = 5
             with ThreadPoolExecutor(num_requests) as tpe:
                 # Submit `max_ongoing_requests` blocking requests.
-                futures = [tpe.submit(_do_request, port) for _ in range(num_requests)]
+                futures = [tpe.submit(_do_request, url) for _ in range(num_requests)]
                 wait_for_condition(
                     lambda: ray.get(wait_signal.cur_num_waiters.remote())
                     == num_requests
@@ -1073,7 +1082,7 @@ class TestDirectIngressBackpressure:
 
                 # Send another request beyond `max_ongoing_requests`
                 queued_requests = [
-                    tpe.submit(_do_request, port) for _ in range(num_requests + 5)
+                    tpe.submit(_do_request, url) for _ in range(num_requests + 5)
                 ]
 
                 # Unblock the requests, check they finish successfully.
@@ -1082,7 +1091,7 @@ class TestDirectIngressBackpressure:
                 assert all(f.result() is True for f in queued_requests)
 
             # Now a new request showld succeed.
-            assert _do_request(port) is True
+            assert _do_request(url) is True
 
             ray.get(wait_signal.send.remote(clear=True))
 
@@ -1097,15 +1106,13 @@ class TestDirectIngressBackpressure:
                 message="done waiting!", wait_signal=signal
             )
         )
-        http_port = get_http_ports()[0]
-        grpc_port = get_grpc_ports()[0]
-        assert http_port != 8000
-        assert grpc_port != 9000
+        http_url = get_application_url("HTTP")
+        grpc_url = get_application_url("gRPC")
         for _do_request in [self._do_grpc_request, self._do_http_request]:
-            port = grpc_port if _do_request == self._do_grpc_request else http_port
+            url = grpc_url if _do_request == self._do_grpc_request else http_url
             num_requests = 1000
             with ThreadPoolExecutor(num_requests) as tpe:
-                futures = [tpe.submit(_do_request, port) for _ in range(num_requests)]
+                futures = [tpe.submit(_do_request, url) for _ in range(num_requests)]
                 wait_for_condition(
                     lambda: ray.get(signal.cur_num_waiters.remote()) == 1
                 )
@@ -1128,15 +1135,13 @@ class TestDirectIngressBackpressure:
                 message="done waiting!", wait_signal=signal
             )
         )
-        http_port = get_http_ports()[0]
-        grpc_port = get_grpc_ports()[0]
-        assert http_port != 8000
-        assert grpc_port != 9000
+        http_url = get_application_url("HTTP")
+        grpc_url = get_application_url("gRPC")
         for _do_request in [self._do_grpc_request, self._do_http_request]:
-            port = grpc_port if _do_request == self._do_grpc_request else http_port
+            url = grpc_url if _do_request == self._do_grpc_request else http_url
             num_requests = 1000
             with ThreadPoolExecutor(num_requests) as tpe:
-                futures = [tpe.submit(_do_request, port) for _ in range(num_requests)]
+                futures = [tpe.submit(_do_request, url) for _ in range(num_requests)]
                 wait_for_condition(
                     lambda: ray.get(signal.cur_num_waiters.remote()) == 10
                 )
@@ -1169,11 +1174,8 @@ class TestDirectIngressBackpressure:
                 message="done waiting!", wait_signal=signal
             )
         )
-        http_port = get_http_ports()[0]
-        grpc_port = get_grpc_ports()[0]
-
-        assert http_port != 8000
-        assert grpc_port != 9000
+        http_url = get_application_url("HTTP")
+        grpc_url = get_application_url("gRPC")
 
         num_requests = 500
         with ThreadPoolExecutor(num_requests) as tpe:
@@ -1182,13 +1184,13 @@ class TestDirectIngressBackpressure:
             grpc_futures = []
             http_futures.extend(
                 [
-                    tpe.submit(self._do_http_request, http_port)
+                    tpe.submit(self._do_http_request, http_url)
                     for _ in range(num_requests // 2)
                 ]
             )
             grpc_futures.extend(
                 [
-                    tpe.submit(self._do_grpc_request, grpc_port)
+                    tpe.submit(self._do_grpc_request, grpc_url)
                     for _ in range(num_requests // 2)
                 ]
             )
@@ -1237,20 +1239,19 @@ class TestDirectIngressBackpressure:
                 fail_hc_signal=fail_hc_signal,
             )
         )
-        http_port = get_http_ports()[0]
+        http_url = get_application_url("HTTP")
         num_requests = 100
         with ThreadPoolExecutor(num_requests) as tpe:
             # Submit requests to create backpressure
             futures = [
-                tpe.submit(self._do_http_request, http_port)
-                for _ in range(num_requests)
+                tpe.submit(self._do_http_request, http_url) for _ in range(num_requests)
             ]
 
             # Wait for backpressure
             wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 1)
 
             # Health check should still pass during backpressure
-            hc_response = httpx.get(f"http://localhost:{http_port}/-/healthz")
+            hc_response = httpx.get(f"{http_url}-/healthz")
             assert hc_response.status_code == 200
             assert hc_response.text == "OK"
 
@@ -1259,7 +1260,7 @@ class TestDirectIngressBackpressure:
 
             # Health check should fail even during backpressure
             def _check_unhealthy():
-                hc_response = httpx.get(f"http://localhost:{http_port}/-/healthz")
+                hc_response = httpx.get(f"{http_url}-/healthz")
                 assert hc_response.status_code == 503
                 assert hc_response.text == "UNHEALTHY"
                 return True
@@ -1329,43 +1330,30 @@ class TestDirectIngressBackpressure:
             route_prefix="/app-2",
         )
 
-        http_ports_1 = get_http_ports("/app-1")
-        http_ports_2 = get_http_ports("/app-2")
-        grpc_ports_1 = get_grpc_ports("/app-1")
-        grpc_ports_2 = get_grpc_ports("/app-2")
-
-        assert http_ports_1[0] != 8000
-        assert http_ports_2[0] != 8000
-        assert grpc_ports_1[0] != 9000
-        assert grpc_ports_2[0] != 9000
+        http_url_1 = get_application_url("HTTP", app_name="app-1")
+        http_url_2 = get_application_url("HTTP", app_name="app-2")
+        grpc_url_1 = get_application_url("gRPC", app_name="app-1")
+        grpc_url_2 = get_application_url("gRPC", app_name="app-2")
 
         for do_request in [self._do_http_request, self._do_grpc_request]:
-            port1 = (
-                http_ports_1[0]
-                if do_request == self._do_http_request
-                else grpc_ports_1[0]
-            )
-            port2 = (
-                http_ports_2[0]
-                if do_request == self._do_http_request
-                else grpc_ports_2[0]
-            )
+            url1 = http_url_1 if do_request == self._do_http_request else grpc_url_1
+            url2 = http_url_2 if do_request == self._do_http_request else grpc_url_2
             num_requests = 20
             is_grpc = do_request == self._do_grpc_request
             with ThreadPoolExecutor(num_requests) as tpe:
                 # Saturate deployment-1 (should cause backpressure)
                 futures_1 = [
-                    tpe.submit(do_request, port1, "app-1")
+                    tpe.submit(do_request, url1)
                     if not is_grpc
-                    else tpe.submit(do_request, port1)
+                    else tpe.submit(do_request, url1)
                     for _ in range(num_requests // 2)
                 ]
 
                 # Submit to deployment-2 (should not be affected by deployment-1's backpressure)
                 futures_2 = [
-                    tpe.submit(do_request, port2, "app-2")
+                    tpe.submit(do_request, url2)
                     if not is_grpc
-                    else tpe.submit(do_request, port2)
+                    else tpe.submit(do_request, url2)
                     for _ in range(num_requests // 2)
                 ]
 
@@ -1448,23 +1436,21 @@ class TestDirectIngressBackpressure:
             route_prefix="/composite-app",
         )
 
-        http_port = get_http_ports("/composite-app")[0]
-        grpc_port = get_grpc_ports("/composite-app")[0]
-        assert http_port != 8000
-        assert grpc_port != 9000
+        http_url = get_application_url("HTTP", app_name="composite-app")
+        grpc_url = get_application_url("gRPC", app_name="composite-app")
 
         num_requests = 10
         for do_request in [self._do_grpc_request, self._do_http_request]:
             if do_request == self._do_grpc_request:
                 # TODO(abrar): fix the grpc test
                 continue
-            port = http_port if do_request == self._do_http_request else grpc_port
+            url = http_url if do_request == self._do_http_request else grpc_url
             is_grpc = do_request == self._do_grpc_request
             with ThreadPoolExecutor(num_requests) as tpe:
                 futures = [
-                    tpe.submit(do_request, port)
+                    tpe.submit(do_request, url)
                     if is_grpc
-                    else tpe.submit(do_request, port, "composite-app")
+                    else tpe.submit(do_request, url)
                     for _ in range(num_requests)
                 ]
                 wait_for_condition(
@@ -1506,14 +1492,10 @@ class TestDirectIngressBackpressure:
                 return "ok"
 
         serve.run(A.options(name="A").bind(), name="app-1", route_prefix="/app-1")
-        http_port = get_http_ports("/app-1")[0]
-        assert http_port != 8000
+        http_url = get_application_url("HTTP", app_name="app-1")
 
         with ThreadPoolExecutor() as tpe:
-            _ = [
-                tpe.submit(httpx.get, f"http://localhost:{http_port}/app-1", timeout=1)
-                for _ in range(100)
-            ]
+            _ = [tpe.submit(httpx.get, http_url, timeout=1) for _ in range(100)]
 
         wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 1)
         assert len(ray.get(collector.get.remote())) == 1
@@ -1522,10 +1504,7 @@ class TestDirectIngressBackpressure:
 
         with ThreadPoolExecutor() as tpe:
             # make new requests
-            _ = [
-                tpe.submit(httpx.get, f"http://localhost:{http_port}/app-1")
-                for _ in range(100)
-            ]
+            _ = [tpe.submit(httpx.get, http_url) for _ in range(100)]
 
             def _func():
                 assert len(ray.get(collector.get.remote())) == 101
@@ -1549,15 +1528,12 @@ class TestDirectIngressBackpressure:
                 return "ok"
 
         serve.run(A.options(name="A").bind(), name="app-1", route_prefix="/app-1")
-        http_port = get_http_ports("/app-1")[0]
-        assert http_port != 8000
+        http_url = get_application_url("HTTP", app_name="app-1")
 
         num_requests = 20
         with ThreadPoolExecutor(num_requests) as tpe:
             futures = [
-                tpe.submit(
-                    httpx.get, f"http://localhost:{http_port}/app-1", timeout=None
-                )
+                tpe.submit(httpx.get, http_url, timeout=None)
                 for _ in range(num_requests)
             ]
 
@@ -1590,16 +1566,13 @@ class TestDirectIngressBackpressure:
                 return "ok"
 
         serve.run(A.options(name="A").bind(), name="app-1", route_prefix="/app-1")
-        http_port = get_http_ports("/app-1")[0]
-        assert http_port != 8000
+        http_url = get_application_url("HTTP", app_name="app-1")
 
         num_requests = 20
 
         with ThreadPoolExecutor(num_requests) as tpe:
             futures = [
-                tpe.submit(
-                    httpx.get, f"http://localhost:{http_port}/app-1", timeout=None
-                )
+                tpe.submit(httpx.get, http_url, timeout=None)
                 for _ in range(num_requests)
             ]
 
@@ -1648,14 +1621,11 @@ class TestDirectIngressAutoscaling:
             app_name="app-1",
         )
 
-        http_ports = get_http_ports()
+        http_url = get_application_url("HTTP", app_name="app-1")
         # Send 100 concurrent HTTP requests
         with ThreadPoolExecutor() as executor:
             futures = [
-                executor.submit(
-                    httpx.get, f"http://localhost:{http_ports[0]}/app-1", timeout=None
-                )
-                for _ in range(100)
+                executor.submit(httpx.get, http_url, timeout=None) for _ in range(100)
             ]
 
             # scale up one more replica from min_replicas
@@ -1709,19 +1679,11 @@ class TestDirectIngressAutoscaling:
             app_name="app-1",
         )
 
-        http_ports = get_http_ports(route_prefix="/app-1")
-        grpc_ports = get_grpc_ports(route_prefix="/app-1")
-        assert http_ports[0] == 8000  # proxy port
-        assert len(http_ports) == 1
-        assert grpc_ports[0] == 9000  # proxy port
-        assert len(grpc_ports) == 1
+        http_url = get_application_url("HTTP", app_name="app-1")
         # Send 100 concurrent HTTP requests
         with ThreadPoolExecutor() as executor:
             futures = [
-                executor.submit(
-                    httpx.get, f"http://localhost:{http_ports[0]}/app-1", timeout=None
-                )
-                for _ in range(50)
+                executor.submit(httpx.get, http_url, timeout=None) for _ in range(50)
             ]
 
             # scale up one more replica from min_replicas
@@ -1731,10 +1693,8 @@ class TestDirectIngressAutoscaling:
 
             # now that replicas are running, check that http ports are occupied
             def _func():
-                http_ports = get_http_ports(route_prefix="/app-1")
-                assert http_ports[0] == 30000
-                grpc_ports = get_grpc_ports(route_prefix="/app-1")
-                assert grpc_ports[0] == 40000
+                _ = get_application_url("HTTP", app_name="app-1")
+                _ = get_application_url("gRPC", app_name="app-1")
                 return True
 
             wait_for_condition(_func, timeout=10)
@@ -1782,14 +1742,11 @@ def test_disconnect(_skip_if_ff_not_enabled, serve_instance):
 
     serve.run(DisconnectTest.bind())
 
-    http_port = get_http_ports()[0]
-    assert http_port != 8000
-
-    grpc_port = get_grpc_ports()[0]
-    assert grpc_port != 9000
+    http_url = get_application_url("HTTP")
+    grpc_url = get_application_url("gRPC")
 
     # Test gRPC cancellation
-    channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    channel = grpc.insecure_channel(grpc_url)
     stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
 
     # Send request and wait for it to start executing
@@ -1818,11 +1775,10 @@ def test_disconnect(_skip_if_ff_not_enabled, serve_instance):
     ray.get(cancelled_signal.send.remote(clear=True))
 
     # Test HTTP cancellation
-    http_port = get_http_ports()[0]
-    assert http_port != 8000
+    http_url = get_application_url("HTTP")
 
     try:
-        httpx.get(f"http://localhost:{http_port}", timeout=1)
+        httpx.get(http_url, timeout=1)
     except httpx.TimeoutException:
         pass
     else:
