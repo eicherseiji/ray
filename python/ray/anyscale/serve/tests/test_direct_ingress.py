@@ -1841,5 +1841,83 @@ def test_disconnect(_skip_if_ff_not_enabled, serve_instance):
     ray.get(cancelled_signal.send.remote(clear=True))
 
 
+def test_context_propagation(_skip_if_ff_not_enabled, serve_instance):
+    """Test that the context is propagated to the deployment"""
+
+    @serve.deployment(name="context-propagation-deployment")
+    class ContextPropagationTest:
+        async def __call__(self):
+            return ray.serve.context._get_serve_request_context().app_name
+
+        async def Method1(
+            self, request: serve_pb2.UserDefinedMessage
+        ) -> serve_pb2.UserDefinedResponse:
+            return serve_pb2.UserDefinedResponse(
+                greeting=ray.serve.context._get_serve_request_context().app_name
+            )
+
+    serve.run(
+        ContextPropagationTest.bind(),
+        name="context-propagation-deployment",
+        route_prefix="/context-propagation-deployment",
+    )
+    http_port = get_http_ports("/context-propagation-deployment")[0]
+    assert http_port != 8000
+    response = httpx.get(f"http://localhost:{http_port}")
+    assert response.status_code == 200
+    assert response.text == "context-propagation-deployment"
+
+    grpc_port = get_grpc_ports()[0]
+    assert grpc_port != 9000
+    channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
+    request = serve_pb2.UserDefinedMessage()
+    future = stub.Method1.future(request=request)
+    assert future.result().greeting == "context-propagation-deployment"
+
+
+def test_context_propagation_with_child(_skip_if_ff_not_enabled, serve_instance):
+    """Test that the context is propagated to the deployment"""
+
+    @serve.deployment(name="child-deployment")
+    class ChildDeployment:
+        async def __call__(self):
+            return ray.serve.context._get_serve_request_context().app_name
+
+    @serve.deployment(name="context-propagation-deployment")
+    class ContextPropagationTest:
+        def __init__(self, child_deployment: ChildDeployment):
+            self.child_deployment = child_deployment
+
+        async def __call__(self):
+            return await self.child_deployment.remote()
+
+        async def Method1(
+            self, request: serve_pb2.UserDefinedMessage
+        ) -> serve_pb2.UserDefinedResponse:
+            return serve_pb2.UserDefinedResponse(
+                greeting=await self.child_deployment.remote()
+            )
+
+    serve.run(
+        ContextPropagationTest.bind(ChildDeployment.bind()),
+        name="context-propagation-deployment",
+        route_prefix="/context-propagation-deployment",
+    )
+    http_port = get_http_ports("/context-propagation-deployment")[0]
+    assert http_port != 8000
+    response = httpx.get(f"http://localhost:{http_port}")
+    assert response.status_code == 200
+    assert response.text == "context-propagation-deployment"
+
+    grpc_port = get_grpc_ports()[0]
+    assert grpc_port != 9000
+    channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
+    request = serve_pb2.UserDefinedMessage()
+    future = stub.Method1.future(request=request)
+    assert future.result().greeting == "context-propagation-deployment"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", "-s", __file__]))

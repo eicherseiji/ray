@@ -222,8 +222,7 @@ class RequestQueue:
                 and first_result.accepted
             ):
                 if not queued_request.future.done():
-                    context = ray.serve.context._serve_request_context.get()
-                    queued_request.future.set_result((result_gen, context))
+                    queued_request.future.set_result(result_gen)
                 return True
             return False
         except Exception as e:
@@ -336,8 +335,7 @@ class AnyscaleReplica(ReplicaBase):
         )
 
         # Wait for the queued request to be processed
-        result_gen, context = await queued_request.future
-        ray.serve.context._serve_request_context.set(context)
+        result_gen = await queued_request.future
         async for result in result_gen:
             yield result
         self._request_queue.notify_capacity_available()
@@ -546,21 +544,23 @@ class AnyscaleReplica(ReplicaBase):
             }
             set_span_attributes(trace_attributes)
 
-            ray.serve.context._serve_request_context.set(
-                ray.serve.context._RequestContext(
-                    route=request_metadata.route,
-                    request_id=request_metadata.request_id,
-                    _internal_request_id=request_metadata.internal_request_id,
-                    app_name=self._deployment_id.app_name,
-                    multiplexed_model_id=request_metadata.multiplexed_model_id,
-                    grpc_context=request_metadata.grpc_context,
-                )
-            )
-
+            self._set_request_context(request_metadata)
             with self._handle_errors_and_metrics(
                 request_metadata, request_args
             ) as status_code_callback:
                 yield status_code_callback
+
+    def _set_request_context(self, request_metadata: RequestMetadata):
+        ray.serve.context._serve_request_context.set(
+            ray.serve.context._RequestContext(
+                route=request_metadata.route,
+                request_id=request_metadata.request_id,
+                _internal_request_id=request_metadata.internal_request_id,
+                app_name=self._deployment_id.app_name,
+                multiplexed_model_id=request_metadata.multiplexed_model_id,
+                grpc_context=request_metadata.grpc_context,
+            )
+        )
 
     def _record_errors_and_metrics(
         self,
@@ -734,6 +734,7 @@ class AnyscaleReplica(ReplicaBase):
             context.set_details("Replica exceeded capacity. Request rejected.")
             return
 
+        self._set_request_context(request_metadata)
         result = await replica_response_generator.__anext__()
         c._set_on_grpc_context(context)
 
@@ -871,9 +872,7 @@ class AnyscaleReplica(ReplicaBase):
             )
 
             # Get queue length info
-            queue_len_info: ReplicaQueueLengthInfo = (
-                await replica_response_generator.__anext__()
-            )
+            queue_len_info: ReplicaQueueLengthInfo = await result_gen.__anext__()
 
             # Check if request was rejected
             if not queue_len_info.accepted:
@@ -883,10 +882,21 @@ class AnyscaleReplica(ReplicaBase):
                 ):
                     await send(msg)
                 return
+            # TODO(abrar): The reason we need to set the request context here even though
+            # we already set it in _wrap_user_method_call is because the request context
+            # gets cleared in following situations:
+            # 1. when request is put into queue for background processing
+            # 2. When request is passed into ReplicaResponseGenerator, there we create
+            # a new task to handle each generator response.
+            # since the scope of contextvars is limited to the current task, we need to
+            # set the request context again here. Since this implementation is
+            # not obvious to the reader, and for good reasons, we should refactor this
+            # replica code to avoid doing this.
+            self._set_request_context(request_metadata)
 
             # Stream the response
             expecting_trailers = False
-            async for result in replica_response_generator:
+            async for result in result_gen:
                 # TODO(edoakes): we should avoid serializing and deserializing the ASGI
                 # messages here. This requires some upstream refactoring.
                 asgi_messages = pickle.loads(result)
