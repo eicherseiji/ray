@@ -169,6 +169,8 @@ def read_parquet(
             "Use the top-level 'partitioning' parameter instead."
         )
 
+    target_block_size = ctx.target_max_block_size
+
     reader = ParquetReader(
         schema=schema,
         dataset_kwargs=dataset_kwargs,
@@ -178,6 +180,7 @@ def read_parquet(
         block_udf=block_udf,
         include_paths=include_paths,
         partitioning=partitioning,
+        target_block_size=target_block_size,
     )
     if PARQUET_SAMPLING_ENABLED:
         in_memory_size_estimator = None

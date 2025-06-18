@@ -36,7 +36,7 @@ from ray.data._internal.util import (
     make_async_gen,
 )
 from ray.data.block import Block, BlockMetadata, DataBatch, Schema
-from ray.data.context import DataContext
+from ray.data.context import DataContext, MAX_SAFE_BLOCK_SIZE_FACTOR
 from ray.data.datasource import Partitioning, PathPartitionParser
 from ray.data.datasource.path_util import _has_file_extension
 from ray.util.debug import log_once
@@ -46,9 +46,6 @@ from .in_memory_size_estimator import (
     InMemorySizeEstimator,
 )
 from .supports_metadata import MetadataType, SupportsMetadata, SupportsSchema
-
-# The number of rows to read per batch. This is the default we use in OSS.
-DEFAULT_BATCH_SIZE = 10_000
 
 
 logger = logging.getLogger(__name__)
@@ -80,8 +77,9 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         block_udf: Optional[Callable[[Block], Block]],
         include_paths: bool,
         partitioning: Optional[Partitioning],
+        target_block_size: Optional[int],
     ):
-        """
+        """Initialize the ParquetReader.
 
         Args:
             schema: An explicit user-provided schema. If not provided, the schema is
@@ -99,10 +97,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 argument is required for legacy reasons.
             include_paths: Whether to include the file path in the output.
             partitioning: The partitioning scheme to use when reading the data.
+            target_block_size: The target block size to use for reading the data.
         """
-        if batch_size is None:
-            batch_size = DEFAULT_BATCH_SIZE
-
         self._schema = schema
         self._dataset_kwargs = dataset_kwargs
         self._batch_size = batch_size
@@ -111,6 +107,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self._block_udf = block_udf
         self._include_paths = include_paths
         self._partitioning = partitioning
+        self._target_block_size = target_block_size
 
         # Users should use the top-level 'partitioning' argument instead of passing it
         # through 'dataset_kwargs'.
@@ -268,6 +265,74 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                     )
                 yield batch
 
+    def _get_batch_iterable(
+        self,
+        fragment: pyarrow.dataset.ParquetFileFragment,
+        batch_size: int,
+        columns: Optional[List[str]],
+        filter_expr: pyarrow.dataset.Expression,
+        schema: pyarrow.Schema,
+    ):
+        """Get an iterable of batches from a parquet fragment."""
+        try:
+            return fragment.to_batches(
+                use_threads=self._use_threads,
+                columns=columns,
+                filter=filter_expr,
+                schema=schema,
+                batch_size=batch_size,
+                **self._to_batches_kwargs,
+            )
+        except pyarrow.lib.ArrowInvalid as e:
+            error_message = str(e)
+            if (
+                "No match for FieldRef.Name" in error_message
+                and filter_expr is not None
+            ):
+                filename = os.path.basename(fragment.path)
+                file_columns = set(fragment.physical_schema.names)
+                raise RuntimeError(
+                    f"Filter expression: '{filter_expr}' failed on parquet "
+                    f"file: '{filename}' with columns: {file_columns}"
+                )
+            raise
+
+    def _get_batch_size(
+        self,
+        fragment: pyarrow.dataset.ParquetFileFragment,
+        target_block_size: int,
+        target_column_indices: List[int],
+    ) -> int:
+        """Calculate optimal batch size based on first row group stats."""
+        # Handle case where fragment has no row groups
+        if fragment.metadata is None or fragment.metadata.num_row_groups == 0:
+            # Fragment has no row groups
+            return 1
+
+        row_group_meta = fragment.metadata.row_group(0)
+        row_group_num_rows = row_group_meta.num_rows
+
+        if row_group_num_rows == 0:
+            # First row group has no rows
+            return 1
+
+        # Calculate row group size in bytes for the projected columns
+        row_group_size_bytes = sum(
+            row_group_meta.column(col_idx).total_uncompressed_size
+            for col_idx in target_column_indices
+        )
+
+        if row_group_size_bytes > MAX_SAFE_BLOCK_SIZE_FACTOR * target_block_size:
+            # If row group size is large, calculate batch size based on target block
+            # size and average row size.
+            average_row_size = row_group_size_bytes / row_group_num_rows
+            batch_size = max(1, int(target_block_size / average_row_size))
+        else:
+            # If row group size is small, read it all at once
+            batch_size = max(1, row_group_num_rows)
+
+        return batch_size
+
     def _read_batches(
         self,
         fragment: pyarrow.dataset.ParquetFileFragment,
@@ -275,47 +340,40 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         schema: pyarrow.Schema,
         columns: Optional[List[str]],
     ) -> Iterable[pyarrow.Table]:
-        def get_batch_iterable():
-            try:
-                return fragment.to_batches(
-                    use_threads=self._use_threads,
-                    columns=columns,
-                    filter=filter_expr,
-                    schema=schema,
-                    batch_size=self._batch_size,
-                    **self._to_batches_kwargs,
-                )
-            except pyarrow.lib.ArrowInvalid as e:
-                error_message = str(e)
-                if (
-                    "No match for FieldRef.Name" in error_message
-                    and filter_expr is not None
-                ):
-                    filename = os.path.basename(fragment.path)
-                    file_columns = set(fragment.physical_schema.names)
-                    raise RuntimeError(
-                        f"Filter expression: '{filter_expr}' failed on parquet "
-                        f"file: '{filename}' with columns: {file_columns}"
-                    )
-                raise
+        target_column_indices = None
+
+        if self._batch_size is None:
+            # Get column indices for projected columns
+            target_column_indices = (
+                [fragment.physical_schema.get_field_index(col) for col in columns]
+                if columns is not None
+                else list(range(len(fragment.physical_schema)))
+            )
+
+            # Estimate batch size from first row group stats
+            batch_size = self._get_batch_size(
+                fragment, self._target_block_size, target_column_indices
+            )
+        else:
+            batch_size = self._batch_size
 
         # S3 can raise transient errors during iteration, and PyArrow doesn't expose a
         # way to retry specific batches.
         for batch in iterate_with_retry(
-            get_batch_iterable,
+            lambda: self._get_batch_iterable(
+                fragment, batch_size, columns, filter_expr, schema
+            ),
             "ParquetReader load batch",
             match=self._retried_io_errors,
         ):
             # TODO: If the table is much larger than the target block size, emit a
             # warning instructing the user to decrease the batch size.
+            if batch.num_rows == 0:
+                continue
             table = pa.Table.from_batches([batch])
-
-            # If the table is empty, drop it.
-            if table.num_rows > 0:
-                if self._block_udf is not None:
-                    yield self._block_udf(table)
-                else:
-                    yield table
+            if self._block_udf is not None:
+                table = self._block_udf(table)
+            yield table
 
     def read_metadata(
         self,
