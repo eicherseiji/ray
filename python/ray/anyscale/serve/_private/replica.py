@@ -9,6 +9,7 @@ from typing import Any, AsyncGenerator, Callable, Generator, Optional, Tuple
 from collections import deque
 
 import grpc
+from ray.serve._private.proxy_request_response import ResponseStatus
 from ray.serve._private.request_router.common import PendingRequest
 from ray.serve.config import HTTPOptions, gRPCOptions
 from starlette.types import Receive, Scope, Send
@@ -33,6 +34,8 @@ from ray.serve.generated.serve_pb2 import HealthzResponse, ListApplicationsRespo
 from ray.serve._private.grpc_util import start_grpc_server
 from ray.serve._private.http_util import (
     convert_object_to_asgi_messages,
+    get_http_response_status,
+    send_http_response_on_exception,
     start_asgi_http_server,
     MessageQueue,
 )
@@ -62,7 +65,13 @@ from ray.serve._private.replica import (
 )
 from ray.serve._private.utils import generate_request_id, is_grpc_enabled
 from ray.serve.generated import serve_proprietary_pb2, serve_proprietary_pb2_grpc
-from ray.serve.grpc_util import RayServegRPCContext
+from ray.serve.grpc_util import (
+    RayServegRPCContext,
+)
+from ray.serve._private.grpc_util import (
+    get_grpc_response_status,
+    set_grpc_code_and_details,
+)
 
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
@@ -194,7 +203,7 @@ class RequestQueue:
             await self._queue_not_empty.wait()
             self._queue_not_empty.clear()
 
-            while self._queue and not self._shutdown:
+            while self._queue:
                 # Remove cancelled futures
                 while self._queue and self._queue[0].future.cancelled():
                     self._queue.popleft()
@@ -334,11 +343,15 @@ class AnyscaleReplica(ReplicaBase):
             num_ongoing_requests=self.get_total_requests(),
         )
 
-        # Wait for the queued request to be processed
-        result_gen = await queued_request.future
-        async for result in result_gen:
-            yield result
-        self._request_queue.notify_capacity_available()
+        try:
+            # Wait for the queued request to be processed
+            result_gen = await queued_request.future
+            async for result in result_gen:
+                yield result
+        finally:
+            # notify capacity available when the request is done
+            # or when the request is cancelled
+            self._request_queue.notify_capacity_available()
 
     async def _drain_ongoing_requests(self):
         """Wait for any ongoing requests to finish.
@@ -730,22 +743,33 @@ class AnyscaleReplica(ReplicaBase):
         # TODO(edoakes): update the behavior to more closely mimic the existing path:
         # add an internal queue and drop requests based on max_queued_requests.
         if not queue_len_info.accepted:
-            context.set_code(grpc.StatusCode.RESOURCE_EXHAUSTED)
-            context.set_details("Replica exceeded capacity. Request rejected.")
+            status = ResponseStatus(
+                code=grpc.StatusCode.RESOURCE_EXHAUSTED,
+                message="Replica exceeded capacity of max_ongoing_requests.",
+            )
+            set_grpc_code_and_details(context, status)
             return
 
         self._set_request_context(request_metadata)
-        result = await replica_response_generator.__anext__()
-        c._set_on_grpc_context(context)
-
-        # NOTE(edoakes): we need to fully consume the generator otherwise the
-        # finalizers that run after the `yield` statement won't run. There might
-        # be a cleaner way to structure this.
         try:
-            await replica_response_generator.__anext__()
-        except StopAsyncIteration:
-            pass
-        # TODO(abrar): handle exceptions
+            result = await replica_response_generator.__anext__()
+            c._set_on_grpc_context(context)
+            status = ResponseStatus(code=grpc.StatusCode.OK)
+
+            # NOTE(edoakes): we need to fully consume the generator otherwise the
+            # finalizers that run after the `yield` statement won't run. There might
+            # be a cleaner way to structure this.
+            try:
+                await replica_response_generator.__anext__()
+            except StopAsyncIteration:
+                pass
+        except BaseException as e:
+            status = get_grpc_response_status(
+                e, self._grpc_options.request_timeout_s, request_metadata.request_id
+            )
+            return
+        finally:
+            set_grpc_code_and_details(context, status)
 
         return result.SerializeToString()
 
@@ -872,13 +896,20 @@ class AnyscaleReplica(ReplicaBase):
             )
 
             # Get queue length info
-            queue_len_info: ReplicaQueueLengthInfo = await result_gen.__anext__()
+            queue_len_info: ReplicaQueueLengthInfo = (
+                await replica_response_generator.__anext__()
+            )
 
             # Check if request was rejected
             if not queue_len_info.accepted:
-                for msg in convert_object_to_asgi_messages(
-                    "Replica exceeded capacity. Request rejected.",
-                    status_code=503,
+                status = ResponseStatus(
+                    code=503,
+                    message="Replica exceeded capacity of max_ongoing_requests.",
+                    is_error=True,
+                )
+                for msg in send_http_response_on_exception(
+                    status,
+                    response_started=False,
                 ):
                     await send(msg)
                 return
@@ -894,33 +925,42 @@ class AnyscaleReplica(ReplicaBase):
             # replica code to avoid doing this.
             self._set_request_context(request_metadata)
 
-            # Stream the response
-            expecting_trailers = False
-            async for result in result_gen:
-                # TODO(edoakes): we should avoid serializing and deserializing the ASGI
-                # messages here. This requires some upstream refactoring.
-                asgi_messages = pickle.loads(result)
-                for msg in asgi_messages:
-                    # Stop checking for disconnect when response is complete
-                    if msg["type"] == "http.response.start":
-                        # Check if this response will include trailers
-                        expecting_trailers = msg.get("trailers", False)
-                    elif (
-                        msg["type"] == "http.response.body"
-                        and not msg.get("more_body", False)
-                        and not expecting_trailers
-                    ):
-                        # If the body is completed and we aren't expecting trailers,
-                        # response is done so we should stop listening for disconnects.
-                        replica_response_generator.stop_checking_for_disconnect()
-                    elif msg["type"] == "http.response.trailers":
-                        # If we are expecting trailers, the response is only done when
-                        # the trailers message has been sent.
-                        if not msg.get("more_trailers", False):
+            response_started = False
+            try:
+                # Stream the response
+                expecting_trailers = False
+                async for result in replica_response_generator:
+                    # TODO(edoakes): we should avoid serializing and deserializing the ASGI
+                    # messages here. This requires some upstream refactoring.
+                    asgi_messages = pickle.loads(result)
+                    for msg in asgi_messages:
+                        # Stop checking for disconnect when response is complete
+                        if msg["type"] == "http.response.start":
+                            # Check if this response will include trailers
+                            expecting_trailers = msg.get("trailers", False)
+                        elif (
+                            msg["type"] == "http.response.body"
+                            and not msg.get("more_body", False)
+                            and not expecting_trailers
+                        ):
+                            # If the body is completed and we aren't expecting trailers,
+                            # response is done so we should stop listening for disconnects.
                             replica_response_generator.stop_checking_for_disconnect()
-
-                    await send(msg)
-            # TODO(abrar): handle exceptions
+                        elif msg["type"] == "http.response.trailers":
+                            # If we are expecting trailers, the response is only done when
+                            # the trailers message has been sent.
+                            if not msg.get("more_trailers", False):
+                                replica_response_generator.stop_checking_for_disconnect()
+                        await send(msg)
+                        response_started = True
+            except BaseException as e:
+                status = get_http_response_status(
+                    e, self._http_options.request_timeout_s, request_metadata.request_id
+                )
+                for asgi_message in send_http_response_on_exception(
+                    status, response_started
+                ):
+                    await send(asgi_message)
         finally:
             if not proxy_asgi_receive_task.done():
                 proxy_asgi_receive_task.cancel()

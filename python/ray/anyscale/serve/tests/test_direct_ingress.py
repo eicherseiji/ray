@@ -200,7 +200,7 @@ def test_internal_server_error(_skip_if_ff_not_enabled, serve_instance):
                 stub.Method1(serve_pb2.UserDefinedMessage())
 
             rpc_error = exception_info.value
-            assert rpc_error.code() == grpc.StatusCode.UNKNOWN
+            assert rpc_error.code() == grpc.StatusCode.INTERNAL
         finally:
             # Force close the gRPC channel to ensure ports are released
             channel.close()
@@ -1476,41 +1476,45 @@ class TestDirectIngressBackpressure:
     def test_client_disconnect_during_request(
         self, _skip_if_ff_not_enabled, serve_instance
     ):
-        """Test that client disconnects during request are handled correctly"""
-        # TODO(abrar): fix the test
-        pytest.skip("Skipping test because disconnects are not supported yet")
-        collector = Collector.remote()
         signal = SignalActor.remote()
+        collector = Collector.remote()
 
-        @serve.deployment(max_ongoing_requests=1, max_queued_requests=20)
+        @serve.deployment(max_ongoing_requests=1, max_queued_requests=10)
         class A:
             async def __call__(self):
-                # get request_id
-                request_id = ray.serve.context._get_serve_request_context().request_id
-                await collector.add.remote(request_id)
                 await signal.wait.remote()
-                return "ok"
+                await collector.add.remote(
+                    ray.serve.context._get_serve_request_context().request_id
+                )
 
         serve.run(A.options(name="A").bind(), name="app-1", route_prefix="/app-1")
         http_url = get_application_url("HTTP", app_name="app-1")
 
-        with ThreadPoolExecutor() as tpe:
-            _ = [tpe.submit(httpx.get, http_url, timeout=1) for _ in range(100)]
+        num_requests = 100
+        with ThreadPoolExecutor(num_requests) as tpe:
+            futures = [
+                tpe.submit(httpx.get, http_url, timeout=0.5)
+                for _ in range(num_requests)
+            ]
 
-        wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 1)
-        assert len(ray.get(collector.get.remote())) == 1
+            wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 1)
 
-        ray.get(signal.send.remote())
-
-        with ThreadPoolExecutor() as tpe:
-            # make new requests
-            _ = [tpe.submit(httpx.get, http_url) for _ in range(100)]
-
+            # wait for all futures to fail with a timeout
             def _func():
-                assert len(ray.get(collector.get.remote())) == 101
+                for future in futures:
+                    assert future.done()
+                    try:
+                        future.result()
+                    except Exception as e:
+                        assert isinstance(e, httpx.ReadTimeout)
                 return True
 
             wait_for_condition(_func, timeout=10)
+
+            ray.get(signal.send.remote())
+
+            # check that the collector has the correct request ids
+            assert len(ray.get(collector.get.remote())) == 0
 
     def test_graceful_shutdown_wait_loop(self, _skip_if_ff_not_enabled, serve_instance):
         """Test that the graceful shutdown wait loop works"""
@@ -1817,15 +1821,13 @@ def test_context_propagation(_skip_if_ff_not_enabled, serve_instance):
         name="context-propagation-deployment",
         route_prefix="/context-propagation-deployment",
     )
-    http_port = get_http_ports("/context-propagation-deployment")[0]
-    assert http_port != 8000
-    response = httpx.get(f"http://localhost:{http_port}")
+    http_url = get_application_url("HTTP", app_name="context-propagation-deployment")
+    response = httpx.get(http_url)
     assert response.status_code == 200
     assert response.text == "context-propagation-deployment"
 
-    grpc_port = get_grpc_ports()[0]
-    assert grpc_port != 9000
-    channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    grpc_url = get_application_url("gRPC", app_name="context-propagation-deployment")
+    channel = grpc.insecure_channel(grpc_url)
     stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
     request = serve_pb2.UserDefinedMessage()
     future = stub.Method1.future(request=request)
@@ -1860,15 +1862,13 @@ def test_context_propagation_with_child(_skip_if_ff_not_enabled, serve_instance)
         name="context-propagation-deployment",
         route_prefix="/context-propagation-deployment",
     )
-    http_port = get_http_ports("/context-propagation-deployment")[0]
-    assert http_port != 8000
-    response = httpx.get(f"http://localhost:{http_port}")
+    http_url = get_application_url("HTTP", app_name="context-propagation-deployment")
+    response = httpx.get(http_url)
     assert response.status_code == 200
     assert response.text == "context-propagation-deployment"
 
-    grpc_port = get_grpc_ports()[0]
-    assert grpc_port != 9000
-    channel = grpc.insecure_channel(f"localhost:{grpc_port}")
+    grpc_url = get_application_url("gRPC", app_name="context-propagation-deployment")
+    channel = grpc.insecure_channel(grpc_url)
     stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
     request = serve_pb2.UserDefinedMessage()
     future = stub.Method1.future(request=request)
