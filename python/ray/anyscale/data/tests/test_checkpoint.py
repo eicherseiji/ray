@@ -176,6 +176,14 @@ class TestCheckpointConfig:
         ):
             CheckpointConfig(id_column, local_path)
 
+    def test_override_backend_emits_deprecation_warning(self):
+        with pytest.warns(FutureWarning, match="deprecated"):
+            CheckpointConfig(
+                "id",
+                "s3://bucket/path",
+                override_backend=CheckpointBackend.FILE_STORAGE,
+            )
+
     def test_default_checkpoint_path(self, s3_path, monkeypatch):
         with pytest.raises(
             InvalidCheckpointingConfig,

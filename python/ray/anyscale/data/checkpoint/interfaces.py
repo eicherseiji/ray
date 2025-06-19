@@ -1,5 +1,6 @@
 import abc
 import os
+import warnings
 from enum import Enum
 from typing import Optional, Tuple
 
@@ -119,6 +120,13 @@ class CheckpointConfig:
             raise InvalidCheckpointingConfig(
                 "Checkpoint ID column must be as an non-empty string, "
                 f"but got {self.id_column}"
+            )
+
+        if override_backend is not None:
+            warnings.warn(
+                "`override_backend` is deprecated and will be removed in August 2025.",
+                FutureWarning,
+                stacklevel=2,
             )
 
         self.checkpoint_path: str = (
