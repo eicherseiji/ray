@@ -842,6 +842,9 @@ class AnyscaleReplica(ReplicaBase):
             self._user_callable_initialized
         ), "Replica server should only be started *after* the replica is initialized."
 
+        if self._route_prefix and self._route_prefix != "/":
+            scope["root_path"] = self._route_prefix
+
         if scope.get("path", "") in ["/-/healthz", "/-/routes"]:
             healthy, message = await self._dataplane_health_check()
             for msg in convert_object_to_asgi_messages(

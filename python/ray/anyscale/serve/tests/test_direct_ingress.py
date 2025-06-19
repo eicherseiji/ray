@@ -235,7 +235,7 @@ def test_fastapi_app(_skip_if_ff_not_enabled, serve_instance):
 
     # Test POST /{wildcard}.
     for http_url in http_urls:
-        r = httpx.post(f"{http_url}foobar")
+        r = httpx.post(f"{http_url}/foobar")
         assert r.status_code == 201
         assert r.text == "Hello from foobar!"
 
@@ -1251,7 +1251,7 @@ class TestDirectIngressBackpressure:
             wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 1)
 
             # Health check should still pass during backpressure
-            hc_response = httpx.get(f"{http_url}-/healthz")
+            hc_response = httpx.get(f"{http_url}/-/healthz")
             assert hc_response.status_code == 200
             assert hc_response.text == "OK"
 
@@ -1260,7 +1260,7 @@ class TestDirectIngressBackpressure:
 
             # Health check should fail even during backpressure
             def _check_unhealthy():
-                hc_response = httpx.get(f"{http_url}-/healthz")
+                hc_response = httpx.get(f"{http_url}/-/healthz")
                 assert hc_response.status_code == 503
                 assert hc_response.text == "UNHEALTHY"
                 return True
