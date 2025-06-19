@@ -868,7 +868,7 @@ class AnyscaleReplica(ReplicaBase):
             )
 
         headers = dict(scope["headers"])
-        request_id = headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8"))
+        request_id = str(headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8")))
         request_metadata = RequestMetadata(
             request_id=request_id or generate_request_id(),
             internal_request_id=generate_request_id(),
