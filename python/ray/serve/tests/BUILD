@@ -435,3 +435,22 @@ py_test_module_list(
         "//python/ray/serve:serve_lib",
     ],
 )
+
+py_test_module_list(
+    size = "medium",
+    data = glob(["tests/fixtures/*.*"]),
+    env = {"ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS": "1"},
+    files = [
+        "test_fastapi.py",
+        "test_streaming_response.py",
+    ],
+    name_suffix = "_with_direct_ingress_enabled",
+    tags = [
+        "exclusive",
+        "team:serve",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)

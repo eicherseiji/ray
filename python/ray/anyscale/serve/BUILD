@@ -71,6 +71,7 @@ py_test_module_list(
     env = {"ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS": "1"},
     files = [
         "tests/test_direct_ingress.py",
+        "tests/test_tracing_utils.py",
     ],
     name_suffix = "_with_direct_ingress_enabled",
     tags = [
