@@ -10,7 +10,6 @@ import grpc
 
 import ray
 from ray import cloudpickle
-from ray.anyscale.serve.context import _add_in_flight_request, _remove_in_flight_request
 from ray.exceptions import ActorUnavailableError, RayTaskError
 from ray.serve._private.common import RequestMetadata
 from ray.serve._private.constants import SERVE_LOGGER_NAME
@@ -81,11 +80,11 @@ class gRPCReplicaResult(ReplicaResult):
         # Keep track of in-flight requests.
         self._response_id = generate_request_id()
         request_context = ray.serve.context._get_serve_request_context()
-        _add_in_flight_request(
-            request_context._internal_request_id, self._response_id, self._call
+        ray.serve.context._add_in_flight_request(
+            request_context._internal_request_id, self._response_id, self
         )
-        self._call.add_done_callback(
-            lambda _: _remove_in_flight_request(
+        self.add_done_callback(
+            lambda _: ray.serve.context._remove_in_flight_request(
                 request_context._internal_request_id, self._response_id
             )
         )

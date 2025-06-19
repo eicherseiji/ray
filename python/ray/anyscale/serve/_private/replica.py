@@ -39,7 +39,7 @@ from ray.serve._private.http_util import (
     start_asgi_http_server,
     MessageQueue,
 )
-from ray.anyscale.serve.context import _get_in_flight_requests
+from ray.serve.context import _get_in_flight_requests
 from ray.anyscale.serve.utils import asyncio_grpc_exception_handler
 from ray.serve._private.common import (
     RequestProtocol,
@@ -513,10 +513,11 @@ class AnyscaleReplica(ReplicaBase):
         for task in requests_pending_assignment.values():
             task.cancel()
 
-        # Cancel child gRPC requests that have already been assigned
+        # Cancel child requests that have already been assigned.
+        # This is for gRPC requests and direct ingress requests.
         in_flight_requests = _get_in_flight_requests(metadata.internal_request_id)
-        for call in in_flight_requests.values():
-            call.cancel()
+        for replica_result in in_flight_requests.values():
+            replica_result.cancel()
 
     def _on_request_failed(self, request_metadata: RequestMetadata, e: Exception):
         if ray.util.pdb._is_ray_debugger_post_mortem_enabled():
@@ -572,6 +573,8 @@ class AnyscaleReplica(ReplicaBase):
                 app_name=self._deployment_id.app_name,
                 multiplexed_model_id=request_metadata.multiplexed_model_id,
                 grpc_context=request_metadata.grpc_context,
+                cancel_on_parent_request_cancel=self._ingress
+                and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
             )
         )
 

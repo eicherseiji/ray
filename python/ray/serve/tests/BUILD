@@ -442,6 +442,8 @@ py_test_module_list(
     env = {"ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS": "1"},
     files = [
         "test_fastapi.py",
+        "test_handle_cancellation.py",
+        "test_http_cancellation.py",
         "test_streaming_response.py",
     ],
     name_suffix = "_with_direct_ingress_enabled",
