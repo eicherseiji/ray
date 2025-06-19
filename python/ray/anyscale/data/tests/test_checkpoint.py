@@ -2,32 +2,44 @@ import csv
 import os
 import random
 from typing import List
+from unittest.mock import MagicMock
 
 import pandas as pd
-import pytest
 import pyarrow
+import pytest
 from pyarrow.fs import FileSelector, LocalFileSystem
 from pytest_lazy_fixtures import lf as lazy_fixture
 
 import ray
 from ray._common.test_utils import wait_for_condition
-from ray.anyscale.data._internal.execution.rules.insert_checkpointing import (
-    InsertCheckpointingLayerRule,
+from ray.anyscale.data._internal.logical.operators.read_files_operator import (
+    ReadFiles,
 )
+from ray.anyscale.data._internal.planner.checkpoint import (
+    plan_from_op_with_checkpoint_filter,
+    plan_read_files_op_with_checkpoint_filter,
+    plan_read_op_with_checkpoint_filter,
+    plan_write_op_with_checkpoint_writer,
+)
+from ray.anyscale.data._internal.readers import FileReader
 from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointBackend,
     CheckpointConfig,
     InvalidCheckpointingConfig,
-    InvalidCheckpointingOperators,
 )
 from ray.data._internal.datasource.csv_datasource import CSVDatasource
 from ray.data._internal.datasource.parquet_datasink import ParquetDatasink
+from ray.data._internal.execution.operators.input_data_buffer import (
+    InputDataBuffer,
+)
 from ray.data._internal.logical.interfaces.logical_plan import LogicalPlan
-from ray.data._internal.logical.operators.all_to_all_operator import Sort
+from ray.data._internal.logical.operators.from_operators import AbstractFrom
+from ray.data._internal.logical.operators.input_data_operator import InputData
 from ray.data._internal.logical.operators.read_operator import Read
 from ray.data._internal.logical.operators.write_operator import Write
-from ray.data._internal.logical.optimizers import LogicalOptimizer, get_execution_plan
-from ray.data._internal.planner.planner import Planner
+from ray.data._internal.logical.optimizers import get_execution_plan
+from ray.data.datasource import Datasink
+from ray.data.datasource.datasource import Datasource
 from ray.data.datasource.path_util import _unwrap_protocol
 from ray.data.tests.conftest import *  # noqa
 from ray.tests.conftest import *  # noqa
@@ -252,87 +264,6 @@ class TestCheckpointConfig:
         assert config.backend is CheckpointBackend.CLOUD_OBJECT_STORAGE
 
 
-class TestInsertCheckpointingLayerRule:
-    """Unit tests for `InsertCheckpointingLayerRule`."""
-
-    def test_disallowed_op(
-        self, ray_start_10_cpus_shared, generate_sample_data_csv, tmp_path
-    ):
-        ctx = ray.data.DataContext.get_current()
-
-        # Generate a sample PhysicalPlan.
-        datasource = CSVDatasource(generate_sample_data_csv)
-        read_op = Read(datasource, datasource, -1, None)
-
-        # Sort op is not allowed for checkpointing.
-        sort_op = Sort(read_op, "id")
-        write_path = os.path.join(tmp_path, "output")
-        write_op = Write(sort_op, ParquetDatasink(write_path))
-        logical_plan = LogicalPlan(write_op, ctx)
-        optimized_logical_plan = LogicalOptimizer().optimize(logical_plan)
-        physical_plan = Planner().plan(optimized_logical_plan)
-
-        ckpt_path = os.path.join(tmp_path, "test_checkpoint_output_files")
-        ctx.checkpoint_config = CheckpointConfig(
-            "id",
-            ckpt_path,
-        )
-
-        with pytest.raises(InvalidCheckpointingOperators, match="Sort"):
-            InsertCheckpointingLayerRule().apply(physical_plan)
-
-    def test__insert_read_filter_checkpoint(
-        self,
-        ray_start_10_cpus_shared,
-        generate_sample_physical_plan,
-        tmp_path,
-    ):
-        checkpoint_config = CheckpointConfig(
-            "id",
-            os.path.join(tmp_path, "ckpt"),
-        )
-
-        rule = InsertCheckpointingLayerRule()
-        new_plan = rule._insert_read_filter_checkpoint(
-            generate_sample_physical_plan, checkpoint_config
-        )
-
-        # Check that a MapTransform was inserted with
-        # filter_checkpointed_rows_for_blocks.
-        read_op = new_plan.dag.input_dependency
-        new_transform_fns = read_op._map_transformer._transform_fns
-        assert any(
-            "filter_checkpointed_rows_for_blocks" in str(fn) for fn in new_transform_fns
-        )
-
-    def test__insert_write_checkpoint(
-        self,
-        ray_start_10_cpus_shared,
-        generate_sample_physical_plan,
-        tmp_path,
-    ):
-        ctx = ray.data.DataContext.get_current()
-        ctx.checkpoint_config = CheckpointConfig(
-            "id",
-            os.path.join(tmp_path, "ckpt"),
-        )
-
-        physical_plan = generate_sample_physical_plan
-        physical_plan._context = ctx
-
-        rule = InsertCheckpointingLayerRule()
-        new_plan, checkpoint_supported = rule._insert_write_checkpoint(
-            physical_plan, ctx.checkpoint_config
-        )
-
-        assert checkpoint_supported
-
-        # Check that a MapTransform was inserted with
-        # write_checkpoint_for_block.
-        new_transform_fns = new_plan.dag._map_transformer._transform_fns
-        assert any("write_checkpoint_for_block" in str(fn) for fn in new_transform_fns)
-
-
 @pytest.mark.parametrize("read_code_path", ["runtime", "oss_fallback"])
 @pytest.mark.parametrize(
     "backend,fs,data_path",
@@ -492,7 +423,17 @@ def test_full_dataset_executed_for_non_write(
     assert ds2.count() == count_before_write
 
 
-@pytest.mark.parametrize("read_code_path", ["runtime", "oss_fallback"])
+@pytest.mark.parametrize(
+    "ds_factory",
+    [
+        lambda max_num_items: ray.data.range(
+            max_num_items, override_num_blocks=max_num_items
+        ),
+        lambda max_num_items: ray.data.from_items(
+            [{"id": i} for i in range(max_num_items)], override_num_blocks=max_num_items
+        ),
+    ],
+)
 @pytest.mark.parametrize(
     "backend,fs,data_path",
     [
@@ -522,7 +463,7 @@ def test_full_dataset_executed_for_non_write(
 )
 def test_recovery_skips_checkpointed_rows(
     ray_start_10_cpus_shared,
-    read_code_path,
+    ds_factory,
     backend,
     fs,
     data_path,
@@ -584,12 +525,7 @@ def test_recovery_skips_checkpointed_rows(
             return checkpointed_ids == set(range(self._max_num_items // 2))
 
     max_num_items = 10
-    if read_code_path == "runtime":
-        ds = ray.data.range(max_num_items, override_num_blocks=max_num_items)
-    elif read_code_path == "oss_fallback":
-        ds = ray.data.read_api.range(max_num_items, override_num_blocks=max_num_items)
-    else:
-        raise ValueError(f"Invalid `read_code_path`: {read_code_path}")
+    ds = ds_factory(max_num_items)
     ds = ds.map_batches(
         FailActor,
         fn_constructor_args=[coordinator_actor, max_num_items, ctx.checkpoint_config],
@@ -719,6 +655,69 @@ def test_dict_checkpoint_config():
     assert (
         context.checkpoint_config.backend == CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW
     )
+
+
+class TestPlanner:
+    def test_plan_from_op_with_checkpoint_filter(self):
+        op = AbstractFrom([], [])
+
+        physical_op = plan_from_op_with_checkpoint_filter(
+            op, [], ray.data.DataContext.get_current()
+        )
+
+        # TODO: (Here and elsewhere) testing against representations is brittle. We
+        # should expose a seam to enable more explicit testing.
+        assert "FilterCheckpointedRows" in physical_op.dag_str
+
+    def test_plan_read_files_op_with_checkpoint_filter(self):
+        input_data = InputData([])
+        op = ReadFiles(
+            input_data, reader=MagicMock(spec=FileReader), filesystem=MagicMock()
+        )
+
+        input_data_buffer = InputDataBuffer(ray.data.DataContext.get_current(), [])
+        physical_op = plan_read_files_op_with_checkpoint_filter(
+            op, [input_data_buffer], ray.data.DataContext.get_current()
+        )
+
+        assert "filter_checkpointed_rows" in str(
+            physical_op._map_transformer._transform_fns
+        )
+
+    def test_plan_read_op_with_checkpoint_filter(self):
+        op = Read(MagicMock(spec=Datasource), None, -1, None)
+
+        physical_op = plan_read_op_with_checkpoint_filter(
+            op, [], ray.data.DataContext.get_current()
+        )
+
+        assert "filter_checkpointed_rows" in str(
+            physical_op._map_transformer._transform_fns
+        )
+
+    def test_plan_write_op_with_checkpoint_writer(self):
+        class FakeDatasink(Datasink):
+            def write(self, blocks, ctx):
+                return None
+
+        # Configure checkpointing.
+        ctx = ray.data.DataContext.get_current()
+        ctx.checkpoint_config = CheckpointConfig("id", "/tmp/checkpoint")
+
+        # Construct a logical DAG.
+        input_data = InputData([])
+        op = Write(input_data, FakeDatasink())
+
+        # Plan the physical DAG.
+        input_data_buffer = InputDataBuffer(ray.data.DataContext.get_current(), [])
+        physical_op = plan_write_op_with_checkpoint_writer(
+            op, [input_data_buffer], ray.data.DataContext.get_current()
+        )
+
+        # Verify that the checkpoint writer is inserted.
+        assert "write_checkpoint_for_block" in str(
+            physical_op._map_transformer._transform_fns
+        )
 
 
 if __name__ == "__main__":

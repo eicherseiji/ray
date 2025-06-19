@@ -34,10 +34,10 @@ class ReadFiles(SourceOperator, AbstractMap):
         reader: FileReader,
         filesystem,
         filter_expr: Optional["pd.Expression"] = None,
-        columns: Optional[List[str]],
+        columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
-        ray_remote_args: Dict[str, Any],
-        concurrency: Optional[int],
+        ray_remote_args: Optional[Dict[str, Any]] = None,
+        concurrency: Optional[int] = None,
     ):
         super().__init__(
             name="ReadFiles",
