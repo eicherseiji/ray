@@ -53,6 +53,8 @@ class DataContextMixin:
         DEFAULT_TARGET_MAX_BLOCK_SIZE * DEFAULT_NUM_BLOCKS_PER_READ_TASK
     )
 
+    use_polars_join: bool = True
+
     @property
     def checkpoint_config(self) -> Optional[CheckpointConfig]:
         """Get the checkpoint configuration."""
