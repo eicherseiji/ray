@@ -3,14 +3,19 @@ import inspect
 import logging
 import pickle
 import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from functools import wraps
-from typing import Any, AsyncGenerator, Callable, Generator, Optional, Tuple
-from collections import deque
+from typing import (
+    Any,
+    AsyncGenerator,
+    Callable,
+    List,
+    Optional,
+    Tuple,
+)
 
 import grpc
 from ray.serve._private.proxy_request_response import ResponseStatus
-from ray.serve._private.request_router.common import PendingRequest
 from ray.serve.config import HTTPOptions, gRPCOptions
 from starlette.types import Receive, Scope, Send
 
@@ -24,6 +29,7 @@ from ray.anyscale.serve._private.constants import (
 from ray.anyscale.serve._private.tracing_utils import (
     TraceContextManager,
     extract_propagated_context,
+    is_tracing_enabled,
     set_http_span_attributes,
     set_rpc_span_attributes,
     set_span_attributes,
@@ -31,7 +37,6 @@ from ray.anyscale.serve._private.tracing_utils import (
     setup_tracing,
 )
 from ray.serve.generated.serve_pb2 import HealthzResponse, ListApplicationsResponse
-from ray.serve._private.grpc_util import start_grpc_server
 from ray.serve._private.http_util import (
     convert_object_to_asgi_messages,
     get_http_response_status,
@@ -71,6 +76,7 @@ from ray.serve.grpc_util import (
 from ray.serve._private.grpc_util import (
     get_grpc_response_status,
     set_grpc_code_and_details,
+    start_grpc_server,
 )
 
 
@@ -159,99 +165,6 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
         ) or super().should_collect_metrics()
 
 
-class RequestQueue:
-    def __init__(
-        self,
-        max_queued_requests: int,
-        event_loop: asyncio.AbstractEventLoop,
-        replica: ReplicaBase,
-    ):
-        self._max_queued_requests = max_queued_requests
-        self._queue: deque[PendingRequest] = deque()
-        self._event_loop = event_loop
-        self._replica = replica
-        self._shutdown = False
-        self._queue_not_empty = asyncio.Event()
-
-        self._processor_task = self._event_loop.create_task(self._process_queue())
-
-    def notify_capacity_available(self):
-        self._queue_not_empty.set()
-
-    def try_enqueue(
-        self, request_metadata: RequestMetadata, *args, **kwargs
-    ) -> Optional[PendingRequest]:
-        if self._shutdown or (
-            self._max_queued_requests != -1
-            and self.get_queue_length() >= self._max_queued_requests
-        ):
-            return None
-
-        pending = PendingRequest(metadata=request_metadata, args=args, kwargs=kwargs)
-        self._queue.append(pending)
-
-        # Notify the processor
-        self._queue_not_empty.set()
-
-        return pending
-
-    async def _process_queue(self):
-        while not self._shutdown:
-            # event will be set when one of two things happen:
-            # 1. a new request is enqueued
-            # 2. a request has finished processing
-            await self._queue_not_empty.wait()
-            self._queue_not_empty.clear()
-
-            while self._queue:
-                # Remove cancelled futures
-                while self._queue and self._queue[0].future.cancelled():
-                    self._queue.popleft()
-
-                if not self._queue:
-                    break
-
-                req = self._queue[0]
-                processed = await self._try_process_request(req)
-                if processed:
-                    self._queue.popleft()
-                else:
-                    # Wait until another enqueue or capacity signal
-                    break
-
-    async def _try_process_request(self, queued_request: PendingRequest) -> bool:
-        try:
-            result_gen = self._replica.handle_request_with_rejection(
-                queued_request.metadata, *queued_request.args, **queued_request.kwargs
-            )
-            first_result = await result_gen.__anext__()
-
-            if (
-                isinstance(first_result, ReplicaQueueLengthInfo)
-                and first_result.accepted
-            ):
-                if not queued_request.future.done():
-                    queued_request.future.set_result(result_gen)
-                return True
-            return False
-        except Exception as e:
-            if not queued_request.future.done():
-                queued_request.future.set_exception(e)
-            return True
-
-    def get_queue_length(self) -> int:
-        return len(self._queue)
-
-    def shutdown(self):
-        self._shutdown = True
-        if not self._processor_task.done():
-            self._processor_task.cancel()
-        while self._queue:
-            req = self._queue.popleft()
-            if not req.future.done():
-                req.future.cancel()
-
-
 class AnyscaleReplica(ReplicaBase):
     def __init__(self, **kwargs):
         self._server = grpc.aio.server(
@@ -267,13 +180,6 @@ class AnyscaleReplica(ReplicaBase):
         self._direct_ingress_grpc_server_task: Optional[asyncio.Task] = None
 
         super().__init__(**kwargs)
-
-        # Initialize request queue
-        self._request_queue = RequestQueue(
-            replica=self,
-            max_queued_requests=self._deployment_config.max_queued_requests,
-            event_loop=self._event_loop,
-        )
 
         # Silence spammy false positive errors from gRPC Python
         self._event_loop.set_exception_handler(asyncio_grpc_exception_handler)
@@ -302,87 +208,11 @@ class AnyscaleReplica(ReplicaBase):
         self._http_options: Optional[HTTPOptions] = None
         self._grpc_options: Optional[gRPCOptions] = None
 
-    def get_total_requests(self):
-        return (
-            self._metrics_manager.get_num_ongoing_requests()
-            + self._request_queue.get_queue_length()
-        )
+        self._num_queued_requests = 0
 
-    async def handle_request_with_rejection_and_queueing(
-        self, request_metadata: RequestMetadata, *request_args, **request_kwargs
-    ):
-        # immediately try to service the request, short-circuit before queuing
-        result_gen = self.handle_request_with_rejection(
-            request_metadata, *request_args, **request_kwargs
-        )
-        first_result: ReplicaQueueLengthInfo = await result_gen.__anext__()
-        # if the request was accepted, we can yield the result immediately
-        if isinstance(first_result, ReplicaQueueLengthInfo) and first_result.accepted:
-            yield first_result
-            async for result in result_gen:
-                yield result
-            self._request_queue.notify_capacity_available()
-            return
-
-        # if the request was rejected, we need to queue it
-        queued_request = self._request_queue.try_enqueue(
-            request_metadata, *request_args, **request_kwargs
-        )
-
-        if queued_request is None:
-            # Queue is full, reject the request
-            yield ReplicaQueueLengthInfo(
-                accepted=False,
-                num_ongoing_requests=self.get_total_requests(),
-            )
-            return
-
-        # Request was successfully queued
-        yield ReplicaQueueLengthInfo(
-            accepted=True,
-            num_ongoing_requests=self.get_total_requests(),
-        )
-
-        try:
-            # Wait for the queued request to be processed
-            result_gen = await queued_request.future
-            async for result in result_gen:
-                yield result
-        finally:
-            # notify capacity available when the request is done
-            # or when the request is cancelled
-            self._request_queue.notify_capacity_available()
-
-    async def _drain_ongoing_requests(self):
-        """Wait for any ongoing requests to finish.
-
-        Sleep for a grace period before the first time we check the number of ongoing
-        requests to allow the notification to remove this replica to propagate to
-        callers first.
-        """
-        # TODO(abrar): upstream code needs to be refactored for avoiding code duplication
-        if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
-            await super()._drain_ongoing_requests()
-            return
-
-        wait_loop_period_s = self._deployment_config.graceful_shutdown_wait_loop_s
-        while True:
-            await asyncio.sleep(wait_loop_period_s)
-
-            num_ongoing_requests = self._metrics_manager.get_num_ongoing_requests()
-            num_queued_requests = self._request_queue.get_queue_length()
-            if self.get_total_requests() > 0:
-                logger.info(
-                    f"Waiting for an additional {wait_loop_period_s}s to shut down "
-                    f"because there are {num_ongoing_requests} ongoing requests "
-                    f"and {num_queued_requests} queued requests."
-                )
-            else:
-                logger.info(
-                    "Graceful shutdown complete; replica exiting.",
-                    extra={"log_to_stderr": False},
-                )
-                break
+    @property
+    def max_queued_requests(self) -> int:
+        return self._deployment_config.max_queued_requests
 
     async def _maybe_start_direct_ingress_servers(self):
         if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
@@ -523,16 +353,20 @@ class AnyscaleReplica(ReplicaBase):
         if ray.util.pdb._is_ray_debugger_post_mortem_enabled():
             ray.util.pdb._post_mortem()
 
-    @contextmanager
-    def _wrap_user_method_call(
-        self, request_metadata: RequestMetadata, request_args: Tuple[Any]
-    ) -> Generator[StatusCodeCallback, None, None]:
-        """Context manager that wraps user method calls.
+    def _can_accept_request(self):
+        if self._ingress and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+            limit = self.max_queued_requests
+            if limit != -1 and self._num_queued_requests >= limit:
+                return False
 
-        1) Sets the request context var with appropriate metadata.
-        2) Records the access log message (if not disabled).
-        3) Records per-request metrics via the metrics manager.
-        """
+            return True
+        else:
+            return super()._can_accept_request()
+
+    @contextmanager
+    def _request_context(
+        self, request_metadata: RequestMetadata, request_args: Tuple[Any]
+    ):
         # TODO (abrar): for http requests on ASGI, request_metadata.call_method is __call__
         #   this is not nice, figure out a better way to map this to method name.
         call_method = request_metadata.call_method
@@ -545,7 +379,6 @@ class AnyscaleReplica(ReplicaBase):
             request_metadata.route = self._maybe_get_http_route(
                 request_metadata, request_args
             )
-
             trace_attributes = {
                 "request_id": request_metadata.request_id,
                 "replica_id": self._replica_id.unique_id,
@@ -557,12 +390,32 @@ class AnyscaleReplica(ReplicaBase):
                 "is_streaming": request_metadata.is_streaming,
             }
             set_span_attributes(trace_attributes)
-
             self._set_request_context(request_metadata)
-            with self._handle_errors_and_metrics(
-                request_metadata, request_args
-            ) as status_code_callback:
-                yield status_code_callback
+            yield
+
+    @asynccontextmanager
+    async def _wrap_user_method_call(
+        self, request_metadata: RequestMetadata, request_args: Tuple[Any]
+    ) -> AsyncGenerator[StatusCodeCallback, None]:
+        """Context manager that wraps user method calls.
+
+        1) Sets the request context var with appropriate metadata.
+        2) Records the access log message (if not disabled).
+        3) Records per-request metrics via the metrics manager.
+        """
+        async with self._start_request():
+            with self._request_context(request_metadata, request_args):
+                with self._handle_errors_and_metrics(
+                    request_metadata, request_args
+                ) as status_code_callback:
+                    yield status_code_callback
+
+    @asynccontextmanager
+    async def _start_request(self):
+        self._num_queued_requests += 1
+        async with self._semaphore:
+            self._num_queued_requests -= 1
+            yield
 
     def _set_request_context(self, request_metadata: RequestMetadata):
         ray.serve.context._serve_request_context.set(
@@ -592,6 +445,7 @@ class AnyscaleReplica(ReplicaBase):
         http_method = self._maybe_get_http_method(request_metadata, request_args)
         http_route = request_metadata.route
         call_method = request_metadata.call_method
+
         if request_metadata.is_http_request:
             set_http_span_attributes(
                 method=http_method,
@@ -695,6 +549,23 @@ class AnyscaleReplica(ReplicaBase):
 
         return healthy, message
 
+    def get_grpc_tracing_context(self, context: grpc._cython.cygrpc._ServicerContext):
+        """Populate tracing context for gRPC requests.
+
+        This method extracts the "traceparent" metadata from the request headers and
+        sets the tracing context from it.
+        """
+        if not is_tracing_enabled():
+            return
+
+        tracing_ctx = {}
+        for key, value in context.invocation_metadata():
+            if key in ("traceparent", "tracestate"):
+                tracing_ctx = tracing_ctx or {}
+                tracing_ctx[key] = value
+
+        return tracing_ctx
+
     async def _direct_ingress_unary_unary(
         self,
         service_method: str,
@@ -719,10 +590,19 @@ class AnyscaleReplica(ReplicaBase):
             context.set_details(message)
             return ListApplicationsResponse(application_names=[]).SerializeToString()
 
+        request_id = generate_request_id()
+        if not self._can_accept_request():
+            status = ResponseStatus(
+                code=grpc.StatusCode.RESOURCE_EXHAUSTED,
+                message="Request dropped due to backpressure",
+            )
+            set_grpc_code_and_details(context, status)
+            return
+
         c = RayServegRPCContext(context)
         request_metadata = RequestMetadata(
             # TODO: pick up the request ID from gRPC initial metadata.
-            request_id=generate_request_id(),
+            request_id=request_id,
             internal_request_id=generate_request_id(),
             call_method=service_method.split("/")[-1],
             _request_protocol=RequestProtocol.GRPC,
@@ -730,51 +610,58 @@ class AnyscaleReplica(ReplicaBase):
             app_name=self._deployment_id.app_name,
             # TODO(edoakes): populate this.
             multiplexed_model_id="",
-        )
-        result_gen = self.handle_request_with_rejection_and_queueing(
-            request_metadata, gRPCRequest(request_proto)
+            route=self._deployment_id.app_name,
+            tracing_context=self.get_grpc_tracing_context(context),
+            is_streaming=False,
         )
 
-        # Use the generic disconnect detecting wrapper
-        replica_response_generator = ReplicaResponseGenerator(
-            result_gen,
-            timeout_s=self._grpc_options.request_timeout_s,
-        )
-        queue_len_info: ReplicaQueueLengthInfo = (
-            await replica_response_generator.__anext__()
-        )
-        # TODO(edoakes): update the behavior to more closely mimic the existing path:
-        # add an internal queue and drop requests based on max_queued_requests.
-        if not queue_len_info.accepted:
-            status = ResponseStatus(
-                code=grpc.StatusCode.RESOURCE_EXHAUSTED,
-                message="Replica exceeded capacity of max_ongoing_requests.",
+        grpc_request = gRPCRequest(request_proto)
+        request_args = (grpc_request,)
+        request_kwargs = {}
+
+        async def call_unary():
+            yield await asyncio.wrap_future(
+                self._user_callable_wrapper.call_user_method(
+                    request_metadata, request_args, request_kwargs
+                )
             )
-            set_grpc_code_and_details(context, status)
-            return
 
-        self._set_request_context(request_metadata)
-        try:
-            result = await replica_response_generator.__anext__()
-            c._set_on_grpc_context(context)
-            status = ResponseStatus(code=grpc.StatusCode.OK)
+        async with self._wrap_user_method_call(request_metadata, request_args):
+            result_gen = call_unary()
 
-            # NOTE(edoakes): we need to fully consume the generator otherwise the
-            # finalizers that run after the `yield` statement won't run. There might
-            # be a cleaner way to structure this.
+            # Use the generic disconnect detecting wrapper
+            replica_response_generator = ReplicaResponseGenerator(
+                result_gen,
+                timeout_s=self._grpc_options.request_timeout_s,
+            )
             try:
-                await replica_response_generator.__anext__()
-            except StopAsyncIteration:
-                pass
-        except BaseException as e:
-            status = get_grpc_response_status(
-                e, self._grpc_options.request_timeout_s, request_metadata.request_id
-            )
-            return
-        finally:
-            set_grpc_code_and_details(context, status)
+                result = await replica_response_generator.__anext__()
+                c._set_on_grpc_context(context)
+                status = ResponseStatus(code=grpc.StatusCode.OK)
 
-        return result.SerializeToString()
+                # NOTE(edoakes): we need to fully consume the generator otherwise the
+                # finalizers that run after the `yield` statement won't run. There might
+                # be a cleaner way to structure this.
+                try:
+                    await replica_response_generator.__anext__()
+                except StopAsyncIteration:
+                    pass
+            except BaseException as e:
+                status = get_grpc_response_status(
+                    e, self._grpc_options.request_timeout_s, request_metadata.request_id
+                )
+                set_rpc_span_attributes(
+                    system=RequestProtocol.GRPC,
+                    method=request_metadata.call_method,
+                    status_code=status.code.name,
+                    service=self._deployment_id.name,
+                )
+                set_span_exception(e, escaped=True)
+                return
+            finally:
+                set_grpc_code_and_details(context, status)
+
+            return result.SerializeToString()
 
     async def _direct_ingress_unary_stream(
         self,
@@ -829,6 +716,24 @@ class AnyscaleReplica(ReplicaBase):
             # immediately: https://github.com/ray-project/ray/issues/38368.
             queue.close()
 
+    def get_asgi_tracing_context(self, headers: List[Tuple[bytes, bytes]]):
+        """Extract tracing context from ASGI request headers.
+
+        This method extracts both "traceparent" and "tracestate" headers from the
+        request headers to maintain proper trace context propagation.
+        """
+        if not is_tracing_enabled():
+            return None
+
+        tracing_ctx = None
+        for key, value in headers:
+            key_str = key.decode()
+            if key_str in ("traceparent", "tracestate"):
+                tracing_ctx = tracing_ctx or {}
+                tracing_ctx[key_str] = value.decode()
+
+        return tracing_ctx
+
     async def _direct_ingress_asgi(
         self,
         scope: Scope,
@@ -857,6 +762,19 @@ class AnyscaleReplica(ReplicaBase):
                 await send(msg)
             return
 
+        headers = dict(scope["headers"])
+        request_id = (
+            headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8"))
+            or generate_request_id()
+        )
+        if not self._can_accept_request():
+            for msg in convert_object_to_asgi_messages(
+                "Request dropped due to backpressure",
+                status_code=503,
+            ):
+                await send(msg)
+            return
+
         receive_queue = MessageQueue()
         proxy_asgi_receive_task = self._event_loop.create_task(
             self._proxy_asgi_receive(receive, receive_queue)
@@ -870,10 +788,8 @@ class AnyscaleReplica(ReplicaBase):
                 )
             )
 
-        headers = dict(scope["headers"])
-        request_id = str(headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8")))
         request_metadata = RequestMetadata(
-            request_id=request_id or generate_request_id(),
+            request_id=request_id,
             internal_request_id=generate_request_id(),
             call_method="__call__",
             # TODO(edoakes): populate this.
@@ -883,56 +799,37 @@ class AnyscaleReplica(ReplicaBase):
             multiplexed_model_id="",
             is_streaming=True,
             _request_protocol=RequestProtocol.HTTP,
+            tracing_context=self.get_asgi_tracing_context(scope["headers"]),
         )
         http_request = StreamingHTTPRequest(
             asgi_scope=scope,
             receive_asgi_messages=receive_thread_safe,
         )
 
+        request_args = (http_request,)
+        request_kwargs = {}
+        response_started = False
         try:
-            result_gen = self.handle_request_with_rejection_and_queueing(
-                request_metadata, http_request
-            )
+            async with self._wrap_user_method_call(
+                request_metadata, request_args
+            ) as status_code_callback:
+                if proxy_asgi_receive_task.done():
+                    raise asyncio.CancelledError
 
-            # Use the generic disconnect detecting wrapper
-            replica_response_generator = ReplicaResponseGenerator(
-                result_gen,
-                disconnected_task=proxy_asgi_receive_task,
-                timeout_s=self._http_options.request_timeout_s,
-            )
-
-            # Get queue length info
-            queue_len_info: ReplicaQueueLengthInfo = (
-                await replica_response_generator.__anext__()
-            )
-
-            # Check if request was rejected
-            if not queue_len_info.accepted:
-                status = ResponseStatus(
-                    code=503,
-                    message="Replica exceeded capacity of max_ongoing_requests.",
-                    is_error=True,
+                result_gen = self._call_user_generator(
+                    request_metadata,
+                    request_args,
+                    request_kwargs,
+                    status_code_callback=status_code_callback,
                 )
-                for msg in send_http_response_on_exception(
-                    status,
-                    response_started=False,
-                ):
-                    await send(msg)
-                return
-            # TODO(abrar): The reason we need to set the request context here even though
-            # we already set it in _wrap_user_method_call is because the request context
-            # gets cleared in following situations:
-            # 1. when request is put into queue for background processing
-            # 2. When request is passed into ReplicaResponseGenerator, there we create
-            # a new task to handle each generator response.
-            # since the scope of contextvars is limited to the current task, we need to
-            # set the request context again here. Since this implementation is
-            # not obvious to the reader, and for good reasons, we should refactor this
-            # replica code to avoid doing this.
-            self._set_request_context(request_metadata)
 
-            response_started = False
-            try:
+                # Use the generic disconnect detecting wrapper
+                replica_response_generator = ReplicaResponseGenerator(
+                    result_gen,
+                    disconnected_task=proxy_asgi_receive_task,
+                    timeout_s=self._http_options.request_timeout_s,
+                )
+
                 # Stream the response
                 expecting_trailers = False
                 async for result in replica_response_generator:
@@ -959,14 +856,16 @@ class AnyscaleReplica(ReplicaBase):
                                 replica_response_generator.stop_checking_for_disconnect()
                         await send(msg)
                         response_started = True
-            except BaseException as e:
-                status = get_http_response_status(
-                    e, self._http_options.request_timeout_s, request_metadata.request_id
-                )
-                for asgi_message in send_http_response_on_exception(
-                    status, response_started
-                ):
-                    await send(asgi_message)
+        except BaseException as e:
+            status = get_http_response_status(
+                e,
+                self._http_options.request_timeout_s,
+                request_metadata.request_id,
+            )
+            for asgi_message in send_http_response_on_exception(
+                status, response_started
+            ):
+                await send(asgi_message)
         finally:
             if not proxy_asgi_receive_task.done():
                 proxy_asgi_receive_task.cancel()
@@ -974,7 +873,6 @@ class AnyscaleReplica(ReplicaBase):
     async def perform_graceful_shutdown(self):
         await super().perform_graceful_shutdown()
         # Shutdown the request queue
-        self._request_queue.shutdown()
         if self._direct_ingress_http_server_task:
             self._direct_ingress_http_server_task.cancel()
         if self._direct_ingress_grpc_server_task:

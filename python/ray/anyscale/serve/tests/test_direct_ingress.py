@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 from uuid import UUID
 import httpx
 import asyncio
+from starlette.requests import Request
 
 from fastapi import FastAPI
 from ray.serve._private.test_utils import (
@@ -14,7 +15,6 @@ from ray.serve._private.test_utils import (
     check_num_replicas_lte,
     send_signal_on_cancellation,
 )
-from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
 import ray

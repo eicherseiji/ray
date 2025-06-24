@@ -9,7 +9,11 @@ from unittest.mock import patch
 
 import grpc
 import pytest
-import requests
+from ray.anyscale.serve._private.constants import (
+    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+)
+from ray.serve._private.test_utils import get_application_url
+import httpx
 import starlette
 from starlette.requests import Request
 from starlette.responses import StreamingResponse
@@ -29,7 +33,7 @@ from ray.anyscale.serve._private.tracing_utils import (
 from ray.anyscale.serve.utils import get_trace_context
 from ray.serve._private.common import ServeComponentType
 from ray.serve._private.logging_utils import get_serve_logs_dir
-from ray.serve.config import gRPCOptions
+from ray.serve.config import HTTPOptions, gRPCOptions
 from ray.serve.generated import serve_pb2, serve_pb2_grpc
 from ray.serve.tests.conftest import *  # noqa
 from ray.tests.conftest import *  # noqa
@@ -323,6 +327,11 @@ def test_tracing_e2e(
                 return user_response
 
     if serve_application == "basic":
+        serve.start(
+            http_options=HTTPOptions(
+                host="0.0.0.0",
+            )
+        )
         serve.run(BasicModel.bind())
 
         setup_tracing(
@@ -334,10 +343,16 @@ def test_tracing_e2e(
             ctx = get_trace_context()
             headers = {}
             TraceContextTextMapPropagator().inject(headers, ctx)
-            r = requests.post("http://127.0.0.1:8000/", headers=headers)
+            url = get_application_url("HTTP")
+            r = httpx.post(f"{url}/", headers=headers)
             assert r.text == "hello"
 
     elif serve_application == "streaming":
+        serve.start(
+            http_options=HTTPOptions(
+                host="0.0.0.0",
+            )
+        )
         serve.run(StreamingModel.bind())
         setup_tracing(
             component_name="upstream_app",
@@ -348,12 +363,12 @@ def test_tracing_e2e(
             ctx = get_trace_context()
             headers = {}
             TraceContextTextMapPropagator().inject(headers, ctx)
-            r = requests.get("http://localhost:8000", stream=True, headers=headers)
-            r.raise_for_status()
-            for i, chunk in enumerate(
-                r.iter_content(chunk_size=None, decode_unicode=True)
-            ):
-                assert chunk == f"hello_{i}"
+            url = get_application_url("HTTP")
+
+            with httpx.stream("GET", f"{url}/", headers=headers) as r:
+                r.raise_for_status()
+                for i, chunk in enumerate(r.iter_text()):
+                    assert chunk == f"hello_{i}"
 
     elif serve_application == "grpc":
         grpc_port = 9000
@@ -383,7 +398,7 @@ def test_tracing_e2e(
             TraceContextTextMapPropagator().inject(headers, ctx)
             metadata = tuple(headers.items())
 
-            channel = grpc.insecure_channel("localhost:9000")
+            channel = grpc.insecure_channel(get_application_url("gRPC"))
 
             stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
             request = serve_pb2.UserDefinedMessage(name="foo", num=30, foo="bar")
@@ -417,14 +432,20 @@ def test_tracing_e2e(
     assert replica_filename and proxy_filename and upstream_filename
 
     upstream_spans = load_spans(os.path.join(spans_dir, upstream_filename))
-    proxy_spans = load_spans(os.path.join(spans_dir, proxy_filename))
+    if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+        proxy_spans = load_spans(os.path.join(spans_dir, proxy_filename))
+    else:
+        proxy_spans = []
     replica_spans = load_spans(os.path.join(spans_dir, replica_filename))
 
     entire_trace = replica_spans + proxy_spans + upstream_spans
     validate_span_associations_in_trace(entire_trace)
 
     expected_upstream_spans = load_json_fixture(expected_upstream_spans_path)
-    expected_proxy_spans = load_json_fixture(expected_proxy_spans_path)
+    if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+        expected_proxy_spans = load_json_fixture(expected_proxy_spans_path)
+    else:
+        expected_proxy_spans = []
     expected_replica_spans = load_json_fixture(expected_replica_spans_path)
 
     sanitize_spans(upstream_spans)
@@ -496,6 +517,11 @@ def test_tracing_e2e_with_errors(
 
     # Setup based on protocol
     if protocol == "http":
+        serve.start(
+            http_options=HTTPOptions(
+                host="0.0.0.0",
+            )
+        )
         serve.run(HttpErrorModel.bind())
 
         setup_tracing(component_name="upstream_app", component_id="345")
@@ -506,10 +532,16 @@ def test_tracing_e2e_with_errors(
             TraceContextTextMapPropagator().inject(headers, ctx)
 
             # Make HTTP request
-            response = requests.post("http://127.0.0.1:8000/", headers=headers)
+            url = get_application_url("HTTP")
+            response = httpx.post(f"{url}/", headers=headers)
             assert response.status_code == expected_status_code
 
     elif protocol == "streaming":
+        serve.start(
+            http_options=HTTPOptions(
+                host="0.0.0.0",
+            )
+        )
         serve.run(StreamingErrorModel.bind())
 
         setup_tracing(component_name="upstream_app", component_id="345")
@@ -519,10 +551,9 @@ def test_tracing_e2e_with_errors(
             headers = {}
             TraceContextTextMapPropagator().inject(headers, ctx)
 
-            response = requests.get(
-                "http://localhost:8000", stream=True, headers=headers
-            )
-            assert response.status_code == expected_status_code
+            url = get_application_url("HTTP")
+            with httpx.stream("GET", f"{url}/", headers=headers) as r:
+                assert r.status_code == expected_status_code
 
     elif protocol == "grpc":
         grpc_port = 9000
@@ -581,7 +612,10 @@ def test_tracing_e2e_with_errors(
     assert replica_filename and proxy_filename and upstream_filename
 
     # Load and check spans
-    proxy_spans = load_spans(os.path.join(spans_dir, proxy_filename))
+    if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+        proxy_spans = load_spans(os.path.join(spans_dir, proxy_filename))
+    else:
+        proxy_spans = []
     replica_spans = load_spans(os.path.join(spans_dir, replica_filename))
 
     # Verify error status in spans
@@ -698,6 +732,9 @@ def validate_span_associations_in_trace(spans):
             self.parent_id = _parent_id
             self.name = _name
 
+        def __repr__(self):
+            return f"Span(span_id={self.span_id}, parent_id={self.parent_id}, name={self.name})"
+
     span_nodes = {}
     starting_span = None
     for span in spans:
@@ -710,12 +747,10 @@ def validate_span_associations_in_trace(spans):
         if name == "application_span":
             assert starting_span is None, "Multiple starting spans found in trace"
             starting_span = new_span
-
     current_span = starting_span
     span_nodes.pop(current_span.span_id)
     while current_span:
         current_span = span_nodes.pop(current_span.parent_id, None)
-
     # All spans should have been visited.
     assert not span_nodes
 
