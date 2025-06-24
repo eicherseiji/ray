@@ -957,7 +957,7 @@ class AnyscaleReplica(ReplicaBase):
 
         headers = dict(scope["headers"])
         request_id = (
-            headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8"))
+            str(headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8")))
             or generate_request_id()
         )
         if not self._can_accept_request():
