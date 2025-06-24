@@ -1,7 +1,7 @@
 import csv
 import os
 import random
-from typing import List
+from typing import List, Type
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -22,9 +22,16 @@ from ray.anyscale.data._internal.planner.checkpoint import (
     plan_write_op_with_checkpoint_writer,
 )
 from ray.anyscale.data._internal.readers import FileReader
+from ray.anyscale.data.checkpoint.checkpoint_cloud_object_storage import (
+    CloudObjectStorageCheckpointWriter,
+)
+from ray.anyscale.data.checkpoint.checkpoint_file_storage import (
+    FileStorageCheckpointWriter,
+)
 from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointBackend,
     CheckpointConfig,
+    CheckpointWriter,
     InvalidCheckpointingConfig,
 )
 from ray.data._internal.datasource.csv_datasource import CSVDatasource
@@ -38,6 +45,7 @@ from ray.data._internal.logical.operators.input_data_operator import InputData
 from ray.data._internal.logical.operators.read_operator import Read
 from ray.data._internal.logical.operators.write_operator import Write
 from ray.data._internal.logical.optimizers import get_execution_plan
+from ray.data.block import BlockAccessor
 from ray.data.datasource import Datasink
 from ray.data.datasource.datasource import Datasource
 from ray.data.datasource.path_util import _unwrap_protocol
@@ -726,6 +734,30 @@ class TestPlanner:
         assert "write_checkpoint_for_block" in str(
             physical_op._map_transformer._transform_fns
         )
+
+
+@pytest.mark.parametrize(
+    "checkpoint_writer_cls",
+    [FileStorageCheckpointWriter, CloudObjectStorageCheckpointWriter],
+)
+def test_write_block_checkpoint_with_pandas_df(
+    checkpoint_writer_cls: Type[CheckpointWriter], restore_data_context, tmp_path
+):
+    ctx = ray.data.DataContext.get_current()
+    ctx.checkpoint_config = CheckpointConfig(
+        "id",
+        str(tmp_path),
+    )
+    checkpoint_writer = checkpoint_writer_cls(ctx.checkpoint_config)
+    df = pd.DataFrame({"id": [0]})
+
+    checkpoint_writer.write_block_checkpoint(BlockAccessor.for_block(df))
+
+    assert len(os.listdir(tmp_path)) == 1
+    checkpoint_filename = os.listdir(tmp_path)[0]
+    checkpoint_path = tmp_path / checkpoint_filename
+    written_ids = pd.read_csv(checkpoint_path)["id"].tolist()
+    assert written_ids == [0]
 
 
 if __name__ == "__main__":

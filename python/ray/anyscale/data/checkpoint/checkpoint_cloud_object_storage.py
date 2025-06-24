@@ -84,13 +84,16 @@ class CloudObjectStorageCheckpointWriter(CheckpointWriter):
 
         # The checkpoint file contains a single column of the row IDs.
         checkpoint_ids_block = block.select(columns=[self.id_col])
+        # `pyarrow.csv.write_csv` requires a PyArrow table. It errors if the block is
+        # a pandas DataFrame.
+        checkpoint_ids_table = BlockAccessor.for_block(checkpoint_ids_block).to_arrow()
 
         def _write():
             # TODO: add some checkpoint metadata, like timestamp, etc. in Body
             with self.filesystem.open_output_stream(
                 f"{bucket}/{file_key}"
             ) as out_stream:
-                pcsv.write_csv(checkpoint_ids_block, out_stream)
+                pcsv.write_csv(checkpoint_ids_table, out_stream)
 
         try:
             return call_with_retry(
