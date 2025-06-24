@@ -10,6 +10,7 @@ from typing import (
     AsyncGenerator,
     Callable,
     List,
+    Dict,
     Optional,
     Tuple,
 )
@@ -55,6 +56,7 @@ from ray.serve._private.common import (
     StreamingHTTPRequest,
 )
 from ray.serve._private.constants import (
+    REQUEST_LATENCY_BUCKETS_MS,
     SERVE_LOGGER_NAME,
     SERVE_CONTROLLER_NAME,
     SERVE_HTTP_REQUEST_ID_HEADER,
@@ -78,6 +80,7 @@ from ray.serve._private.grpc_util import (
     set_grpc_code_and_details,
     start_grpc_server,
 )
+from ray.util import metrics
 
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
@@ -151,6 +154,107 @@ def _wrap_grpc_call(f):
 
 
 class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        if self._is_direct_ingress:
+            # TODO(alexyang): De-duplicate these metrics from the those collected by
+            # the proxy. https://anyscale1.atlassian.net/browse/SERVE-871
+            self.ingress_http_request_counter = self._init_ingress_request_counter(
+                "HTTP"
+            )
+
+            self.ingress_http_request_error_counter = (
+                self._init_ingress_request_error_counter("HTTP")
+            )
+
+            self.deployment_http_request_error_counter = (
+                self._init_deployment_request_error_counter("HTTP")
+            )
+
+            # log REQUEST_LATENCY_BUCKET_MS
+            logger.debug(f"REQUEST_LATENCY_BUCKET_MS: {REQUEST_LATENCY_BUCKETS_MS}")
+            self.ingress_http_processing_latency_tracker = (
+                self._init_ingress_processing_latency_tracker("HTTP")
+            )
+
+            node_id = ray.get_runtime_context().get_node_id()
+            node_ip_address = ray.util.get_node_ip_address()
+            self.ingress_num_ongoing_http_requests_gauge = (
+                self._init_ingress_num_ongoing_requests_gauge(
+                    "HTTP", node_id, node_ip_address
+                )
+            )
+            self._ingress_ongoing_http_requests = 0
+
+    @property
+    def _is_direct_ingress(self) -> bool:
+        return self._ingress and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
+
+    def _init_ingress_request_counter(self, protocol: str):
+        return metrics.Counter(
+            f"serve_num_{protocol.lower()}_requests",
+            description=f"The number of {protocol} requests processed.",
+            tag_keys=("route", "method", "application", "status_code"),
+        )
+
+    def _init_ingress_request_error_counter(self, protocol: str):
+        return metrics.Counter(
+            f"serve_num_{protocol.lower()}_error_requests",
+            description=(f"The number of errored {protocol} responses."),
+            tag_keys=(
+                "route",
+                "error_code",
+                "method",
+                "application",
+            ),
+        )
+
+    def _init_deployment_request_error_counter(self, protocol: str):
+        return metrics.Counter(
+            f"serve_num_deployment_{protocol.lower()}_error_requests",
+            description=(
+                f"The number of errored {protocol} responses returned by each deployment."
+            ),
+            tag_keys=(
+                "deployment",
+                "error_code",
+                "method",
+                "route",
+                "application",
+            ),
+        )
+
+    def _init_ingress_processing_latency_tracker(self, protocol: str):
+        return metrics.Histogram(
+            f"serve_{protocol.lower()}_request_latency_ms",
+            description=(
+                f"The end-to-end latency of {protocol} requests "
+                f"(measured from the Serve ingress)."
+            ),
+            boundaries=REQUEST_LATENCY_BUCKETS_MS,
+            tag_keys=(
+                "method",
+                "route",
+                "application",
+                "status_code",
+            ),
+        )
+
+    def _init_ingress_num_ongoing_requests_gauge(
+        self, protocol: str, node_id: str, node_ip_address: str
+    ):
+        return metrics.Gauge(
+            name=f"serve_num_ongoing_{protocol.lower()}_requests",
+            description=f"The number of ongoing requests in this {protocol} ingress.",
+            tag_keys=("node_id", "node_ip_address"),
+        ).set_default_tags(
+            {
+                "node_id": node_id,
+                "node_ip_address": node_ip_address,
+            }
+        )
+
     def should_collect_metrics(self) -> bool:
         """
         For direct ingress deployments, metrics must be collected from replicas regardless
@@ -159,10 +263,82 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
         the replicas.
         """
         return (
-            self._ingress
-            and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
-            and self._autoscaling_config
+            self._is_direct_ingress and self._autoscaling_config
         ) or super().should_collect_metrics()
+
+    def _filter_tags(
+        self, metric: metrics.Metric, tags: Dict[str, str]
+    ) -> Dict[str, str]:
+        """
+        Filters the tags to only include the ones that are present in the metric's tag_keys.
+        """
+        return {tag: val for tag, val in tags.items() if tag in metric.info["tag_keys"]}
+
+    def record_ingress_request_metrics(
+        self,
+        *,
+        protocol: RequestProtocol,
+        method: str,
+        route: str,
+        app_name: str,
+        deployment_name: str,
+        latency_ms: float,
+        was_error: bool,
+        status_code: str,
+    ):
+        """Record per-request metrics."""
+        if not self._is_direct_ingress:
+            return
+
+        tags = {
+            "method": method,
+            "route": route,
+            "application": app_name,
+            "status_code": status_code,
+            "error_code": status_code,
+            "deployment": deployment_name,
+        }
+        if protocol == RequestProtocol.HTTP:
+            latency_tracker = self.ingress_http_processing_latency_tracker
+            request_error_counter = self.ingress_http_request_error_counter
+            deployment_error_counter = self.deployment_http_request_error_counter
+            request_counter = self.ingress_http_request_counter
+        else:
+            # TODO(alexyang): Add metrics for gRPC.
+            # https://anyscale1.atlassian.net/browse/SERVE-872
+            return
+
+        request_counter.inc(tags=self._filter_tags(request_counter, tags))
+        latency_tracker.observe(
+            latency_ms, tags=self._filter_tags(latency_tracker, tags)
+        )
+        if was_error:
+            request_error_counter.inc(
+                tags=self._filter_tags(request_error_counter, tags)
+            )
+            deployment_error_counter.inc(
+                tags=self._filter_tags(deployment_error_counter, tags)
+            )
+
+    def inc_num_ingress_ongoing_requests(self, protocol: RequestProtocol) -> int:
+        if not self._is_direct_ingress:
+            return
+
+        if protocol == RequestProtocol.HTTP:
+            self._ingress_ongoing_http_requests += 1
+            self.ingress_num_ongoing_http_requests_gauge.set(
+                self._ingress_ongoing_http_requests
+            )
+
+    def dec_num_ingress_ongoing_requests(self, protocol: RequestProtocol) -> int:
+        if not self._is_direct_ingress:
+            return
+
+        if protocol == RequestProtocol.HTTP:
+            self._ingress_ongoing_http_requests -= 1
+            self.ingress_num_ongoing_http_requests_gauge.set(
+                self._ingress_ongoing_http_requests
+            )
 
 
 class AnyscaleReplica(ReplicaBase):
@@ -753,13 +929,30 @@ class AnyscaleReplica(ReplicaBase):
         if self._route_prefix and self._route_prefix != "/":
             scope["root_path"] = self._route_prefix
 
-        if scope.get("path", "") in ["/-/healthz", "/-/routes"]:
+        start_time = time.time()
+        method = scope.get("method", "WS").upper()
+        route = scope.get("path", "")
+
+        if route in ["/-/healthz", "/-/routes"]:
             healthy, message = await self._dataplane_health_check()
+            status_code = 200 if healthy else 503
             for msg in convert_object_to_asgi_messages(
                 message,
-                status_code=200 if healthy else 503,
+                status_code=status_code,
             ):
                 await send(msg)
+
+            latency_ms = (time.time() - start_time) * 1000.0
+            self._metrics_manager.record_ingress_request_metrics(
+                protocol=RequestProtocol.HTTP,
+                method=method,
+                route=route,
+                app_name=self._deployment_id.app_name,
+                deployment_name=self._deployment_id.name,
+                latency_ms=latency_ms,
+                was_error=not healthy,
+                status_code=str(status_code),
+            )
             return
 
         headers = dict(scope["headers"])
@@ -793,7 +986,7 @@ class AnyscaleReplica(ReplicaBase):
             internal_request_id=generate_request_id(),
             call_method="__call__",
             # TODO(edoakes): populate this.
-            route=scope.get("path", ""),
+            route=route,
             app_name=self._deployment_id.app_name,
             # TODO(edoakes): populate the multiplexed model ID.
             multiplexed_model_id="",
@@ -806,10 +999,18 @@ class AnyscaleReplica(ReplicaBase):
             receive_asgi_messages=receive_thread_safe,
         )
 
+        matched_route = route.startswith(self._route_prefix)
+
         request_args = (http_request,)
         request_kwargs = {}
         response_started = False
+        status = None
         try:
+            if matched_route:
+                self._metrics_manager.inc_num_ingress_ongoing_requests(
+                    RequestProtocol.HTTP
+                )
+
             async with self._wrap_user_method_call(
                 request_metadata, request_args
             ) as status_code_callback:
@@ -839,6 +1040,14 @@ class AnyscaleReplica(ReplicaBase):
                     for msg in asgi_messages:
                         # Stop checking for disconnect when response is complete
                         if msg["type"] == "http.response.start":
+                            # HTTP responses begin with exactly one
+                            # "http.response.start" message containing the "status"
+                            # field. Other response types (e.g., WebSockets) may not.
+                            status_code = str(msg["status"])
+                            status = ResponseStatus(
+                                code=status_code,
+                                is_error=status_code.startswith(("4", "5")),
+                            )
                             # Check if this response will include trailers
                             expecting_trailers = msg.get("trailers", False)
                         elif (
@@ -869,6 +1078,24 @@ class AnyscaleReplica(ReplicaBase):
         finally:
             if not proxy_asgi_receive_task.done():
                 proxy_asgi_receive_task.cancel()
+
+            if matched_route:
+                self._metrics_manager.dec_num_ingress_ongoing_requests(
+                    RequestProtocol.HTTP
+                )
+
+            assert status is not None
+            latency_ms = (time.time() - start_time) * 1000.0
+            self._metrics_manager.record_ingress_request_metrics(
+                protocol=RequestProtocol.HTTP,
+                method=method,
+                route=self._route_prefix if matched_route else "",
+                app_name=self._deployment_id.app_name if matched_route else "",
+                deployment_name=self._deployment_id.name if matched_route else "",
+                latency_ms=latency_ms,
+                was_error=status.is_error,
+                status_code=str(status.code),
+            )
 
     async def perform_graceful_shutdown(self):
         await super().perform_graceful_shutdown()
