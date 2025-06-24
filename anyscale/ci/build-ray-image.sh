@@ -164,8 +164,8 @@ if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
     readonly DATAPLANE_TGZ_WANT="c2060c5a70d39eaeeeee2834b9f3bb4ad27b8f44d2e41f6e6c25449d781fb2d7"
     readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-min-py${PY_VERSION}-${IMG_TYPE}-base${ARCH_SUFFIX}"
 else
-    readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_20250515.tar.gz"
-    readonly DATAPLANE_TGZ_WANT="b6afd94c7acdb0040d032f72a24cf701a03e60794b3f21cce8cdb5ab8796f938"
+    readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_20250624.tar.gz"
+    readonly DATAPLANE_TGZ_WANT="3cffb55f1a56f0bc6256cbf1a38bf1e764e202a647a4272b80531760f1250059"
     readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-${BASE_TYPE}-py${PY_VERSION}-${IMG_TYPE}-base${ARCH_SUFFIX}"
 fi
 
