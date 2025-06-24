@@ -27,7 +27,6 @@ from ray.anyscale.data._internal.logical.rules.map_fusion import (
 )
 from ray.anyscale.data.api.context_mixin import DataContextMixin
 from ray.anyscale.data.api.dataset_mixin import DatasetMixin
-from ray.anyscale.data.planner import _register_anyscale_plan_logical_op_fns
 from ray.data._internal.execution.execution_callback import add_execution_callback
 from ray.data._internal.execution.interfaces.op_runtime_metrics import (
     MetricsGroup,
@@ -144,8 +143,6 @@ def apply_anyscale_patches():
     _patch_observability_metrics()
 
     _patch_default_execution_callbacks()
-
-    _register_anyscale_plan_logical_op_fns()
 
     logical_ruleset = get_logical_ruleset()
     logical_ruleset.add(PredicatePushdown)

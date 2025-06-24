@@ -6,7 +6,7 @@ if TYPE_CHECKING:
 
 def create_planner() -> "Planner":
     # Import here to avoid circular import.
-    from ray.anyscale.data.planner import AnyscalePlanner as Planner
+    from ray.anyscale.data.planner import RayTurboPlanner as Planner
 
     return Planner()
 
