@@ -261,7 +261,7 @@ def test_request_and_clear():
         worker_group_status = _get_mock_worker_group_status(2)
 
         # Test request_resources is called when the controller starts.
-        policy.after_controller_start()
+        policy.after_controller_start(train_run_context=MagicMock())
         assert mock_coordinator.request_resources.remote.call_count == 1
         assert_resource_request_called_with()
 
