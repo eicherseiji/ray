@@ -27,7 +27,7 @@ ANYSCALE_TRACING_EXPORTER_IMPORT_PATH = os.environ.get(
 )
 
 ANYSCALE_TRACING_SAMPLING_RATIO = float(
-    os.environ.get("ANYSCALE_TRACING_SAMPLING_RATIO", 1)
+    os.environ.get("ANYSCALE_TRACING_SAMPLING_RATIO", 0.01)
 )
 
 # For now, this is used only for testing. In the suite of tests that
