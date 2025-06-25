@@ -9,6 +9,7 @@ from ray.anyscale.air._internal.autoscaling_coordinator import (
     ResourceRequestPriority,
     get_or_create_autoscaling_coordinator,
 )
+from ray.train.v2._internal.execution.context import TrainRunContext
 from ray.train.v2._internal.execution.scaling_policy import (
     NoopDecision,
     ResizeDecision,
@@ -241,7 +242,7 @@ class ElasticScalingPolicy(ScalingPolicy):
     # ControllerCallback
     # --------------------------
 
-    def after_controller_start(self):
+    def after_controller_start(self, train_run_context: TrainRunContext):
         """Send cluster autoscaling requests when the control loop starts."""
         resources_per_worker = self.scaling_config._resources_per_worker_not_none
         max_workers = self.scaling_config.max_workers
