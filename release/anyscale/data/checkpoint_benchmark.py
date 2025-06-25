@@ -1,19 +1,15 @@
 import argparse
-import logging
 import os
 import time
-from typing import Optional
 import numpy
+from typing import Optional
 from ray.data.datasource import WriteResult
 from benchmark import Benchmark, BenchmarkMetric
 import ray
-from ray.exceptions import UserCodeException
 from ray.data import DataContext
 from ray.anyscale.data.checkpoint import CheckpointBackend, CheckpointConfig
 
 from ray.data._internal.datasource.parquet_datasink import ParquetDatasink
-
-logger = logging.Logger(__name__)
 
 
 def _parse_checkpoint_config(args: argparse.Namespace) -> Optional[CheckpointConfig]:
@@ -22,12 +18,8 @@ def _parse_checkpoint_config(args: argparse.Namespace) -> Optional[CheckpointCon
         return None
     elif backend_str == "FILE_STORAGE":
         backend = CheckpointBackend.FILE_STORAGE
-    elif backend_str == "FILE_STORAGE_ROW":
-        backend = CheckpointBackend.FILE_STORAGE_ROW
     elif backend_str == "CLOUD_OBJECT_STORAGE":
         backend = CheckpointBackend.CLOUD_OBJECT_STORAGE
-    elif backend_str == "CLOUD_OBJECT_STORAGE_ROW":
-        backend = CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW
     else:
         raise ValueError(f"Unknown checkpoint backend: {backend_str}")
 
@@ -40,46 +32,42 @@ def _parse_checkpoint_config(args: argparse.Namespace) -> Optional[CheckpointCon
 
 def run_dataset(
     checkpoint_config: Optional[CheckpointConfig],
-    num_rows: int,
-    size_bytes_per_row: int,
+    input_data_path: str,
     transform_sleep_s: float,
     inference_sleep_s: float,
     inference_batch_size: int,
     inference_concurrency: int,
     data_output_path: str,
-    fraction_checkpointed: Optional[float],
     num_output_files: int,
+    num_rows: Optional[int] = None,
 ) -> int:
     ctx = DataContext.get_current()
     ctx.checkpoint_config = checkpoint_config
 
-    ds = ray.data.range(num_rows)
+    # Make read_parquet and transform fuse.
+    ctx._enable_read_files_fusion_override = True
 
-    def gen_data(row):
-        row["data"] = numpy.zeros(size_bytes_per_row, dtype=numpy.int8)
-        return row
+    ds = ray.data.read_parquet(input_data_path)
+    if not num_rows:
+        num_rows = ds.count()
 
-    ds = ds.map(gen_data)
-
-    def transform(row):
+    def transform(batch):
         time.sleep(transform_sleep_s)
-        return row
+        return batch
 
-    ds = ds.map(transform)
+    ds = ds.map_batches(transform, batch_size=None)
 
     class Inference:
-        INFER_RESULT_DIMENSION = 128
+        INFER_RESULT_DIMENSION = 16
 
         def __call__(self, batch):
-            if (
-                fraction_checkpointed
-                and batch["id"][0] > num_rows * fraction_checkpointed
-            ):
-                raise RuntimeError("Inference failed")
             time.sleep(inference_sleep_s)
             batch["inference"] = numpy.random.random(
                 (len(batch["data"]), self.INFER_RESULT_DIMENSION)
             )
+            # Remove the data column to make the write op run faster.
+            # We want the Inference op to be the main bottleneck of the pipeline.
+            del batch["data"]
             return batch
 
     ds = ds.map_batches(
@@ -106,7 +94,7 @@ def run_dataset(
             data_output_path,
             min_rows_per_file=num_rows // num_output_files,
         )
-        return num_rows_written
+        return int(num_rows_written)
     finally:
         ParquetDatasink.on_write_complete = original_on_write_complete
 
@@ -114,53 +102,66 @@ def run_dataset(
 def run_checkpoints_benchmark(
     benchmark: Benchmark,
     checkpoint_config: Optional[CheckpointConfig],
-    num_rows: int,
-    size_bytes_per_row: int,
+    input_data_path: str,
     transform_sleep_s: float,
     inference_sleep_s: float,
     inference_batch_size: int,
     inference_concurrency: int,
     data_output_path: str,
-    fraction_checkpointed: Optional[float],
     num_output_files: int,
     benchmark_name: str = "",
+    num_rows: Optional[int] = None,
 ):
     def run():
-        if fraction_checkpointed is not None:
-            try:
-                run_dataset(
-                    checkpoint_config,
-                    num_rows,
-                    size_bytes_per_row,
-                    transform_sleep_s,
-                    inference_sleep_s,
-                    inference_batch_size,
-                    inference_concurrency,
-                    data_output_path,
-                    fraction_checkpointed,
-                    num_output_files,
-                )
-            except UserCodeException:
-                pass
-
         start_time = time.time()
+        print(f"[{benchmark_name}] Running dataset from scratch")
+        if checkpoint_config is not None:
+            # Keep the checkpoint files. We'll test loading them in the second run.
+            checkpoint_config.delete_checkpoint_on_success = False
+            print(f"checkpoint_path = {checkpoint_config.checkpoint_path}")
+
         num_rows_written = run_dataset(
             checkpoint_config,
-            num_rows,
-            size_bytes_per_row,
+            input_data_path,
             transform_sleep_s,
             inference_sleep_s,
             inference_batch_size,
             inference_concurrency,
             data_output_path,
-            None,
             num_output_files,
+            num_rows=num_rows,
         )
         runtime = time.time() - start_time
-        return {
+        print(f"[{benchmark_name}] dataset finished in {runtime:.2f} seconds")
+
+        benchmark_results = {
             BenchmarkMetric.RUNTIME: runtime,
             BenchmarkMetric.THROUGHPUT: num_rows_written // runtime,
+            "num_rows_written": num_rows_written,
         }
+
+        if checkpoint_config is not None:
+            print(f"[{benchmark_name}] Rerunning dataset with full checkpoint")
+            start_time = time.time()
+            num_rows_written = run_dataset(
+                checkpoint_config,
+                input_data_path,
+                transform_sleep_s,
+                inference_sleep_s,
+                inference_batch_size,
+                inference_concurrency,
+                data_output_path,
+                num_output_files,
+                num_rows=num_rows,
+            )
+            assert num_rows_written == 0
+            runtime = time.time() - start_time
+            # TODO: capture checkpoint loading time.
+            benchmark_results["runtime_with_full_checkpoint"] = time.time() - start_time
+            print(
+                f"[{benchmark_name}] dataset with full checkpoint finished in {runtime:.2f} seconds"
+            )
+        return benchmark_results
 
     benchmark.run_fn(benchmark_name, run)
 
@@ -169,13 +170,13 @@ def clean_up_output_files(
     checkpoint_config: Optional[CheckpointConfig],
     data_output_path: str,
 ):
-    logger.info("Cleaning up output files")
+    print("Cleaning up output files")
     output_paths = [data_output_path]
     if checkpoint_config is not None:
         assert checkpoint_config.checkpoint_path is not None
         output_paths.append(checkpoint_config.checkpoint_path)
     for checkpoint_path in output_paths:
-        logger.info("Cleaning up %s", checkpoint_path)
+        print(f"Cleaning up {checkpoint_path}")
         if checkpoint_path.startswith("s3://"):
             import boto3
 
@@ -194,22 +195,15 @@ def clean_up_output_files(
 # This is only used for manual run.
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint_backend", type=str, default="None")
-    parser.add_argument("--data_output_path", type=str)
-    parser.add_argument("--checkpoint_output_path", type=str)
-    parser.add_argument("--inference_concurrency", type=int)
-    parser.add_argument("--num_rows", type=int)
-    parser.add_argument("--size_bytes_per_row", type=int)
-    parser.add_argument("--inference_batch_size", type=int)
-    parser.add_argument("--inference_sleep_s", type=float)
-    parser.add_argument("--transform_sleep_s", type=float, default=0.001)
-    parser.add_argument(
-        "--fraction_checkpointed",
-        type=float,
-        default=None,
-        help="Fraction of data that has already been checkpointed.",
-    )
-    parser.add_argument("--num_output_files", type=int, default=50)
+    _ = parser.add_argument("--checkpoint_backend", type=str, default="None")
+    _ = parser.add_argument("--input_data_path", type=str)
+    _ = parser.add_argument("--data_output_path", type=str)
+    _ = parser.add_argument("--checkpoint_output_path", type=str)
+    _ = parser.add_argument("--inference_concurrency", type=int)
+    _ = parser.add_argument("--inference_batch_size", type=int)
+    _ = parser.add_argument("--inference_sleep_s", type=float)
+    _ = parser.add_argument("--transform_sleep_s", type=float, default=0.001)
+    _ = parser.add_argument("--num_output_files", type=int, default=50)
     args = parser.parse_args()
 
     checkpoint_config = _parse_checkpoint_config(args)
@@ -218,14 +212,12 @@ if __name__ == "__main__":
         run_checkpoints_benchmark(
             benchmark,
             checkpoint_config,
-            args.num_rows,
-            args.size_bytes_per_row,
+            args.input_data_path,
             args.transform_sleep_s,
             args.inference_sleep_s,
             args.inference_batch_size,
             args.inference_concurrency,
             args.data_output_path,
-            args.fraction_checkpointed,
             args.num_output_files,
         )
         benchmark.write_result()

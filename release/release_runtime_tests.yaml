@@ -123,20 +123,25 @@
     timeout: 3600
     script: python cpu_job_autoscaling_benchmark.py
 
-- name: checkpoint_benchmark
+- name: "checkpoint_benchmark_{{scale}}"
   group: data-tests
   working_dir: anyscale/data
+
+  matrix:
+    setup:
+      # TODO: eanble large test after optimizing chekpointing perf
+      scale: [small]
 
   frequency: nightly
   team: data
   cluster:
     byod:
       type: gpu
-    cluster_compute: checkpoint_benchmark_compute.yaml
+    cluster_compute: "checkpoint_benchmark_compute_{{scale}}.yaml"
 
   run:
     timeout: 3600
-    script: python ./run_checkpoint_benchmark.py
+    script: python ./run_checkpoint_benchmark.py {{scale}}
 
 ###############
 # Rllib tests
