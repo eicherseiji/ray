@@ -1,3 +1,4 @@
+import importlib
 import json
 import os
 import re
@@ -70,6 +71,14 @@ def serve_and_ray_shutdown():
     serve.shutdown()
 
 
+@pytest.fixture(autouse=True)
+def patch_tracing_sampling_ratio(monkeypatch):
+    with monkeypatch.context() as m:
+        m.setenv("ANYSCALE_TRACING_SAMPLING_RATIO", "1.0")
+        importlib.reload(ray.anyscale.serve._private.constants)
+        yield
+
+
 class FakeSpan:
     def __init__(self):
         self.status = None
@@ -87,6 +96,7 @@ def test_disable_tracing_exporter():
         component_name="component_name",
         component_id="component_id",
         tracing_exporter_import_path="",
+        tracing_sampling_ratio=1.0,
     )
 
     assert is_tracing_setup_successful is False
@@ -161,6 +171,7 @@ def test_missing_dependencies():
                 component_type=ServeComponentType.REPLICA,
                 component_name="component_name",
                 component_id="component_id",
+                tracing_sampling_ratio=1.0,
             )
 
 
@@ -202,6 +213,7 @@ def test_custom_tracing_exporter(use_custom_tracing_exporter):
         "component_id",
         ServeComponentType.REPLICA,
         custom_tracing_exporter_path,
+        tracing_sampling_ratio=1.0,
     )
 
     # Validate that tracing is setup successfully
@@ -337,6 +349,7 @@ def test_tracing_e2e(
         setup_tracing(
             component_name="upstream_app",
             component_id="345",
+            tracing_sampling_ratio=1.0,
         )
         tracer = trace.get_tracer("test_tracing")
         with tracer.start_as_current_span("upstream_app"):
@@ -357,6 +370,7 @@ def test_tracing_e2e(
         setup_tracing(
             component_name="upstream_app",
             component_id="345",
+            tracing_sampling_ratio=1.0,
         )
         tracer = trace.get_tracer("test_tracing")
         with tracer.start_as_current_span("upstream_app"):
@@ -390,6 +404,7 @@ def test_tracing_e2e(
         setup_tracing(
             component_name="upstream_app",
             component_id="345",
+            tracing_sampling_ratio=1.0,
         )
         tracer = trace.get_tracer("test_tracing")
         with tracer.start_as_current_span("upstream_app"):
@@ -524,7 +539,11 @@ def test_tracing_e2e_with_errors(
         )
         serve.run(HttpErrorModel.bind())
 
-        setup_tracing(component_name="upstream_app", component_id="345")
+        setup_tracing(
+            component_name="upstream_app",
+            component_id="345",
+            tracing_sampling_ratio=1.0,
+        )
         tracer = trace.get_tracer("test_tracing")
         with tracer.start_as_current_span("upstream_app"):
             ctx = get_trace_context()
@@ -544,7 +563,11 @@ def test_tracing_e2e_with_errors(
         )
         serve.run(StreamingErrorModel.bind())
 
-        setup_tracing(component_name="upstream_app", component_id="345")
+        setup_tracing(
+            component_name="upstream_app",
+            component_id="345",
+            tracing_sampling_ratio=1.0,
+        )
         tracer = trace.get_tracer("test_tracing")
         with tracer.start_as_current_span("upstream_app"):
             ctx = get_trace_context()
@@ -569,7 +592,11 @@ def test_tracing_e2e_with_errors(
         )
         serve.run(GrpcErrorModel.options(name="grpc-error-model").bind())
 
-        setup_tracing(component_name="upstream_app", component_id="345")
+        setup_tracing(
+            component_name="upstream_app",
+            component_id="345",
+            tracing_sampling_ratio=1.0,
+        )
         tracer = trace.get_tracer("test_tracing")
         with tracer.start_as_current_span("upstream_app"):
             ctx = get_trace_context()
