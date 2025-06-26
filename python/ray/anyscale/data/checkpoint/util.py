@@ -1,9 +1,11 @@
 from typing import Iterable
 
-from ray.anyscale.data.checkpoint.interfaces import (
+from ray.anyscale.data.checkpoint.checkpoint_filter import (
     BatchBasedCheckpointFilter,
-    CheckpointConfig,
     RowBasedCheckpointFilter,
+)
+from ray.anyscale.data.checkpoint.interfaces import (
+    CheckpointConfig,
 )
 from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data.block import Block, BlockAccessor, DataBatch
@@ -19,7 +21,7 @@ def filter_checkpointed_rows_for_blocks(
     """For each block, filter rows that have already been checkpointed
     and yield the resulting block."""
     if checkpoint_config.is_batch_based():
-        ckpt_filter = BatchBasedCheckpointFilter.create(checkpoint_config)
+        ckpt_filter = BatchBasedCheckpointFilter(checkpoint_config)
         checkpointed_ids = task_context.kwargs[CHECKPOINTED_IDS_KWARG_NAME]
 
         def filter_fn(block):
@@ -49,7 +51,7 @@ def filter_checkpointed_rows_for_batches(
     """For each batch, filter rows that have already been checkpointed
     and yield the resulting batches."""
     if checkpoint_config.is_batch_based():
-        ckpt_filter = BatchBasedCheckpointFilter.create(checkpoint_config)
+        ckpt_filter = BatchBasedCheckpointFilter(checkpoint_config)
         checkpointed_ids = task_context.kwargs[CHECKPOINTED_IDS_KWARG_NAME]
 
         def filter_fn(batch):

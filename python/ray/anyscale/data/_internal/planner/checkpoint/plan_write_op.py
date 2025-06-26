@@ -1,8 +1,8 @@
 import itertools
 from typing import Iterable, List
 
+from ray.anyscale.data.checkpoint.checkpoint_writer import CheckpointWriter
 from ray.anyscale.data.checkpoint.interfaces import (
-    CheckpointWriter,
     InvalidCheckpointingOperators,
 )
 from ray.data import DataContext

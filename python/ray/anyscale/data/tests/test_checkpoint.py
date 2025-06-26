@@ -1,7 +1,7 @@
 import csv
 import os
 import random
-from typing import List, Type
+from typing import List
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -22,16 +22,13 @@ from ray.anyscale.data._internal.planner.checkpoint import (
     plan_write_op_with_checkpoint_writer,
 )
 from ray.anyscale.data._internal.readers import FileReader
-from ray.anyscale.data.checkpoint.checkpoint_cloud_object_storage import (
-    CloudObjectStorageCheckpointWriter,
-)
-from ray.anyscale.data.checkpoint.checkpoint_file_storage import (
-    FileStorageCheckpointWriter,
+from ray.anyscale.data.checkpoint.checkpoint_filter import BatchBasedCheckpointFilter
+from ray.anyscale.data.checkpoint.checkpoint_writer import (
+    BatchBasedCheckpointWriter,
 )
 from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointBackend,
     CheckpointConfig,
-    CheckpointWriter,
     InvalidCheckpointingConfig,
 )
 from ray.data._internal.datasource.csv_datasource import CSVDatasource
@@ -153,7 +150,7 @@ def read_ids_from_checkpoint_files(config: CheckpointConfig) -> List[int]:
             read_ckpt_ids = []
             for file in actual_checkpoint_file_paths:
                 with open(file, "r") as f:
-                    ckpt_df = pd.read_csv(f)
+                    ckpt_df = pd.read_parquet(f)
                     read_ckpt_ids.extend(ckpt_df[ID_COL].tolist())
             return sorted(read_ckpt_ids)
         else:
@@ -168,7 +165,7 @@ def read_ids_from_checkpoint_files(config: CheckpointConfig) -> List[int]:
             read_ckpt_ids = []
             for fpath in actual_checkpoint_file_paths:
                 with fs.open_input_file(fpath) as f:
-                    ckpt_df = pd.read_csv(f)
+                    ckpt_df = pd.read_parquet(f)
                     read_ckpt_ids.extend(ckpt_df[ID_COL].tolist())
 
             return sorted(read_ckpt_ids)
@@ -736,19 +733,13 @@ class TestPlanner:
         )
 
 
-@pytest.mark.parametrize(
-    "checkpoint_writer_cls",
-    [FileStorageCheckpointWriter, CloudObjectStorageCheckpointWriter],
-)
-def test_write_block_checkpoint_with_pandas_df(
-    checkpoint_writer_cls: Type[CheckpointWriter], restore_data_context, tmp_path
-):
+def test_write_block_checkpoint_with_pandas_df(restore_data_context, tmp_path):
     ctx = ray.data.DataContext.get_current()
     ctx.checkpoint_config = CheckpointConfig(
         "id",
         str(tmp_path),
     )
-    checkpoint_writer = checkpoint_writer_cls(ctx.checkpoint_config)
+    checkpoint_writer = BatchBasedCheckpointWriter(ctx.checkpoint_config)
     df = pd.DataFrame({"id": [0]})
 
     checkpoint_writer.write_block_checkpoint(BlockAccessor.for_block(df))
@@ -756,8 +747,46 @@ def test_write_block_checkpoint_with_pandas_df(
     assert len(os.listdir(tmp_path)) == 1
     checkpoint_filename = os.listdir(tmp_path)[0]
     checkpoint_path = tmp_path / checkpoint_filename
-    written_ids = pd.read_csv(checkpoint_path)["id"].tolist()
+    written_ids = pd.read_parquet(checkpoint_path)["id"].tolist()
     assert written_ids == [0]
+
+
+def test_filter_rows_for_block():
+    """Test BatchBasedCheckpointFilter.filter_rows_for_block."""
+
+    # Mock CheckpointConfig
+    config = CheckpointConfig(
+        id_column="id",
+        checkpoint_path="/mock/path",
+    )
+
+    filter_instance = BatchBasedCheckpointFilter(config)
+
+    # Create a mock block.
+    block = pyarrow.table(
+        {
+            "id": list(range(10)),
+            "data": [str(i) for i in range(10)],
+        }
+    )
+    # Create a mock checkpointed_ids with multiple chunks.
+    chunk1 = pyarrow.table({"id": [1, 2, 4]})
+    chunk2 = pyarrow.table({"id": [6, 8, 9, 11]})
+    chunk3 = pyarrow.table({"id": [12, 13]})
+    checkpointed_ids = pyarrow.concat_tables([chunk1, chunk2, chunk3])
+    assert len(checkpointed_ids["id"].chunks) == 3
+
+    # Call the method
+    filtered_block = filter_instance.filter_rows_for_block(block, checkpointed_ids)
+
+    # Verify the output
+    expected_block = pyarrow.table(
+        {
+            "id": [0, 3, 5, 7],
+            "data": ["0", "3", "5", "7"],
+        }
+    )
+    assert filtered_block.equals(expected_block)
 
 
 if __name__ == "__main__":

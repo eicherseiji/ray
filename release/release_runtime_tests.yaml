@@ -159,8 +159,7 @@
 
   matrix:
     setup:
-      # TODO: eanble large test after optimizing chekpointing perf
-      scale: [small]
+      scale: [small, large]
 
   frequency: nightly
   team: data

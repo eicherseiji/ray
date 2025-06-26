@@ -4,10 +4,10 @@ from typing import Any, Dict
 
 from pyarrow.fs import FileSelector
 
+from ray.anyscale.data.checkpoint.checkpoint_filter import RowBasedCheckpointFilter
+from ray.anyscale.data.checkpoint.checkpoint_writer import CheckpointWriter
 from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointConfig,
-    CheckpointWriter,
-    RowBasedCheckpointFilter,
 )
 from ray.data import DataContext
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
@@ -44,7 +44,7 @@ class RowBasedCloudObjectStorageCheckpointFilter(RowBasedCheckpointFilter):
 
     def check_files_exist(self, files) -> Dict[str, bool]:
         # Mapping of {file_key -> whether checkpoint file exists or not}
-        mask_file_exists = {f_name: False for f_name in files}
+        mask_file_exists = dict.fromkeys(files, False)
 
         def _get_file_info():
             return self.filesystem.get_file_info(

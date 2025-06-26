@@ -4,10 +4,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict
 
+from ray.anyscale.data.checkpoint.checkpoint_filter import RowBasedCheckpointFilter
+from ray.anyscale.data.checkpoint.checkpoint_writer import CheckpointWriter
 from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointConfig,
-    CheckpointWriter,
-    RowBasedCheckpointFilter,
 )
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
 from ray.data.block import Block, BlockAccessor
