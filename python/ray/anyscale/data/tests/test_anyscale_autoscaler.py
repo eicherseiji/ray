@@ -321,7 +321,7 @@ class MockAutoscalingActorPool(AutoscalingActorPool):
     def max_tasks_in_flight_per_actor(self):
         return self._max_tasks_in_flight_per_actor
 
-    def current_in_flight_tasks(self):
+    def num_tasks_in_flight(self):
         return self._current_in_flight_tasks
 
     def scale_up(self, num_actors: int) -> int:

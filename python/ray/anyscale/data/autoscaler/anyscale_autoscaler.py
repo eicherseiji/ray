@@ -326,7 +326,7 @@ class AnyscaleAutoscaler(Autoscaler):
             return None
         # Calculate the utilization based on the used task slots
         # of running actors.
-        util = actor_pool.current_in_flight_tasks() / (
+        util = actor_pool.num_tasks_in_flight() / (
             actor_pool.num_running_actors() * actor_pool.max_tasks_in_flight_per_actor()
         )
         self._actor_pool_util_calculators[actor_pool].report(util)
