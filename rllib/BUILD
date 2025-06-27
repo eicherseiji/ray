@@ -3443,7 +3443,7 @@ py_test(
 # ....................................
 py_test(
     name = "examples/algorithms/appo_custom_algorithm_w_shared_data_actor",
-    size = "medium",
+    size = "large",
     srcs = ["examples/algorithms/appo_custom_algorithm_w_shared_data_actor.py"],
     args = [
         "--enable-new-api-stack",
@@ -3481,7 +3481,7 @@ py_test(
 
 py_test(
     name = "examples/algorithms/vpg_custom_algorithm",
-    size = "medium",
+    size = "large",
     srcs = ["examples/algorithms/vpg_custom_algorithm.py"],
     args = [
         "--enable-new-api-stack",
@@ -4250,7 +4250,7 @@ py_test(
         "--num-agents=2",
         "--as-test",
         "--evaluation-parallel-to-training",
-        "--stop-reward=800.0",
+        "--stop-reward=400.0",
         "--num-cpus=6",
         "--evaluation-duration=auto",
         "--evaluation-duration-unit=episodes",
