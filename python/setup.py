@@ -713,7 +713,7 @@ def pip_run(build_ext):
         copied_files += copy_file(build_ext.build_lib, filename, ROOT_DIR)
     print("# of files copied to {}: {}".format(build_ext.build_lib, copied_files))
 
-    
+
 _LICENSE = """
 Copyright (2023 and onwards) Anyscale, Inc.
 
