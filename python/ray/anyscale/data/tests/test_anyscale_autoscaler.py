@@ -1,5 +1,5 @@
 import math
-from typing import OrderedDict
+from typing import OrderedDict, Optional
 import unittest
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
@@ -17,6 +17,7 @@ from ray.anyscale.data.autoscaler.anyscale_autoscaler import (
 )
 from ray.data._internal.execution.autoscaler.autoscaling_actor_pool import (
     AutoscalingActorPool,
+    ActorPoolScalingRequest,
 )
 from ray.data._internal.execution.interfaces import ExecutionResources
 from ray.data._internal.execution.interfaces.physical_operator import PhysicalOperator
@@ -300,6 +301,9 @@ class MockAutoscalingActorPool(AutoscalingActorPool):
         self._per_actor_resource_usage = per_actor_resource_usage
         self._last_scaling_up_ts = None
 
+    def max_actor_concurrency(self) -> int:
+        return 1
+
     def min_size(self):
         return self._min_size
 
@@ -324,20 +328,27 @@ class MockAutoscalingActorPool(AutoscalingActorPool):
     def num_tasks_in_flight(self):
         return self._current_in_flight_tasks
 
-    def scale_up(self, num_actors: int) -> int:
-        self._current_size += num_actors
-        self._num_pending_actors += num_actors
-        self._last_scaling_up_ts = time.time()
-        return num_actors
+    def scale(self, req: ActorPoolScalingRequest) -> Optional[int]:
+        if req.delta > 0:
+            num_actors = req.delta
 
-    def scale_down(self, num_actors: int) -> int:
-        self._current_size -= num_actors
-        num_pending_to_decrease = min(num_actors, self._num_pending_actors)
-        self._num_pending_actors -= num_pending_to_decrease
-        num_running_to_decrease = num_actors - num_pending_to_decrease
-        assert num_running_to_decrease <= self._num_running_actors
-        self._num_running_actors -= num_running_to_decrease
-        return num_actors
+            self._current_size += num_actors
+            self._num_pending_actors += num_actors
+            self._last_scaling_up_ts = time.time()
+
+            return num_actors
+
+        elif req.delta < 0:
+            num_actors = -req.delta
+
+            self._current_size -= num_actors
+            num_pending_to_decrease = min(num_actors, self._num_pending_actors)
+            self._num_pending_actors -= num_pending_to_decrease
+            num_running_to_decrease = num_actors - num_pending_to_decrease
+            assert num_running_to_decrease <= self._num_running_actors
+            self._num_running_actors -= num_running_to_decrease
+
+            return -num_actors
 
     def pending_to_running(self):
         assert self._num_pending_actors > 0
@@ -408,7 +419,7 @@ class TestActorPoolAutoscaling:
 
         # Manually scale up to min_size.
         # Actor pool should be None since there is no running actor.
-        actor_pool.scale_up(min_size)
+        actor_pool.scale(ActorPoolScalingRequest(delta=min_size))
         assert autoscaler._calculate_actor_pool_util(actor_pool) is None
         current_time.increment()
 
@@ -522,7 +533,7 @@ class TestActorPoolAutoscaling:
         )
 
         # Start with min_size and mark all as running
-        actor_pool.scale_up(min_size)
+        actor_pool.scale(ActorPoolScalingRequest(delta=min_size))
         for _ in range(min_size):
             actor_pool.pending_to_running()
 
@@ -646,7 +657,8 @@ class TestActorPoolAutoscaling:
 
         # Manually scale up to min_size and move pending actors to running.
         # Actor pool should be None since there is no running actor.
-        actor_pool.scale_up(min_size)
+        actor_pool.scale(ActorPoolScalingRequest(delta=min_size))
+
         for _ in range(min_size):
             actor_pool.pending_to_running()
         current_time.increment()

@@ -13,6 +13,9 @@ from ray.anyscale.air._internal.autoscaling_coordinator import (
     get_or_create_autoscaling_coordinator,
 )
 from ray.data._internal.execution.autoscaler import Autoscaler, AutoscalingActorPool
+from ray.data._internal.execution.autoscaler.autoscaling_actor_pool import (
+    ActorPoolScalingRequest,
+)
 from ray.data._internal.execution.interfaces.execution_options import ExecutionResources
 
 if TYPE_CHECKING:
@@ -405,7 +408,6 @@ class AnyscaleAutoscaler(Autoscaler):
                     actor_pool, op, util
                 )
 
-                current_size = actor_pool.current_size()
                 # scale-down has higher priority than scale-up, because when the op
                 # is completed, we should scale down the actor pool regardless the
                 # utilization.
@@ -413,14 +415,11 @@ class AnyscaleAutoscaler(Autoscaler):
                     num_to_scale_down = (
                         self._actor_pool_resizing_policy.num_to_scale_down(actor_pool)
                     )
-                    if actor_pool.scale_down(num_to_scale_down):
-                        logger.debug(
-                            "Scaled down actor pool %s: %d -> %d, current util: %.2f",
-                            op.name,
-                            current_size,
-                            current_size - 1,
-                            util,
+                    actor_pool.scale(
+                        ActorPoolScalingRequest(
+                            delta=-num_to_scale_down, reason="scaling down"
                         )
+                    )
                 elif should_scale_up:
                     num_to_scale_up = self._actor_pool_resizing_policy.num_to_scale_up(
                         actor_pool
@@ -439,13 +438,10 @@ class AnyscaleAutoscaler(Autoscaler):
                         if max_num_to_scale_up is not None:
                             num_to_scale_up = min(num_to_scale_up, max_num_to_scale_up)
 
-                    new_size = actor_pool.scale_up(num_to_scale_up) + current_size
-                    logger.debug(
-                        "Scaled up actor pool %s: %d -> %d, current util: %.2f",
-                        op.name,
-                        current_size,
-                        new_size,
-                        util,
+                    actor_pool.scale(
+                        ActorPoolScalingRequest(
+                            delta=num_to_scale_up, reason="scaling up"
+                        )
                     )
 
     def _get_max_scale_up(
