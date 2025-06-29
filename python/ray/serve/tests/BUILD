@@ -439,7 +439,10 @@ py_test_module_list(
 py_test_module_list(
     size = "enormous",
     data = glob(["tests/fixtures/*.*"]),
-    env = {"ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS": "1"},
+    env = {
+        "ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS": "1",
+        "ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
+    },
     files = [
         "test_fastapi.py",
         "test_handle_cancellation.py",

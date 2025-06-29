@@ -1,3 +1,4 @@
+import time
 import grpc
 import pytest
 import sys
@@ -1873,6 +1874,43 @@ def test_context_propagation_with_child(_skip_if_ff_not_enabled, serve_instance)
     request = serve_pb2.UserDefinedMessage()
     future = stub.Method1.future(request=request)
     assert future.result().greeting == "context-propagation-deployment"
+
+
+def test_shutdown_replica_only_after_draining_requests(
+    _skip_if_ff_not_enabled, serve_instance
+):
+    """Test that the replica is shutdown correctly when the deployment is shutdown."""
+    signal = SignalActor.remote()
+
+    @serve.deployment(name="replica-shutdown-deployment", graceful_shutdown_timeout_s=1)
+    class ReplicaShutdownTest:
+        async def __call__(self):
+            await signal.wait.remote()
+            return "ok"
+
+    serve.run(ReplicaShutdownTest.bind(), name="replica-shutdown-deployment")
+
+    http_url = get_application_url("HTTP", app_name="replica-shutdown-deployment")
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(httpx.get, http_url, timeout=10) for _ in range(4)]
+
+        wait_for_condition(
+            lambda: ray.get(signal.cur_num_waiters.remote()) == 4, timeout=10
+        )
+
+        serve.delete("replica-shutdown-deployment", _blocking=False)
+
+        time.sleep(2)  # wait 2s because graceful shutdown timeout is 1s
+
+        ray.get(signal.send.remote(clear=True))
+
+        for future in futures:
+            assert future.result().status_code == 200
+
+    wait_for_condition(
+        lambda: "replica-shutdown-deployment" not in serve.status().applications,
+        timeout=10,
+    )
 
 
 if __name__ == "__main__":

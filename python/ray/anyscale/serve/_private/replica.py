@@ -26,6 +26,7 @@ from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
     RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
+    ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S,
 )
 from ray.anyscale.serve._private.tracing_utils import (
     TraceContextManager,
@@ -1098,8 +1099,38 @@ class AnyscaleReplica(ReplicaBase):
             )
 
     async def perform_graceful_shutdown(self):
-        await super().perform_graceful_shutdown()
-        # Shutdown the request queue
+        if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS or not self._ingress:
+            # if direct ingress is not enabled or the replica is not an ingress replica,
+            # we can just call the super method to perform the graceful shutdown.
+            await super().perform_graceful_shutdown()
+            return
+
+        # set the shutting down flag to True to signal ALBs with failing health checks
+        # to stop sending traffic to this replica.
+        self._shutting_down = True
+
+        # If the replica was never initialized it never served traffic, so we
+        # can skip the wait period.
+        if self._user_callable_initialized:
+            # in order to gracefully shutdown the replica, we need to wait for the
+            # requests to drain and for PROXY_MIN_DRAINING_PERIOD_S to pass.
+            # this is necessary because we want to give ALB time to update its
+            # target group to remove the replica from it and to mark this replica
+            # as unhealthy.
+            # TODO(abrar): the code below assumes that once ALB marks a replica target
+            # as unhealthy, it will not send traffic to it. This is not true because
+            # ALB can send traffic to a replica if all targets are unhealthy.
+            # The correct way to handle is this we start the cooldown period since
+            # the last request finished and wait for the cooldown period to pass.
+            await asyncio.gather(
+                asyncio.sleep(ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S),
+                self._drain_ongoing_requests(),
+            )
+            logger.info(
+                f"Replica {self._replica_id} successfully drained ongoing requests."
+            )
+
+        await self.shutdown()
         if self._direct_ingress_http_server_task:
             self._direct_ingress_http_server_task.cancel()
         if self._direct_ingress_grpc_server_task:
