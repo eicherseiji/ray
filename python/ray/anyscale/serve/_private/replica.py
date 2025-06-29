@@ -1017,7 +1017,7 @@ class AnyscaleReplica(ReplicaBase):
                 if proxy_asgi_receive_task.done():
                     raise asyncio.CancelledError
 
-                result_gen = self._call_user_generator(
+                result_gen = self._user_callable_wrapper.call_http_entrypoint(
                     request_metadata,
                     request_args,
                     request_kwargs,
