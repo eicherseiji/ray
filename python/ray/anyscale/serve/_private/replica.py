@@ -1,4 +1,5 @@
 import asyncio
+from ray.serve._private.thirdparty.get_asgi_route_name import get_asgi_route_name
 import inspect
 import logging
 import pickle
@@ -40,6 +41,7 @@ from ray.anyscale.serve._private.tracing_utils import (
 )
 from ray.serve.generated.serve_pb2 import HealthzResponse, ListApplicationsResponse
 from ray.serve._private.http_util import (
+    ASGIReceiveProxy,
     convert_object_to_asgi_messages,
     get_http_response_status,
     send_http_response_on_exception,
@@ -54,7 +56,6 @@ from ray.serve._private.common import (
     RequestMetadata,
     ServeComponentType,
     gRPCRequest,
-    StreamingHTTPRequest,
 )
 from ray.serve._private.constants import (
     REQUEST_LATENCY_BUCKETS_MS,
@@ -541,9 +542,7 @@ class AnyscaleReplica(ReplicaBase):
             return super()._can_accept_request()
 
     @contextmanager
-    def _request_context(
-        self, request_metadata: RequestMetadata, request_args: Tuple[Any]
-    ):
+    def _request_context(self, request_metadata: RequestMetadata):
         # TODO (abrar): for http requests on ASGI, request_metadata.call_method is __call__
         #   this is not nice, figure out a better way to map this to method name.
         call_method = request_metadata.call_method
@@ -553,9 +552,6 @@ class AnyscaleReplica(ReplicaBase):
             trace_context=trace_context,
         )
         with trace_manager:
-            request_metadata.route = self._maybe_get_http_route(
-                request_metadata, request_args
-            )
             trace_attributes = {
                 "request_id": request_metadata.request_id,
                 "replica_id": self._replica_id.unique_id,
@@ -572,7 +568,7 @@ class AnyscaleReplica(ReplicaBase):
 
     @asynccontextmanager
     async def _wrap_user_method_call(
-        self, request_metadata: RequestMetadata, request_args: Tuple[Any]
+        self, request_metadata: RequestMetadata
     ) -> AsyncGenerator[StatusCodeCallback, None]:
         """Context manager that wraps user method calls.
 
@@ -581,9 +577,9 @@ class AnyscaleReplica(ReplicaBase):
         3) Records per-request metrics via the metrics manager.
         """
         async with self._start_request():
-            with self._request_context(request_metadata, request_args):
+            with self._request_context(request_metadata):
                 with self._handle_errors_and_metrics(
-                    request_metadata, request_args
+                    request_metadata
                 ) as status_code_callback:
                     yield status_code_callback
 
@@ -614,18 +610,16 @@ class AnyscaleReplica(ReplicaBase):
         status_code: Optional[str],
         latency_ms: float,
         request_metadata: RequestMetadata,
-        request_args: Tuple[Any],
     ):
         super()._record_errors_and_metrics(
-            user_exception, status_code, latency_ms, request_metadata, request_args
+            user_exception, status_code, latency_ms, request_metadata
         )
-        http_method = self._maybe_get_http_method(request_metadata, request_args)
         http_route = request_metadata.route
         call_method = request_metadata.call_method
 
         if request_metadata.is_http_request:
             set_http_span_attributes(
-                method=http_method,
+                method=request_metadata._http_method,
                 status_code=status_code,
                 route=http_route,
             )
@@ -803,7 +797,7 @@ class AnyscaleReplica(ReplicaBase):
                 )
             )
 
-        async with self._wrap_user_method_call(request_metadata, request_args):
+        async with self._wrap_user_method_call(request_metadata):
             result_gen = call_unary()
 
             # Use the generic disconnect detecting wrapper
@@ -911,6 +905,16 @@ class AnyscaleReplica(ReplicaBase):
 
         return tracing_ctx
 
+    def _determine_http_route(self, scope: Scope) -> str:
+        route = scope.get("path", "")
+        if self._user_callable_asgi_app is not None:
+            try:
+                route = get_asgi_route_name(self._user_callable_asgi_app, scope)
+            except Exception:
+                pass
+
+        return route
+
     async def _direct_ingress_asgi(
         self,
         scope: Scope,
@@ -987,23 +991,18 @@ class AnyscaleReplica(ReplicaBase):
             internal_request_id=generate_request_id(),
             call_method="__call__",
             # TODO(edoakes): populate this.
-            route=route,
+            route=self._determine_http_route(scope),
             app_name=self._deployment_id.app_name,
             # TODO(edoakes): populate the multiplexed model ID.
             multiplexed_model_id="",
             is_streaming=True,
             _request_protocol=RequestProtocol.HTTP,
             tracing_context=self.get_asgi_tracing_context(scope["headers"]),
-        )
-        http_request = StreamingHTTPRequest(
-            asgi_scope=scope,
-            receive_asgi_messages=receive_thread_safe,
+            _http_method=scope.get("method", "WS"),
         )
 
         matched_route = route.startswith(self._route_prefix)
-
-        request_args = (http_request,)
-        request_kwargs = {}
+        receive_proxy = ASGIReceiveProxy(scope, request_metadata, receive_thread_safe)
         response_started = False
         status = None
         try:
@@ -1013,16 +1012,16 @@ class AnyscaleReplica(ReplicaBase):
                 )
 
             async with self._wrap_user_method_call(
-                request_metadata, request_args
+                request_metadata
             ) as status_code_callback:
                 if proxy_asgi_receive_task.done():
                     raise asyncio.CancelledError
 
                 result_gen = self._user_callable_wrapper.call_http_entrypoint(
                     request_metadata,
-                    request_args,
-                    request_kwargs,
-                    status_code_callback=status_code_callback,
+                    status_code_callback,
+                    scope,
+                    receive_proxy,
                 )
 
                 # Use the generic disconnect detecting wrapper
