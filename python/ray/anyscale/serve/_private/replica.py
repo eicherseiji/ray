@@ -1039,10 +1039,7 @@ class AnyscaleReplica(ReplicaBase):
 
                 # Stream the response
                 expecting_trailers = False
-                async for result in replica_response_generator:
-                    # TODO(edoakes): we should avoid serializing and deserializing the ASGI
-                    # messages here. This requires some upstream refactoring.
-                    asgi_messages = pickle.loads(result)
+                async for asgi_messages in replica_response_generator:
                     for msg in asgi_messages:
                         # Stop checking for disconnect when response is complete
                         if msg["type"] == "http.response.start":
