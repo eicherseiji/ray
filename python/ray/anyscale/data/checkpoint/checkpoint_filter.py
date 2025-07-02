@@ -24,7 +24,10 @@ class CheckpointFilter(abc.ABC):
 
     def __init__(self, config: CheckpointConfig):
         self.ckpt_config = config
-        self.checkpoint_path = _unwrap_protocol(self.ckpt_config.checkpoint_path)
+        self.checkpoint_path = self.ckpt_config.checkpoint_path
+        self.checkpoint_path_unwrapped = _unwrap_protocol(
+            self.ckpt_config.checkpoint_path
+        )
         self.id_column = self.ckpt_config.id_column
         self.filesystem = self.ckpt_config.filesystem
         self.filter_num_threads = self.ckpt_config.filter_num_threads
@@ -97,7 +100,7 @@ class BatchBasedCheckpointFilter(CheckpointFilter):
         start_t = time.time()
 
         checkpoint_ds = (
-            ray.data.read_parquet(self.checkpoint_path)
+            ray.data.read_parquet(self.checkpoint_path, filesystem=self.filesystem)
             .sort(self.id_column)  # Sort the IDs, as filter will use binary search.
             .repartition(1)
         )
@@ -122,7 +125,7 @@ class BatchBasedCheckpointFilter(CheckpointFilter):
         return res
 
     def delete_checkpoint(self):
-        self.filesystem.delete_dir(self.checkpoint_path)
+        self.filesystem.delete_dir(self.checkpoint_path_unwrapped)
 
     def filter_rows_for_block(
         self,

@@ -25,7 +25,7 @@ class RowBasedFileStorageCheckpointFilter(RowBasedCheckpointFilter):
         super().__init__(config)
 
         self._checkpoint_dir_does_not_exist = False
-        if not os.path.exists(self.checkpoint_path):
+        if not os.path.exists(self.checkpoint_path_unwrapped):
             self._checkpoint_dir_does_not_exist = True
             logger.warning(
                 f"Checkpoint directory {config.checkpoint_path} does not exist. "
@@ -65,7 +65,7 @@ class RowBasedFileStorageCheckpointFilter(RowBasedCheckpointFilter):
 
         def _exists(fpath: str):
             return os.path.exists(
-                os.path.join(self.checkpoint_path, fpath),
+                os.path.join(self.checkpoint_path_unwrapped, fpath),
             )
 
         with ThreadPoolExecutor(max_workers=self.filter_num_threads) as executor:
@@ -82,8 +82,8 @@ class RowBasedFileStorageCheckpointWriter(CheckpointWriter):
     def __init__(self, config: CheckpointConfig):
         super().__init__(config)
         # If the checkpoint output directory does not exist, create it.
-        if not os.path.exists(self.checkpoint_path):
-            os.makedirs(self.checkpoint_path)
+        if not os.path.exists(self.checkpoint_path_unwrapped):
+            os.makedirs(self.checkpoint_path_unwrapped)
 
     def write_block_checkpoint(self, block: BlockAccessor):
         with ThreadPoolExecutor(max_workers=self.write_num_threads) as executor:
@@ -105,12 +105,12 @@ class RowBasedFileStorageCheckpointWriter(CheckpointWriter):
 
     def write_row_checkpoint(self, row: Dict[str, Any]):
         """Write a checkpoint for a single row to the checkpoint
-        output directory given by `self.checkpoint_path`.
+        output directory given by `self.checkpoint_path_unwrapped`.
 
         The name of the checkpoint file is `f"{row[self.id_col]}.jsonl"`."""
 
         row_id = row[self.id_col]
-        file_key = os.path.join(self.checkpoint_path, f"{row_id}.jsonl")
+        file_key = os.path.join(self.checkpoint_path_unwrapped, f"{row_id}.jsonl")
 
         file = Path(file_key)
         file.parent.mkdir(parents=True, exist_ok=True)

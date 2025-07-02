@@ -22,7 +22,9 @@ class CheckpointWriter:
 
     def __init__(self, config: CheckpointConfig):
         self.ckpt_config = config
-        self.checkpoint_path = _unwrap_protocol(self.ckpt_config.checkpoint_path)
+        self.checkpoint_path_unwrapped = _unwrap_protocol(
+            self.ckpt_config.checkpoint_path
+        )
         self.id_col = self.ckpt_config.id_column
         self.filesystem = self.ckpt_config.filesystem
         self.write_num_threads = self.ckpt_config.write_num_threads
@@ -68,7 +70,7 @@ class BatchBasedCheckpointWriter(CheckpointWriter):
     def __init__(self, config: CheckpointConfig):
         super().__init__(config)
 
-        self.filesystem.create_dir(config.checkpoint_path, recursive=True)
+        self.filesystem.create_dir(self.checkpoint_path_unwrapped, recursive=True)
 
     def write_block_checkpoint(self, block: BlockAccessor):
         """Write a checkpoint for all rows in a single block to the checkpoint
@@ -79,7 +81,7 @@ class BatchBasedCheckpointWriter(CheckpointWriter):
             return
 
         file_name = f"{uuid.uuid4()}.parquet"
-        ckpt_file_path = os.path.join(self.checkpoint_path, file_name)
+        ckpt_file_path = os.path.join(self.checkpoint_path_unwrapped, file_name)
 
         checkpoint_ids_block = block.select(columns=[self.id_col])
         # `pyarrow.parquet.write_parquet` requires a PyArrow table. It errors if the block is

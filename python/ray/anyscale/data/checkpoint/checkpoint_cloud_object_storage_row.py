@@ -48,7 +48,7 @@ class RowBasedCloudObjectStorageCheckpointFilter(RowBasedCheckpointFilter):
 
         def _get_file_info():
             return self.filesystem.get_file_info(
-                FileSelector(self.checkpoint_path, allow_not_found=True)
+                FileSelector(self.checkpoint_path_unwrapped, allow_not_found=True)
             )
 
         files = call_with_retry(
@@ -78,11 +78,11 @@ class RowBasedCloudObjectStorageCheckpointWriter(CheckpointWriter):
 
     def write_row_checkpoint(self, row: Dict[str, Any]):
         """Write a checkpoint for a single row to the checkpoint
-        output directory given by `self.checkpoint_path`.
+        output directory given by `self.checkpoint_path_unwrapped`.
 
         The name of the checkpoint file is `f"{row[self.id_col]}.jsonl"`."""
 
-        split_bucket = self.checkpoint_path.split("/")
+        split_bucket = self.checkpoint_path_unwrapped.split("/")
         bucket, key_prefix = split_bucket[0], "/".join(split_bucket[1:])
         row_id = row[self.id_col]
         file_key = f"{key_prefix}/{row_id}.jsonl"
