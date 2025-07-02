@@ -456,6 +456,12 @@ DEFAULT_REQUEST_ROUTING_STATS_TIMEOUT_S = 30
 # Name of deployment request routing stats method implemented by user.
 REQUEST_ROUTING_STATS_METHOD = "record_routing_stats"
 
+# By default, we run user code in a separate event loop.
+# This flag can be set to 0 to run user code in the same event loop as the
+# replica's main event loop.
+RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD = (
+    os.environ.get("RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD", "1") == "1"
+
 # How long to wait after deployments become stable before attempting node compaction
 RAY_SERVE_NODE_COMPACTION_DELAY_S = int(
     os.environ.get("RAY_SERVE_NODE_COMPACTION_DELAY_S", "300")
