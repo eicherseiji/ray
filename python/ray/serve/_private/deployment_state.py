@@ -39,6 +39,7 @@ from ray.serve._private.constants import (
     MAX_PER_REPLICA_RETRY_COUNT,
     RAY_SERVE_ENABLE_TASK_EVENTS,
     RAY_SERVE_FORCE_STOP_UNHEALTHY_REPLICAS,
+    RAY_SERVE_NODE_COMPACTION_DELAY_S,
     RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY,
     REPLICA_HEALTH_CHECK_UNHEALTHY_THRESHOLD,
     SERVE_LOGGER_NAME,
@@ -71,6 +72,13 @@ from ray.serve.schema import (
     _deployment_info_to_schema,
 )
 from ray.util.placement_group import PlacementGroup
+
+# isort: off
+from ray.anyscale.serve._private.constants import (
+    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+)
+
+# isort: on
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
 
@@ -186,6 +194,20 @@ SLOW_STARTUP_WARNING_PERIOD_S = int(
 
 ALL_REPLICA_STATES = list(ReplicaState)
 _SCALING_LOG_ENABLED = os.environ.get("SERVE_ENABLE_SCALING_LOG", "0") != "0"
+# Feature flag to disable forcibly shutting down replicas.
+RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = (
+    os.environ.get("RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY", "0")
+    == "1"
+)
+if (
+    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
+    and not RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY
+):
+    logger.info(
+        "Setting RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY to True "
+        "because ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS is set to True."
+    )
+    RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = True
 
 
 def print_verbose_scaling_log():
@@ -265,6 +287,7 @@ class ActorReplicaWrapper:
         self._routing_stats: Dict[str, Any] = {}
         self._record_routing_stats_ref: Optional[ObjectRef] = None
         self._last_record_routing_stats_time: float = 0.0
+        self._ingress: bool = False
 
     @property
     def replica_id(self) -> str:
@@ -413,6 +436,7 @@ class ActorReplicaWrapper:
         until the deployment scheduler schedules the underlying actor.
         """
         self._actor_resources = deployment_info.replica_config.resource_dict
+        self._ingress = deployment_info.ingress
         # it is currently not possible to create a placement group
         # with no resources (https://github.com/ray-project/ray/issues/20401)
         self._deployment_is_cross_language = (
@@ -971,6 +995,17 @@ class ActorReplicaWrapper:
 
     def force_stop(self):
         """Force the actor to exit without shutting down gracefully."""
+        if (
+            self._ingress
+            and RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY
+        ):
+            logger.info(
+                f"{self.replica_id} did not shut down because it had not finished draining requests. "
+                "Going to wait until the draining is complete. You can force-stop the replica by "
+                "setting RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY to 0."
+            )
+            return
+
         try:
             ray.kill(ray.get_actor(self._actor_name, namespace=SERVE_NAMESPACE))
         except ValueError:
@@ -2498,6 +2533,8 @@ class DeploymentStateManager:
         self._shutting_down = False
 
         self._deployment_states: Dict[DeploymentID, DeploymentState] = {}
+        self._all_deployments_healthy: bool = False
+        self._last_became_stable_at: Optional[float] = None
 
         self._recover_from_checkpoint(
             all_current_actor_names, all_current_placement_group_names
@@ -2814,8 +2851,7 @@ class DeploymentStateManager:
             deployment_state.check_curr_status()
 
         # STEP 3: Drain nodes
-        draining_nodes = self._cluster_node_info_cache.get_draining_nodes()
-        allow_new_compaction = len(draining_nodes) == 0 and all(
+        all_deployments_healthy = all(
             ds.curr_status_info.status == DeploymentStatus.HEALTHY
             # TODO(zcin): Make sure that status should never be healthy if
             # the number of running replicas at target version is not at
@@ -2826,7 +2862,24 @@ class DeploymentStateManager:
             and len(ds._replicas.get()) == ds.target_num_replicas
             for ds in self._deployment_states.values()
         )
+        if not self._all_deployments_healthy and all_deployments_healthy:
+            self._last_became_stable_at = time.time()
+
+        self._all_deployments_healthy = all_deployments_healthy
+
+        draining_nodes = self._cluster_node_info_cache.get_draining_nodes()
         if RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY:
+            # Only allow new compaction if there are no externally draining nodes,
+            # and all deployments have been stable for RAY_SERVE_NODE_COMPACTION_DELAY_S
+            # seconds (5min by default)
+            allow_new_compaction = (
+                len(draining_nodes) == 0
+                and self._all_deployments_healthy
+                and (
+                    time.time() - self._last_became_stable_at
+                    > RAY_SERVE_NODE_COMPACTION_DELAY_S
+                )
+            )
             # Tuple of target node to compact, and its draining deadline
             node_info: Optional[
                 Tuple[str, float]

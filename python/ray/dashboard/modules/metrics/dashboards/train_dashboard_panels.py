@@ -34,6 +34,7 @@ CONTROLLER_STATE_PANEL = Panel(
     ],
 )
 
+
 CONTROLLER_OPERATION_TIME_PANEL = Panel(
     id=PanelId.next(),
     title="Controller Operation Time",
@@ -305,6 +306,85 @@ TRAIN_WORKER_PANELS = [
     # Network Resources
     NETWORK_THROUGHPUT_PANEL,
 ]
+
+TURBO_TRAIN_GRAFANA_PANELS = [
+    # DCGM Profiling Metrics (SM_ACTIVITY)
+    Panel(
+        id=101,
+        title="GPU SM Activity",
+        description="GPU Streaming Multiprocessor Activity. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
+        # Note `percentunit` is a special unit that will render the y-axis
+        # as a percentage with input value range [0.0, 1.0].
+        unit="percentunit",
+        targets=[
+            Target(
+                expr="DCGM_FI_PROF_SM_ACTIVE",
+                legend="Node IP: {{NodeIp}}, GPU: {{gpu}}",
+            ),
+        ],
+        fill=0,
+        stack=False,
+    ),
+    # DCGM Profiling Metrics (SM_OCCUPANCY)
+    Panel(
+        id=102,
+        title="GPU SM Occupancy",
+        description="GPU Streaming Multiprocessor Occupancy. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
+        unit="percentunit",
+        targets=[
+            Target(
+                expr="DCGM_FI_PROF_SM_OCCUPANCY",
+                legend="Node IP: {{NodeIp}}, GPU ID: {{gpu}}",
+            ),
+        ],
+        fill=0,
+        stack=False,
+    ),
+]
+
+TRAIN_GRAFANA_PANELS.extend(TURBO_TRAIN_GRAFANA_PANELS)
+
+# TODO(matt): Clean this up.
+TURBO_TRAIN_GRAFANA_PANELS = [
+    # DCGM Profiling Metrics (SM_ACTIVITY)
+    Panel(
+        id=PanelId.next(),
+        title="GPU SM Activity",
+        description="GPU Streaming Multiprocessor Activity. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
+        # Note `percentunit` is a special unit that will render the y-axis
+        # as a percentage with input value range [0.0, 1.0].
+        unit="percentunit",
+        targets=[
+            Target(
+                expr="DCGM_FI_PROF_SM_ACTIVE",
+                legend="Node IP: {{NodeIp}}, GPU: {{gpu}}",
+            ),
+        ],
+        fill=0,
+        stack=False,
+    ),
+    # DCGM Profiling Metrics (SM_OCCUPANCY)
+    Panel(
+        id=PanelId.next(),
+        title="GPU SM Occupancy",
+        description="GPU Streaming Multiprocessor Occupancy. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
+        unit="percentunit",
+        targets=[
+            Target(
+                expr="DCGM_FI_PROF_SM_OCCUPANCY",
+                legend="Node IP: {{NodeIp}}, GPU ID: {{gpu}}",
+            ),
+        ],
+        fill=0,
+        stack=False,
+    ),
+]
+
+# Currently just adding to "Resource Utilization" row and the run/worker panels.
+# This is a temporary solution and should be cleaned up.
+TRAIN_GRAFANA_ROWS[1].panels.extend(TURBO_TRAIN_GRAFANA_PANELS)
+TRAIN_RUN_PANELS.extend(TURBO_TRAIN_GRAFANA_PANELS)
+TRAIN_WORKER_PANELS.extend(TURBO_TRAIN_GRAFANA_PANELS)
 
 # Get all panel IDs from both top-level panels and panels within rows
 all_panel_ids = [panel.id for panel in TRAIN_GRAFANA_PANELS]
