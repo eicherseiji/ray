@@ -55,9 +55,9 @@ from ray.serve._private.common import (
     ReplicaQueueLengthInfo,
     RequestMetadata,
     ServeComponentType,
-    gRPCRequest,
 )
 from ray.serve._private.constants import (
+    GRPC_CONTEXT_ARG_NAME,
     REQUEST_LATENCY_BUCKETS_MS,
     SERVE_LOGGER_NAME,
     SERVE_CONTROLLER_NAME,
@@ -786,9 +786,15 @@ class AnyscaleReplica(ReplicaBase):
             is_streaming=False,
         )
 
-        grpc_request = gRPCRequest(request_proto)
-        request_args = (grpc_request,)
-        request_kwargs = {}
+        method_info = self._user_callable_wrapper.get_user_method_info(
+            request_metadata.call_method
+        )
+        request_args = (request_proto,)
+        request_kwargs = (
+            {GRPC_CONTEXT_ARG_NAME: request_metadata.grpc_context}
+            if method_info.takes_grpc_context_kwarg
+            else {}
+        )
 
         async def call_unary():
             yield await asyncio.wrap_future(
