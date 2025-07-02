@@ -322,25 +322,29 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
                 tags=self._filter_tags(deployment_error_counter, tags)
             )
 
-    def inc_num_ingress_ongoing_requests(self, protocol: RequestProtocol) -> int:
-        if not self._is_direct_ingress:
-            return
+    def inc_num_ongoing_requests(self, request_metadata: RequestMetadata) -> int:
+        self._num_ongoing_requests += 1
+        if not self._cached_metrics_enabled:
+            self._num_ongoing_requests_gauge.set(self._num_ongoing_requests)
 
-        if protocol == RequestProtocol.HTTP:
-            self._ingress_ongoing_http_requests += 1
-            self.ingress_num_ongoing_http_requests_gauge.set(
-                self._ingress_ongoing_http_requests
-            )
+        if self._is_direct_ingress and request_metadata.is_direct_ingress:
+            if request_metadata.is_http_request:
+                self._ingress_ongoing_http_requests += 1
+                self.ingress_num_ongoing_http_requests_gauge.set(
+                    self._ingress_ongoing_http_requests
+                )
 
-    def dec_num_ingress_ongoing_requests(self, protocol: RequestProtocol) -> int:
-        if not self._is_direct_ingress:
-            return
+    def dec_num_ongoing_requests(self, request_metadata: RequestMetadata) -> int:
+        self._num_ongoing_requests -= 1
+        if not self._cached_metrics_enabled:
+            self._num_ongoing_requests_gauge.set(self._num_ongoing_requests)
 
-        if protocol == RequestProtocol.HTTP:
-            self._ingress_ongoing_http_requests -= 1
-            self.ingress_num_ongoing_http_requests_gauge.set(
-                self._ingress_ongoing_http_requests
-            )
+        if self._is_direct_ingress and request_metadata.is_direct_ingress:
+            if request_metadata.is_http_request:
+                self._ingress_ongoing_http_requests -= 1
+                self.ingress_num_ongoing_http_requests_gauge.set(
+                    self._ingress_ongoing_http_requests
+                )
 
 
 class AnyscaleReplica(ReplicaBase):
@@ -614,6 +618,18 @@ class AnyscaleReplica(ReplicaBase):
         super()._record_errors_and_metrics(
             user_exception, status_code, latency_ms, request_metadata
         )
+        if request_metadata.is_direct_ingress:
+            self._metrics_manager.record_ingress_request_metrics(
+                protocol=RequestProtocol.HTTP,
+                method=request_metadata._http_method,
+                route=self._route_prefix,
+                app_name=self._deployment_id.app_name,
+                deployment_name=self._deployment_id.name,
+                latency_ms=latency_ms,
+                was_error=status_code.startswith(("4", "5")),
+                status_code=status_code,
+            )
+
         http_route = request_metadata.route
         call_method = request_metadata.call_method
 
@@ -944,6 +960,7 @@ class AnyscaleReplica(ReplicaBase):
         method = scope.get("method", "WS").upper()
         route = scope.get("path", "")
 
+        # Handle health check or routes request.
         if route in ["/-/healthz", "/-/routes"]:
             healthy, message = await self._dataplane_health_check()
             status_code = 200 if healthy else 503
@@ -966,11 +983,17 @@ class AnyscaleReplica(ReplicaBase):
             )
             return
 
-        headers = dict(scope["headers"])
-        request_id = (
-            str(headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8")))
-            or generate_request_id()
-        )
+        # If the HTTP path does not match the deployment route prefix,
+        # it is invalid and we should not serve it.
+        if not route.startswith(self._route_prefix):
+            for msg in convert_object_to_asgi_messages(
+                f"Path '{route}' not found. "
+                "Ping http://.../-/routes for available routes.",
+                status_code=404,
+            ):
+                await send(msg)
+            return
+
         if not self._can_accept_request():
             for msg in convert_object_to_asgi_messages(
                 "Request dropped due to backpressure",
@@ -978,6 +1001,27 @@ class AnyscaleReplica(ReplicaBase):
             ):
                 await send(msg)
             return
+
+        headers = dict(scope["headers"])
+        request_id = (
+            str(headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8")))
+            or generate_request_id()
+        )
+        request_metadata = RequestMetadata(
+            request_id=request_id,
+            internal_request_id=generate_request_id(),
+            call_method="__call__",
+            # TODO(edoakes): populate this.
+            route=self._determine_http_route(scope),
+            app_name=self._deployment_id.app_name,
+            # TODO(edoakes): populate the multiplexed model ID.
+            multiplexed_model_id="",
+            is_streaming=True,
+            _request_protocol=RequestProtocol.HTTP,
+            tracing_context=self.get_asgi_tracing_context(scope["headers"]),
+            _http_method=scope.get("method", "WS"),
+            is_direct_ingress=True,
+        )
 
         receive_queue = MessageQueue()
         proxy_asgi_receive_task = self._event_loop.create_task(
@@ -992,37 +1036,17 @@ class AnyscaleReplica(ReplicaBase):
                 )
             )
 
-        request_metadata = RequestMetadata(
-            request_id=request_id,
-            internal_request_id=generate_request_id(),
-            call_method="__call__",
-            # TODO(edoakes): populate this.
-            route=self._determine_http_route(scope),
-            app_name=self._deployment_id.app_name,
-            # TODO(edoakes): populate the multiplexed model ID.
-            multiplexed_model_id="",
-            is_streaming=True,
-            _request_protocol=RequestProtocol.HTTP,
-            tracing_context=self.get_asgi_tracing_context(scope["headers"]),
-            _http_method=scope.get("method", "WS"),
-        )
-
-        matched_route = route.startswith(self._route_prefix)
         receive_proxy = ASGIReceiveProxy(scope, request_metadata, receive_thread_safe)
         response_started = False
         status = None
-        try:
-            if matched_route:
-                self._metrics_manager.inc_num_ingress_ongoing_requests(
-                    RequestProtocol.HTTP
-                )
+        async with self._wrap_user_method_call(
+            request_metadata
+        ) as status_code_callback:
+            if proxy_asgi_receive_task.done():
+                status_code_callback("499")
+                raise asyncio.CancelledError
 
-            async with self._wrap_user_method_call(
-                request_metadata
-            ) as status_code_callback:
-                if proxy_asgi_receive_task.done():
-                    raise asyncio.CancelledError
-
+            try:
                 result_gen = self._user_callable_wrapper.call_http_entrypoint(
                     request_metadata,
                     status_code_callback,
@@ -1068,37 +1092,22 @@ class AnyscaleReplica(ReplicaBase):
                                 replica_response_generator.stop_checking_for_disconnect()
                         await send(msg)
                         response_started = True
-        except BaseException as e:
-            status = get_http_response_status(
-                e,
-                self._http_options.request_timeout_s,
-                request_metadata.request_id,
-            )
-            for asgi_message in send_http_response_on_exception(
-                status, response_started
-            ):
-                await send(asgi_message)
-        finally:
-            if not proxy_asgi_receive_task.done():
-                proxy_asgi_receive_task.cancel()
-
-            if matched_route:
-                self._metrics_manager.dec_num_ingress_ongoing_requests(
-                    RequestProtocol.HTTP
+            except BaseException as e:
+                status = get_http_response_status(
+                    e,
+                    self._http_options.request_timeout_s,
+                    request_metadata.request_id,
                 )
+                status_code_callback(str(status.code))
 
-            assert status is not None
-            latency_ms = (time.time() - start_time) * 1000.0
-            self._metrics_manager.record_ingress_request_metrics(
-                protocol=RequestProtocol.HTTP,
-                method=method,
-                route=self._route_prefix if matched_route else "",
-                app_name=self._deployment_id.app_name if matched_route else "",
-                deployment_name=self._deployment_id.name if matched_route else "",
-                latency_ms=latency_ms,
-                was_error=status.is_error,
-                status_code=str(status.code),
-            )
+                for asgi_message in send_http_response_on_exception(
+                    status, response_started
+                ):
+                    await send(asgi_message)
+                raise
+            finally:
+                if not proxy_asgi_receive_task.done():
+                    proxy_asgi_receive_task.cancel()
 
     async def perform_graceful_shutdown(self):
         if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS or not self._ingress:
