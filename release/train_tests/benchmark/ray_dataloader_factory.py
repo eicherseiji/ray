@@ -33,6 +33,7 @@ class RayDataLoaderFactory(BaseDataLoaderFactory):
         data_context.execution_options.actor_locality_enabled = (
             dataloader_config.actor_locality_enabled
         )
+        data_context._enable_read_files_fusion_override = True
 
     @abstractmethod
     def get_ray_datasets(self) -> Dict[str, Dataset]:
