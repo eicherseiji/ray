@@ -461,8 +461,4 @@ REQUEST_ROUTING_STATS_METHOD = "record_routing_stats"
 # replica's main event loop.
 RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD = (
     os.environ.get("RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD", "1") == "1"
-
-# How long to wait after deployments become stable before attempting node compaction
-RAY_SERVE_NODE_COMPACTION_DELAY_S = int(
-    os.environ.get("RAY_SERVE_NODE_COMPACTION_DELAY_S", "300")
 )

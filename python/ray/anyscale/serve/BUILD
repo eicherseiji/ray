@@ -4,7 +4,7 @@ load("//bazel:python.bzl", "py_test_module_list")
 py_test_module_list(
     size = "medium",
     data = glob(["tests/fixtures/*.*"]),
-    env = {"RAY_SERVE_NODE_COMPACTION_DELAY_S": "1"},
+    env = {"ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S": "1"},
     files = glob(
         ["tests/test_*.py"],
         exclude = ["tests/test_deployment_scheduler.py"],
@@ -22,7 +22,7 @@ py_test_module_list(
 py_test_module_list(
     size = "large",
     data = glob(["tests/fixtures/*.*"]),
-    env = {"RAY_SERVE_NODE_COMPACTION_DELAY_S": "1"},
+    env = {"ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S": "1"},
     files = [
         "tests/test_deployment_scheduler.py",
     ],

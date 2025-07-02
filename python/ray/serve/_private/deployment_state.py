@@ -39,7 +39,6 @@ from ray.serve._private.constants import (
     MAX_PER_REPLICA_RETRY_COUNT,
     RAY_SERVE_ENABLE_TASK_EVENTS,
     RAY_SERVE_FORCE_STOP_UNHEALTHY_REPLICAS,
-    RAY_SERVE_NODE_COMPACTION_DELAY_S,
     RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY,
     REPLICA_HEALTH_CHECK_UNHEALTHY_THRESHOLD,
     SERVE_LOGGER_NAME,
@@ -76,6 +75,7 @@ from ray.util.placement_group import PlacementGroup
 # isort: off
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S,
 )
 
 # isort: on
@@ -2870,14 +2870,14 @@ class DeploymentStateManager:
         draining_nodes = self._cluster_node_info_cache.get_draining_nodes()
         if RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY:
             # Only allow new compaction if there are no externally draining nodes,
-            # and all deployments have been stable for RAY_SERVE_NODE_COMPACTION_DELAY_S
-            # seconds (5min by default)
+            # and all deployments have been stable for
+            # ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S seconds (5min by default)
             allow_new_compaction = (
                 len(draining_nodes) == 0
                 and self._all_deployments_healthy
                 and (
                     time.time() - self._last_became_stable_at
-                    > RAY_SERVE_NODE_COMPACTION_DELAY_S
+                    > ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S
                 )
             )
             # Tuple of target node to compact, and its draining deadline

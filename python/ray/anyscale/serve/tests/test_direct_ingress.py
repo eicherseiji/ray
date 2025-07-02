@@ -21,10 +21,7 @@ from starlette.responses import PlainTextResponse
 import ray
 from ray import serve
 from ray.actor import ActorHandle
-from ray._private.test_utils import (
-    Collector,
-    wait_for_condition,
-)
+from ray._private.test_utils import wait_for_condition
 from ray._common.test_utils import SignalActor, Semaphore
 from ray.serve.generated import serve_pb2, serve_pb2_grpc
 from ray.anyscale.serve._private.constants import (
@@ -39,6 +36,18 @@ from ray.serve.schema import ServeInstanceDetails
 from ray.dashboard.modules.serve.sdk import ServeSubmissionClient
 from ray.serve.schema import DeploymentStatus
 from ray.serve._private.test_utils import get_application_urls, get_application_url
+
+
+@ray.remote
+class Collector:
+    def __init__(self):
+        self.items = []
+
+    def add(self, item):
+        self.items.append(item)
+
+    def get(self):
+        return self.items
 
 
 @pytest.fixture

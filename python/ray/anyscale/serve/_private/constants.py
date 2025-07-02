@@ -16,6 +16,11 @@ ANYSCALE_RAY_SERVE_COMPACTION_TIMEOUT_S = float(
     os.environ.get("ANYSCALE_RAY_SERVE_COMPACTION_TIMEOUT_S", 1800.0)
 )
 
+# How long to wait after deployments become stable before attempting node compaction
+ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S", "300")
+)
+
 DEFAULT_TRACING_EXPORTER_IMPORT_PATH = (
     "ray.anyscale.serve._private.tracing_utils:default_tracing_exporter"
 )
