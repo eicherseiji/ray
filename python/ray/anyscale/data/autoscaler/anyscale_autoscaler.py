@@ -434,9 +434,14 @@ class AnyscaleAutoscaler(Autoscaler):
                         budget = (
                             self._resource_manager._op_resource_allocator.get_budget(op)
                         )
-                        max_num_to_scale_up = self._get_max_scale_up(actor_pool, budget)
-                        if max_num_to_scale_up is not None:
-                            num_to_scale_up = min(num_to_scale_up, max_num_to_scale_up)
+                        if budget is not None:
+                            max_num_to_scale_up = self._get_max_scale_up(
+                                actor_pool, budget
+                            )
+                            if max_num_to_scale_up is not None:
+                                num_to_scale_up = min(
+                                    num_to_scale_up, max_num_to_scale_up
+                                )
 
                     actor_pool.scale(
                         ActorPoolScalingRequest(
