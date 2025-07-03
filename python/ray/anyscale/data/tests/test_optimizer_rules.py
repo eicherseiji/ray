@@ -769,7 +769,6 @@ def test_repartition_build_output(ray_start_regular_shared):
     plan = get_execution_plan(ds._plan._logical_plan)
     fns = plan.dag.get_map_transformer().get_transform_fns()
     expected_fns = [
-        BlockMapTransformFn,
         BuildOutputBlocksMapTransformFn,
     ]
     assert match_transform_fns(expected_fns, fns)
@@ -798,17 +797,12 @@ def test_repartition_fusion_build_output(ray_start_regular_shared):
     assert (
         "InputDataBuffer[Input] -> "
         "TaskPoolMapOperator[ReadRange] -> "
-        "TaskPoolMapOperator[Map(<lambda>)->MapBatches(<lambda>)->StreamingRepartition]"
-        == plan.dag.dag_str
+        "TaskPoolMapOperator[Map(<lambda>)->MapBatches(<lambda>)] -> "
+        "TaskPoolMapOperator[StreamingRepartition]" == plan.dag.dag_str
     )
 
     fns = plan.dag.get_map_transformer().get_transform_fns()
     expected_fns = [
-        BlocksToRowsMapTransformFn,
-        RowMapTransformFn,
-        BuildOutputBlocksMapTransformFn,
-        BlocksToBatchesMapTransformFn,
-        BatchMapTransformFn,
         BuildOutputBlocksMapTransformFn,
     ]
     assert match_transform_fns(expected_fns, fns)
@@ -836,11 +830,11 @@ def test_map_batches_transformer_non_fusion(ray_start_regular_shared):
     assert (
         "InputDataBuffer[Input] -> "
         "TaskPoolMapOperator[ReadRange] -> "
-        "TaskPoolMapOperator[MapBatches(<lambda>)->MapBatches(<lambda>)->MapBatches(<lambda>)->MapBatches(<lambda>)->MapBatches(<lambda>)->StreamingRepartition]"
-        == plan.dag.dag_str
+        "TaskPoolMapOperator[MapBatches(<lambda>)->MapBatches(<lambda>)->MapBatches(<lambda>)->MapBatches(<lambda>)->MapBatches(<lambda>)] -> "
+        "TaskPoolMapOperator[StreamingRepartition]" == plan.dag.dag_str
     )
 
-    fns = plan.dag.get_map_transformer().get_transform_fns()
+    fns = plan.dag.input_dependencies[0].get_map_transformer().get_transform_fns()
 
     expected_fns = [
         BlocksToBatchesMapTransformFn,
