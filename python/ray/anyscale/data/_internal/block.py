@@ -1,6 +1,15 @@
 import collections
 import logging
-from typing import Tuple, List, Sequence, Dict, Iterator, TYPE_CHECKING, Any
+from typing import (
+    Tuple,
+    List,
+    Sequence,
+    Dict,
+    Iterator,
+    TYPE_CHECKING,
+    Any,
+)
+from abc import abstractmethod
 
 import numpy as np
 
@@ -222,6 +231,10 @@ class OptimizedTableBlockMixin(TableBlockAccessor):
             final_block, stats=stats.build()
         )
 
+    @abstractmethod
+    def _get_row(self, index: int):
+        pass
+
     def _iter_groups_sorted(
         self, sort_key: "SortKey"
     ) -> Iterator[Tuple[Sequence[KeyType], Block]]:
@@ -243,7 +256,7 @@ class OptimizedTableBlockMixin(TableBlockAccessor):
 
         for start, end in zip(boundaries[:-1], boundaries[1:]):
             # Fetch tuple of key values from the first row
-            row = self._get_row(start, copy=False)
+            row = self._get_row(start)
 
             yield row[key_col_names], self.slice(start, end, copy=False)
 
