@@ -447,6 +447,7 @@ py_test_module_list(
         "ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
     },
     files = [
+        "test_callback.py",
         "test_fastapi.py",
         "test_handle_cancellation.py",
         "test_http_cancellation.py",
