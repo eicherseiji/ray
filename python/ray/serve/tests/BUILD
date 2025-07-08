@@ -65,6 +65,7 @@ py_test_module_list(
 # Medium tests.
 py_test_module_list(
     size = "medium",
+    env = {"ANYSCALE_TRACING_EXPORTER_IMPORT_PATH": ""},
     files = [
         "test_actor_replica_wrapper.py",
         "test_backpressure.py",
@@ -191,6 +192,7 @@ py_test_module_list(
 # Run serially on Windows.
 py_test_module_list(
     size = "medium",
+    env = {"ANYSCALE_TRACING_EXPORTER_IMPORT_PATH": ""},
     files = [
         "test_deploy_app.py",
         "test_deploy_app_2.py",
@@ -330,7 +332,7 @@ py_test_module_list(
 py_test_module_list(
     size = "medium",
     data = glob(["test_config_files/**/*"]),
-    env = {"RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY": "1"},
+    env = {"RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY": "0"},
     files = [
         "test_cluster.py",
         "test_controller_recovery.py",
@@ -355,7 +357,7 @@ py_test_module_list(
 # Large tests with compact scheduling
 py_test_module_list(
     size = "large",
-    env = {"RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY": "1"},
+    env = {"RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY": "0"},
     files = [
         "test_standalone.py",
         "test_standalone_3.py",
@@ -376,7 +378,7 @@ py_test_module_list(
 py_test_module_list(
     size = "large",
     data = glob(["test_config_files/**/*"]),
-    env = {"RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY": "1"},
+    env = {"RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY": "0"},
     files = [
         "test_standalone_2.py",
     ],
@@ -425,6 +427,34 @@ py_test_module_list(
         "test_replica_sync_methods.py",
     ],
     name_suffix = "_with_run_sync_in_threadpool",
+    tags = [
+        "exclusive",
+        "no_windows",
+        "team:serve",
+    ],
+    deps = [
+        ":common",
+        ":conftest",
+        "//python/ray/serve:serve_lib",
+    ],
+)
+
+py_test_module_list(
+    size = "enormous",
+    data = glob(["tests/fixtures/*.*"]),
+    env = {
+        "ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS": "1",
+        "ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
+    },
+    files = [
+        "test_callback.py",
+        "test_fastapi.py",
+        "test_handle_cancellation.py",
+        "test_http_cancellation.py",
+        "test_metrics.py",
+        "test_streaming_response.py",
+    ],
+    name_suffix = "_with_direct_ingress_enabled",
     tags = [
         "exclusive",
         "no_windows",
