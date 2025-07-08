@@ -7,7 +7,10 @@ py_test_module_list(
     env = {"ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S": "1"},
     files = glob(
         ["tests/test_*.py"],
-        exclude = ["tests/test_deployment_scheduler.py"],
+        exclude = [
+            "tests/test_deployment_scheduler.py",
+            "tests/test_direct_ingress.py",
+        ],
     ),
     tags = [
         "exclusive",
@@ -68,16 +71,11 @@ py_test_module_list(
 py_test_module_list(
     size = "medium",
     data = glob(["tests/fixtures/*.*"]),
-    env = {
-        "ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS": "1",
-        "ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
-    },
     files = [
         "tests/test_direct_ingress.py",
-        "tests/test_tracing_utils.py",
     ],
-    name_suffix = "_with_direct_ingress_enabled",
     tags = [
+        "direct_ingress",
         "exclusive",
         "team:serve",
     ],
