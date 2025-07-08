@@ -539,15 +539,15 @@ class AnyscaleReplica(ReplicaBase):
         if ray.util.pdb._is_ray_debugger_post_mortem_enabled():
             ray.util.pdb._post_mortem()
 
-    def _can_accept_request(self):
-        if self._ingress and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    def _can_accept_request(self, request_metadata: RequestMetadata):
+        if request_metadata.is_direct_ingress:
             limit = self.max_queued_requests
             if limit != -1 and self._num_queued_requests >= limit:
                 return False
 
             return True
         else:
-            return super()._can_accept_request()
+            return super()._can_accept_request(request_metadata)
 
     @contextmanager
     def _request_context(self, request_metadata: RequestMetadata):
@@ -622,7 +622,7 @@ class AnyscaleReplica(ReplicaBase):
         super()._record_errors_and_metrics(
             user_exception, status_code, latency_ms, request_metadata
         )
-        if request_metadata.is_direct_ingress:
+        if request_metadata.is_direct_ingress and status_code is not None:
             self._metrics_manager.record_ingress_request_metrics(
                 protocol=RequestProtocol.HTTP,
                 method=request_metadata._http_method,
@@ -782,14 +782,6 @@ class AnyscaleReplica(ReplicaBase):
             return ListApplicationsResponse(application_names=[]).SerializeToString()
 
         request_id = generate_request_id()
-        if not self._can_accept_request():
-            status = ResponseStatus(
-                code=grpc.StatusCode.RESOURCE_EXHAUSTED,
-                message="Request dropped due to backpressure",
-            )
-            set_grpc_code_and_details(context, status)
-            return
-
         c = RayServegRPCContext(context)
         request_metadata = RequestMetadata(
             # TODO: pick up the request ID from gRPC initial metadata.
@@ -804,7 +796,16 @@ class AnyscaleReplica(ReplicaBase):
             route=self._deployment_id.app_name,
             tracing_context=self.get_grpc_tracing_context(context),
             is_streaming=False,
+            is_direct_ingress=True,
         )
+
+        if not self._can_accept_request(request_metadata):
+            status = ResponseStatus(
+                code=grpc.StatusCode.RESOURCE_EXHAUSTED,
+                message="Request dropped due to backpressure",
+            )
+            set_grpc_code_and_details(context, status)
+            return
 
         method_info = self._user_callable_wrapper.get_user_method_info(
             request_metadata.call_method
@@ -998,14 +999,6 @@ class AnyscaleReplica(ReplicaBase):
                 await send(msg)
             return
 
-        if not self._can_accept_request():
-            for msg in convert_object_to_asgi_messages(
-                "Request dropped due to backpressure",
-                status_code=503,
-            ):
-                await send(msg)
-            return
-
         headers = dict(scope["headers"])
         request_id = (
             str(headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8")))
@@ -1026,6 +1019,14 @@ class AnyscaleReplica(ReplicaBase):
             _http_method=scope.get("method", "WS"),
             is_direct_ingress=True,
         )
+
+        if not self._can_accept_request(request_metadata):
+            for msg in convert_object_to_asgi_messages(
+                "Request dropped due to backpressure",
+                status_code=503,
+            ):
+                await send(msg)
+            return
 
         receive_queue = MessageQueue()
         proxy_asgi_receive_task = self._event_loop.create_task(
