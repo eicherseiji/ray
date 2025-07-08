@@ -50,6 +50,10 @@ class PushdownCountFiles(Rule):
 
         assert isinstance(list_files, ListFiles), list_files
 
+        # Disable file partitioning.
+        # TODO: Replace with copy to avoid modifying the original operator in-place.
+        list_files.file_partitioner = None
+
         def count_rows(batch: DataBatch) -> DataBatch:
             assert PATH_COLUMN_NAME in batch.column_names, batch.column_names
             block_metadata_generator = read_files.reader.read_metadata(

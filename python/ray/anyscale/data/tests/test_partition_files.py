@@ -71,8 +71,6 @@ def test_round_robin_partitioner_produces_correct_partitions(
             min_bucket_size=1,
             max_bucket_size=3,
         ),
-        filesystem=MagicMock(),
-        shuffle_config=None,
     )
 
     partitions = [output[PATH_COLUMN_NAME].to_pylist() for output in outputs]
@@ -105,8 +103,6 @@ def test_round_robin_partitioner_with_no_size_estimates():
             min_bucket_size=1,
             max_bucket_size=1,
         ),
-        filesystem=MagicMock(),
-        shuffle_config=None,
     )
     partitions = [output[PATH_COLUMN_NAME].to_pylist() for output in outputs]
 

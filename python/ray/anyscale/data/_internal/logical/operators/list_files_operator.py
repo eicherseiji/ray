@@ -89,7 +89,7 @@ class ListFiles(SourceOperator, LogicalOperator):
         *,
         paths: Union[str, List[str]],
         file_indexer: "FileIndexer",
-        file_partitioner: "FilePartitioner",
+        file_partitioner: Optional["FilePartitioner"],
         filesystem,
         file_extensions: List[str],
         partition_filter: PathPartitionFilter,

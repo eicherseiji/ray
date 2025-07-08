@@ -69,15 +69,17 @@ def plan_list_files_op(
                 partition_filter=partition_filter,
             ),
         ),
-        BlockMapTransformFn(
-            partial(
-                partition_files,
-                partitioner=partitioner,
-                filesystem=filesystem,
-                shuffle_config=shuffle_config,
-            ),
-        ),
     ]
+
+    if shuffle_config is not None:
+        transform_fns.append(
+            BlockMapTransformFn(partial(shuffle_files, shuffle_config=shuffle_config))
+        )
+
+    if partitioner is not None:
+        transform_fns.append(
+            BlockMapTransformFn(partial(partition_files, partitioner=partitioner))
+        )
 
     map_transformer = MapTransformer(transform_fns)
 
@@ -159,26 +161,29 @@ def list_files_for_each_block(
                 yield file_manifest.as_block()
 
 
+def shuffle_files(
+    blocks: Iterable[Block],
+    _: TaskContext,
+    shuffle_config: FileShuffleConfig,
+) -> Iterable[Block]:
+    builder = DelegatingBlockBuilder()
+
+    # NOTE: This will block until file listing is complete!
+    for block in blocks:
+        builder.add_block(block)
+
+    combined_block = builder.build()
+    shuffled_block = BlockAccessor.for_block(combined_block).random_shuffle(
+        shuffle_config.seed
+    )
+    yield shuffled_block
+
+
 def partition_files(
     blocks: Iterable[Block],
     _: TaskContext,
     partitioner: FilePartitioner,
-    filesystem: FileSystem,
-    shuffle_config: Optional[FileShuffleConfig],
 ) -> Iterable[Block]:
-    if shuffle_config:
-        builder = DelegatingBlockBuilder()
-
-        # NOTE: This will block until file listing is complete!
-        for block in blocks:
-            builder.add_block(block)
-
-        combined_block = builder.build()
-        shuffled_block = BlockAccessor.for_block(combined_block).random_shuffle(
-            shuffle_config.seed
-        )
-        blocks = iter([shuffled_block])
-
     for block in blocks:
         partitioner.add_input(FileManifest(block))
         while partitioner.has_partition():
