@@ -609,6 +609,23 @@
           python setup_chaos.py --chaos TerminateEC2InstanceWithGracePeriod
           --batch-size-to-kill 10 --max-to-kill 100 --kill-delay 120
 
+- name: text_embeddings_benchmark_{{scaling}}
+  working_dir: nightly_tests
+
+  cluster:
+    byod:
+      post_build_script: byod_text_embeddings_benchmark.sh
+    cluster_compute: dataset/{{scaling}}_gpu_g6e_2xl_aws.yaml
+
+  matrix:
+    setup:
+      scaling: [fixed_size, autoscaling]
+
+  run:
+    timeout: 3600
+    script: >
+      python dataset/text_embeddings_benchmark.py
+
 ##############
 # TPCH Queries
 ##############
