@@ -306,6 +306,20 @@ class ResourceManager:
         assert self._op_resource_allocator is not None
         return self._op_resource_allocator
 
+    def max_task_output_bytes_to_read(self, op: PhysicalOperator) -> Optional[int]:
+        """Return the maximum bytes of pending task outputs can be read for
+        the given operator. None means no limit."""
+        if self._op_resource_allocator is None:
+            return None
+        return self._op_resource_allocator.max_task_output_bytes_to_read(op)
+
+    def get_budget(self, op: PhysicalOperator) -> Optional[ExecutionResources]:
+        """Return the budget for the given operator, or None if the operator
+        has unlimited budget."""
+        if self._op_resource_allocator is None:
+            return None
+        return self._op_resource_allocator.get_budget(op)
+
 
 class OpResourceAllocator(ABC):
     """An interface for dynamic operator resource allocation.
@@ -321,11 +335,6 @@ class OpResourceAllocator(ABC):
     @abstractmethod
     def update_usages(self):
         """Callback to update resource usages."""
-        ...
-
-    @abstractmethod
-    def can_submit_new_task(self, op: PhysicalOperator) -> bool:
-        """Return whether the given operator can submit a new task."""
         ...
 
     @abstractmethod
