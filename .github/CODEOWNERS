@@ -3,9 +3,13 @@
 #
 # We will remove CODEOWNER when the test infra is synced with upstream and more
 # mature
-anyscale/ci @aslonnie @khluu
-anyscale/docker @aslonnie @khluu
+/anyscale/ci @aslonnie @khluu
+/anyscale/docker @aslonnie @khluu
+
+# Allow people to change CI step config files
+/anyscale/ci/buildkite/*.rayci.yml
 
 # Data team
 /python/ray/anyscale/data @anyscale/ray-data
 /release/anyscale/data @anyscale/ray-data
+/anyscale/ci/buildkite/data.rayci.yml @anyscale/ray-data
