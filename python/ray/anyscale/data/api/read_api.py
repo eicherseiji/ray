@@ -43,7 +43,7 @@ from ray.anyscale.data._internal.readers import (
 from ray.anyscale.data.datasource.snowflake_datasource import SnowflakeDatasource
 from ray.data import DataContext, FileShuffleConfig
 from ray.data._internal.datasource.image_datasource import ImageDatasource
-from ray.data._internal.datasource.json_datasource import JSONDatasource
+from ray.data._internal.datasource.json_datasource import JSON_FILE_EXTENSIONS
 from ray.data._internal.datasource.numpy_datasource import NumpyDatasource
 from ray.data._internal.logical.interfaces import LogicalPlan
 from ray.data._internal.plan import ExecutionPlan
@@ -501,7 +501,7 @@ def read_json(
     partitioning: Partitioning = Partitioning("hive"),
     include_paths: bool = False,
     ignore_missing_paths: bool = False,
-    file_extensions: Optional[List[str]] = JSONDatasource._FILE_EXTENSIONS,
+    file_extensions: Optional[List[str]] = JSON_FILE_EXTENSIONS,
     shuffle: Union[Literal["files"], None] = None,
     concurrency: Optional[int] = None,
     **arrow_json_args,
