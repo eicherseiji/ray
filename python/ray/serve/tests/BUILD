@@ -216,6 +216,7 @@ py_test_module_list(
     size = "large",
     files = [
         "test_api.py",
+        "test_api_2.py",
         "test_model_composition.py",
     ],
     tags = [
@@ -255,6 +256,7 @@ py_test(
     size = "large",
     srcs = [
         "test_api.py",
+        "test_api_2.py",
         "test_controller_crashes.py",
         "test_failure.py",
     ],

@@ -12,7 +12,13 @@ from ray.serve._private.deployment_state import DeploymentReplica
 from ray.serve._private.node_port_manager import NodePortManager
 from ray.serve._private.utils import is_grpc_enabled
 from ray.serve.config import DeploymentMode, HTTPOptions, gRPCOptions
-from ray.serve.schema import LoggingConfig, ReplicaDetails, Target, TargetGroup
+from ray.serve.schema import (
+    LoggingConfig,
+    ReplicaDetails,
+    Target,
+    TargetGroup,
+    ApplicationStatus,
+)
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
 
@@ -82,17 +88,31 @@ class AnyscaleServeController(ServeController):
         else:
             apps = [app_name]
 
+        eligible_app_statuses = [
+            ApplicationStatus.NOT_STARTED,
+            ApplicationStatus.DEPLOY_FAILED,
+        ]
+        apps = [
+            app
+            for app in apps
+            if self.application_state_manager.get_app_status(app)
+            not in eligible_app_statuses
+        ]
+
         if not apps:
             return proxy_target_groups
         # Create target groups for each application
         target_groups = []
         for app_name in apps:
-            app_target_groups = self.get_target_groups_for_app(app_name)
+            route_prefix = self.application_state_manager.get_route_prefix(app_name)
+            app_target_groups = self.get_target_groups_for_app(app_name, route_prefix)
             if app_target_groups:
                 target_groups.extend(app_target_groups)
             else:
                 target_groups.extend(
-                    self.get_target_groups_for_app_with_no_running_replicas(app_name)
+                    self.get_target_groups_for_app_with_no_running_replicas(
+                        route_prefix
+                    )
                 )
 
         return target_groups
@@ -121,7 +141,9 @@ class AnyscaleServeController(ServeController):
             if replica_detail.replica_id in running_replica_ids
         ]
 
-    def get_target_groups_for_app(self, app_name: str) -> List[TargetGroup]:
+    def get_target_groups_for_app(
+        self, app_name: str, route_prefix: str
+    ) -> List[TargetGroup]:
         """
         Create HTTP and gRPC target groups for a specific application.
 
@@ -129,8 +151,6 @@ class AnyscaleServeController(ServeController):
         Or replicas have not fully initialized yet, where their ports are not
         allocated yet.
         """
-        route_prefix = self.application_state_manager.get_route_prefix(app_name)
-
         # Get running replicas for the ingress deployment
         replica_details = self.get_running_replica_details_for_ingress_deployment(
             app_name
@@ -170,7 +190,7 @@ class AnyscaleServeController(ServeController):
         return target_groups
 
     def get_target_groups_for_app_with_no_running_replicas(
-        self, app_name: str
+        self, route_prefix: str
     ) -> List[TargetGroup]:
         """
         For applications that have no running replicas, we return target groups
@@ -178,7 +198,6 @@ class AnyscaleServeController(ServeController):
         proxy in situations where their replicas have scaled down to 0.
         """
         target_groups = []
-        route_prefix = self.application_state_manager.get_route_prefix(app_name)
         http_targets = self.proxy_state_manager.get_targets(RequestProtocol.HTTP)
         grpc_targets = self.proxy_state_manager.get_targets(RequestProtocol.GRPC)
         if http_targets:
