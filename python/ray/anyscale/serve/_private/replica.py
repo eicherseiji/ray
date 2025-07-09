@@ -4,7 +4,7 @@ import inspect
 import logging
 import pickle
 import time
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import contextmanager
 from functools import wraps
 from typing import (
     Any,
@@ -12,6 +12,7 @@ from typing import (
     Callable,
     List,
     Dict,
+    Generator,
     Optional,
     Tuple,
 )
@@ -553,7 +554,7 @@ class AnyscaleReplica(ReplicaBase):
             return super()._can_accept_request(request_metadata)
 
     @contextmanager
-    def _request_context(self, request_metadata: RequestMetadata):
+    def _tracing_context(self, request_metadata: RequestMetadata):
         # TODO (abrar): for http requests on ASGI, request_metadata.call_method is __call__
         #   this is not nice, figure out a better way to map this to method name.
         call_method = request_metadata.call_method
@@ -574,46 +575,35 @@ class AnyscaleReplica(ReplicaBase):
                 "is_streaming": request_metadata.is_streaming,
             }
             set_span_attributes(trace_attributes)
-            self._set_request_context(request_metadata)
             yield
 
-    @asynccontextmanager
-    async def _wrap_user_method_call(
+    @contextmanager
+    def _wrap_request(
         self, request_metadata: RequestMetadata
-    ) -> AsyncGenerator[StatusCodeCallback, None]:
+    ) -> Generator[StatusCodeCallback, None, None]:
         """Context manager that wraps user method calls.
 
         1) Sets the request context var with appropriate metadata.
         2) Records the access log message (if not disabled).
         3) Records per-request metrics via the metrics manager.
         """
-        async with self._start_request():
-            with self._request_context(request_metadata):
-                with self._handle_errors_and_metrics(
-                    request_metadata
-                ) as status_code_callback:
-                    yield status_code_callback
-
-    @asynccontextmanager
-    async def _start_request(self):
-        self._num_queued_requests += 1
-        async with self._semaphore:
-            self._num_queued_requests -= 1
-            yield
-
-    def _set_request_context(self, request_metadata: RequestMetadata):
-        ray.serve.context._serve_request_context.set(
-            ray.serve.context._RequestContext(
-                route=request_metadata.route,
-                request_id=request_metadata.request_id,
-                _internal_request_id=request_metadata.internal_request_id,
-                app_name=self._deployment_id.app_name,
-                multiplexed_model_id=request_metadata.multiplexed_model_id,
-                grpc_context=request_metadata.grpc_context,
-                cancel_on_parent_request_cancel=self._ingress
-                and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+        with self._tracing_context(request_metadata):
+            ray.serve.context._serve_request_context.set(
+                ray.serve.context._RequestContext(
+                    route=request_metadata.route,
+                    request_id=request_metadata.request_id,
+                    _internal_request_id=request_metadata.internal_request_id,
+                    app_name=self._deployment_id.app_name,
+                    multiplexed_model_id=request_metadata.multiplexed_model_id,
+                    grpc_context=request_metadata.grpc_context,
+                    cancel_on_parent_request_cancel=self._ingress
+                    and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+                )
             )
-        )
+            with self._handle_errors_and_metrics(
+                request_metadata
+            ) as status_code_callback:
+                yield status_code_callback
 
     def _record_errors_and_metrics(
         self,
@@ -827,42 +817,47 @@ class AnyscaleReplica(ReplicaBase):
                 )
             )
 
-        async with self._wrap_user_method_call(request_metadata):
-            result_gen = call_unary()
+        with self._wrap_request(request_metadata):
+            self._num_queued_requests += 1
+            async with self._start_request(request_metadata):
+                self._num_queued_requests -= 1
 
-            # Use the generic disconnect detecting wrapper
-            replica_response_generator = ReplicaResponseGenerator(
-                result_gen,
-                timeout_s=self._grpc_options.request_timeout_s,
-            )
-            try:
-                result = await replica_response_generator.__anext__()
-                c._set_on_grpc_context(context)
-                status = ResponseStatus(code=grpc.StatusCode.OK)
-
-                # NOTE(edoakes): we need to fully consume the generator otherwise the
-                # finalizers that run after the `yield` statement won't run. There might
-                # be a cleaner way to structure this.
+                # Use the generic disconnect detecting wrapper
+                result_gen = call_unary()
+                replica_response_generator = ReplicaResponseGenerator(
+                    result_gen,
+                    timeout_s=self._grpc_options.request_timeout_s,
+                )
                 try:
-                    await replica_response_generator.__anext__()
-                except StopAsyncIteration:
-                    pass
-            except BaseException as e:
-                status = get_grpc_response_status(
-                    e, self._grpc_options.request_timeout_s, request_metadata.request_id
-                )
-                set_rpc_span_attributes(
-                    system=RequestProtocol.GRPC,
-                    method=request_metadata.call_method,
-                    status_code=status.code.name,
-                    service=self._deployment_id.name,
-                )
-                set_span_exception(e, escaped=True)
-                return
-            finally:
-                set_grpc_code_and_details(context, status)
+                    result = await replica_response_generator.__anext__()
+                    c._set_on_grpc_context(context)
+                    status = ResponseStatus(code=grpc.StatusCode.OK)
 
-            return result.SerializeToString()
+                    # NOTE(edoakes): we need to fully consume the generator otherwise the
+                    # finalizers that run after the `yield` statement won't run. There might
+                    # be a cleaner way to structure this.
+                    try:
+                        await replica_response_generator.__anext__()
+                    except StopAsyncIteration:
+                        pass
+                except BaseException as e:
+                    status = get_grpc_response_status(
+                        e,
+                        self._grpc_options.request_timeout_s,
+                        request_metadata.request_id,
+                    )
+                    set_rpc_span_attributes(
+                        system=RequestProtocol.GRPC,
+                        method=request_metadata.call_method,
+                        status_code=status.code.name,
+                        service=self._deployment_id.name,
+                    )
+                    set_span_exception(e, escaped=True)
+                    return
+                finally:
+                    set_grpc_code_and_details(context, status)
+
+                return result.SerializeToString()
 
     async def _direct_ingress_unary_stream(
         self,
@@ -1047,75 +1042,77 @@ class AnyscaleReplica(ReplicaBase):
         receive_proxy = ASGIReceiveProxy(scope, request_metadata, receive_thread_safe)
         response_started = False
         status = None
-        async with self._wrap_user_method_call(
-            request_metadata
-        ) as status_code_callback:
-            if proxy_asgi_receive_task.done():
-                status_code_callback("499")
-                raise asyncio.CancelledError
+        with self._wrap_request(request_metadata) as status_code_callback:
+            self._num_queued_requests += 1
+            async with self._start_request(request_metadata):
+                self._num_queued_requests -= 1
 
-            try:
-                result_gen = self._user_callable_wrapper.call_http_entrypoint(
-                    request_metadata,
-                    status_code_callback,
-                    scope,
-                    receive_proxy,
-                )
+                if proxy_asgi_receive_task.done():
+                    status_code_callback("499")
+                    raise asyncio.CancelledError
 
-                # Use the generic disconnect detecting wrapper
-                replica_response_generator = ReplicaResponseGenerator(
-                    result_gen,
-                    disconnected_task=proxy_asgi_receive_task,
-                    timeout_s=self._http_options.request_timeout_s,
-                )
+                try:
+                    result_gen = self._user_callable_wrapper.call_http_entrypoint(
+                        request_metadata,
+                        status_code_callback,
+                        scope,
+                        receive_proxy,
+                    )
 
-                # Stream the response
-                expecting_trailers = False
-                async for asgi_messages in replica_response_generator:
-                    for msg in asgi_messages:
-                        # Stop checking for disconnect when response is complete
-                        if msg["type"] == "http.response.start":
-                            # HTTP responses begin with exactly one
-                            # "http.response.start" message containing the "status"
-                            # field. Other response types (e.g., WebSockets) may not.
-                            status_code = str(msg["status"])
-                            status = ResponseStatus(
-                                code=status_code,
-                                is_error=status_code.startswith(("4", "5")),
-                            )
-                            # Check if this response will include trailers
-                            expecting_trailers = msg.get("trailers", False)
-                        elif (
-                            msg["type"] == "http.response.body"
-                            and not msg.get("more_body", False)
-                            and not expecting_trailers
-                        ):
-                            # If the body is completed and we aren't expecting trailers,
-                            # response is done so we should stop listening for disconnects.
-                            replica_response_generator.stop_checking_for_disconnect()
-                        elif msg["type"] == "http.response.trailers":
-                            # If we are expecting trailers, the response is only done when
-                            # the trailers message has been sent.
-                            if not msg.get("more_trailers", False):
+                    # Use the generic disconnect detecting wrapper
+                    replica_response_generator = ReplicaResponseGenerator(
+                        result_gen,
+                        disconnected_task=proxy_asgi_receive_task,
+                        timeout_s=self._http_options.request_timeout_s,
+                    )
+
+                    # Stream the response
+                    expecting_trailers = False
+                    async for asgi_messages in replica_response_generator:
+                        for msg in asgi_messages:
+                            # Stop checking for disconnect when response is complete
+                            if msg["type"] == "http.response.start":
+                                # HTTP responses begin with exactly one
+                                # "http.response.start" message containing the "status"
+                                # field. Other response types (e.g., WebSockets) may not.
+                                status_code = str(msg["status"])
+                                status = ResponseStatus(
+                                    code=status_code,
+                                    is_error=status_code.startswith(("4", "5")),
+                                )
+                                # Check if this response will include trailers
+                                expecting_trailers = msg.get("trailers", False)
+                            elif (
+                                msg["type"] == "http.response.body"
+                                and not msg.get("more_body", False)
+                                and not expecting_trailers
+                            ):
+                                # If the body is completed and we aren't expecting trailers,
+                                # response is done so we should stop listening for disconnects.
                                 replica_response_generator.stop_checking_for_disconnect()
-                        await send(msg)
-                        response_started = True
-            except BaseException as e:
-                status = get_http_response_status(
-                    e,
-                    self._http_options.request_timeout_s,
-                    request_metadata.request_id,
-                )
-                status_code_callback(str(status.code))
+                            elif msg["type"] == "http.response.trailers":
+                                # If we are expecting trailers, the response is only done when
+                                # the trailers message has been sent.
+                                if not msg.get("more_trailers", False):
+                                    replica_response_generator.stop_checking_for_disconnect()
+                            await send(msg)
+                            response_started = True
+                except BaseException as e:
+                    status = get_http_response_status(
+                        e,
+                        self._http_options.request_timeout_s,
+                        request_metadata.request_id,
+                    )
+                    status_code_callback(str(status.code))
 
-                for asgi_message in send_http_response_on_exception(
-                    status, response_started
-                ):
-                    await send(asgi_message)
-                raise
-            finally:
-                if not proxy_asgi_receive_task.done():
-                    proxy_asgi_receive_task.cancel()
+                    for asgi_message in send_http_response_on_exception(
+                        status, response_started
+                    ):
+                        await send(asgi_message)
+                    raise
+                finally:
+                    if not proxy_asgi_receive_task.done():
+                        proxy_asgi_receive_task.cancel()
 
     async def perform_graceful_shutdown(self):
         if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS or not self._ingress:
