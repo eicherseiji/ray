@@ -60,9 +60,10 @@ def _get_mock_worker_group_state(
     )
 
 
-def test_recovery_decision():
-    """Test recovery decisions being made when the worker group is not healthy.
-    Ensure that the policy will request a resize as soon as resources are available."""
+def test_non_running_worker_group_decision():
+    """Test decisions being made when the worker group is initializing/restarting.
+    Ensures that the policy will resize the worker group as soon as resources are available.
+    """
     min_workers, max_workers = 4, 64
     resources_per_worker = {"CPU": 8, "GPU": 1}
 
@@ -92,6 +93,53 @@ def test_recovery_decision():
     mock_coordinator._allocated_resources = [resources_per_worker] * max_workers
 
     decision = policy.make_decision_for_non_running_worker_group()
+    assert isinstance(decision, ResizeDecision)
+    assert decision.num_workers == max_workers
+
+
+def test_running_worker_group_decision():
+    """Test decisions being made when the worker group is running.
+    Ensures that the policy will resize the worker group when there is a change
+    in available resources.
+    """
+    min_workers, max_workers = 4, 64
+    resources_per_worker = {"CPU": 8, "GPU": 1}
+
+    scaling_config = ScalingConfig(
+        num_workers=(min_workers, max_workers),
+        resources_per_worker=resources_per_worker,
+        use_gpu=True,
+        # NOTE: This test just asserts the policy decisions, not the monitor interval.
+        elastic_resize_monitor_interval_s=0.0,
+    )
+    policy = ElasticScalingPolicy(scaling_config)
+    mock_coordinator = policy._autoscaling_coordinator
+
+    worker_group_state = _get_mock_worker_group_state(min_workers, time_monotonic())
+    worker_group_status = _get_mock_worker_group_status(min_workers)
+
+    # No change in resources
+    mock_coordinator._allocated_resources = [resources_per_worker] * min_workers
+    decision = policy.make_decision_for_running_worker_group(
+        worker_group_state=worker_group_state,
+        worker_group_status=worker_group_status,
+    )
+    assert isinstance(decision, NoopDecision)
+
+    # Resources for < min workers are available
+    mock_coordinator._allocated_resources = [resources_per_worker] * (min_workers - 1)
+    decision = policy.make_decision_for_running_worker_group(
+        worker_group_state=worker_group_state,
+        worker_group_status=worker_group_status,
+    )
+    assert isinstance(decision, NoopDecision)
+
+    # More resources are available
+    mock_coordinator._allocated_resources = [resources_per_worker] * max_workers
+    decision = policy.make_decision_for_running_worker_group(
+        worker_group_state=worker_group_state,
+        worker_group_status=worker_group_status,
+    )
     assert isinstance(decision, ResizeDecision)
     assert decision.num_workers == max_workers
 
@@ -202,7 +250,9 @@ def test_count_possible_workers():
     available node resources."""
     resources_per_worker = {"CPU": 8, "GPU": 1}
     scaling_config = ScalingConfig(
-        use_gpu=True, resources_per_worker=resources_per_worker
+        num_workers=(1, 8),
+        use_gpu=True,
+        resources_per_worker=resources_per_worker,
     )
     policy = ElasticScalingPolicy(scaling_config)
 
@@ -219,6 +269,9 @@ def test_count_possible_workers():
     assert policy._count_possible_workers([{"CPU": 9, "GPU": 2}] * 8) == 8
     assert policy._count_possible_workers([{"CPU": 16, "GPU": 2}] * 2) == 4
     assert policy._count_possible_workers([{"CPU": 8, "GPU": 1}] * 4) == 4
+
+    # If there are excess resources, the number of workers is still capped at max_workers
+    assert policy._count_possible_workers([{"CPU": 16, "GPU": 2}] * 10) == 8
 
 
 def test_count_possible_workers_with_zero_resources():

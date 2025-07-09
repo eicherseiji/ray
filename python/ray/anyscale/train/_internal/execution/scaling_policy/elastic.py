@@ -50,6 +50,10 @@ class ElasticScalingPolicy(ScalingPolicy):
     def _count_possible_workers(
         self, allocated_resources: List[Dict[str, float]]
     ) -> int:
+        """Count the number of workers that can be started/restarted with the given
+        the list of node resources. The returned number is capped at the maximum
+        number of workers.
+        """
         # TODO: Fractional resources do not work well here.
         single_worker_resources = self.scaling_config._resources_per_worker_not_none
         total_num_workers = 0
@@ -68,13 +72,9 @@ class ElasticScalingPolicy(ScalingPolicy):
             )
             total_num_workers += num_workers
 
-        return int(total_num_workers)
+        return min(int(total_num_workers), self.scaling_config.max_workers)
 
-    def _get_resize_decision(
-        self, allocated_resources: List[ResourceDict]
-    ) -> ResizeDecision:
-        available_workers = self._count_possible_workers(allocated_resources)
-        num_workers = min(available_workers, self.scaling_config.max_workers)
+    def _get_resize_decision(self, num_workers: int) -> ResizeDecision:
         return ResizeDecision(
             num_workers=num_workers,
             resources_per_worker=self.scaling_config._resources_per_worker_not_none,
@@ -86,9 +86,10 @@ class ElasticScalingPolicy(ScalingPolicy):
         allocated_resources = self._get_allocated_resources()
         if allocated_resources is None:
             return NoopDecision()
-        decision = self._get_resize_decision(allocated_resources)
 
-        if decision.num_workers < self.scaling_config.min_workers:
+        num_workers = self._count_possible_workers(allocated_resources)
+
+        if num_workers < self.scaling_config.min_workers:
             now = time_monotonic()
             # Only log this warning periodically to avoid spamming logs
             if (
@@ -96,7 +97,7 @@ class ElasticScalingPolicy(ScalingPolicy):
                 >= self.INSUFFICIENT_WORKERS_WARNING_INTERVAL_S
             ):
                 logger.info(
-                    f"Detected ready resources for {decision.num_workers} workers "
+                    f"Detected ready resources for {num_workers} workers "
                     "in the cluster. "
                     "Deciding NOT to start/restart training due to the number of workers "
                     "falling below the minimum "
@@ -106,11 +107,11 @@ class ElasticScalingPolicy(ScalingPolicy):
             return NoopDecision()
 
         logger.info(
-            f"Detected ready resources for {decision.num_workers} workers "
+            f"Detected ready resources for {num_workers} workers "
             "in the cluster. "
             "Deciding to start/restart training with this worker group size."
         )
-        return decision
+        return self._get_resize_decision(num_workers)
 
     def make_decision_for_running_worker_group(
         self,
@@ -142,24 +143,34 @@ class ElasticScalingPolicy(ScalingPolicy):
             return NoopDecision()
 
         self._latest_monitor_time = now
+
         allocated_resources = self._get_allocated_resources()
         if allocated_resources is None:
             return NoopDecision()
-        decision = self._get_resize_decision(allocated_resources)
-        if decision.num_workers == worker_group_state.num_workers:
+
+        num_workers = self._count_possible_workers(allocated_resources)
+
+        if num_workers == worker_group_state.num_workers:
             logger.info(
                 "Did not detect any changes in the cluster resources. "
                 "Training will continue with the same worker group size "
-                f"({decision.num_workers})."
+                f"({num_workers})."
             )
+            return NoopDecision()
+        elif num_workers < self.scaling_config.min_workers:
+            # This covers an edge case where allocated resources decrease to less
+            # than the minimum number of workers.
+            # This situation is rare, since cluster downsizing typically involves
+            # worker failures. However, this check is still useful to fully
+            # avoid entering an invalid state with fewer workers than the minimum.
             return NoopDecision()
 
         logger.info(
             "Detected changes in the cluster resources. "
             "Deciding to resize the worker group from "
-            f"{worker_group_state.num_workers} -> {decision.num_workers} workers."
+            f"{worker_group_state.num_workers} -> {num_workers} workers."
         )
-        return decision
+        return self._get_resize_decision(num_workers)
 
     # ---------------------------------------------------
     # Methods for interacting with AutoscalingCoordinator
