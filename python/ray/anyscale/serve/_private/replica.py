@@ -48,6 +48,7 @@ from ray.serve._private.http_util import (
     start_asgi_http_server,
     MessageQueue,
     configure_http_options_with_defaults,
+    configure_http_middlewares,
 )
 from ray.serve.context import _get_in_flight_requests
 from ray.anyscale.serve.utils import asyncio_grpc_exception_handler
@@ -452,8 +453,10 @@ class AnyscaleReplica(ReplicaBase):
 
         # Allocate and start HTTP server
         async def start_http_server(port):
-            options = configure_http_options_with_defaults(
-                HTTPOptions(**{**self._http_options.dict(), "port": port})
+            options = configure_http_middlewares(
+                configure_http_options_with_defaults(
+                    HTTPOptions(**{**self._http_options.dict(), "port": port})
+                )
             )
 
             return await start_asgi_http_server(

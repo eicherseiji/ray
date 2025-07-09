@@ -40,6 +40,7 @@ steps:
         //python/ray/serve/tests:test_metrics
         //python/ray/serve/tests:test_request_timeout
         //python/ray/serve/tests:test_streaming_response
+        //python/ray/serve/tests:test_callback
         //python/ray/anyscale/serve:tests/test_direct_ingress
         //python/ray/anyscale/serve:tests/test_tracing_utils
         serve
