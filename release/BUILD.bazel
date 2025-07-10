@@ -678,6 +678,8 @@ py_binary(
     data = glob(["**/*.yaml"]) + [
         "//python/ray/autoscaler/aws:test_configs",
         "//python/ray/autoscaler/gcp:test_configs",
+        "//python/ray/anyscale/safetensors/tests/integration:test_configs",
+        "//python/ray/anyscale/safetensors:test_configs",
         "ray_release/byod/byod.custom.Dockerfile",
         "ray_release/byod/byod.Dockerfile",
     ]
