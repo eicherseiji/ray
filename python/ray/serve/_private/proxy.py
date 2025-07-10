@@ -1056,7 +1056,8 @@ class HTTPProxy(GenericProxy):
                     # The server disconnect without sending a disconnect message
                     # (otherwise the `status` would be set).
                     status = ResponseStatus(
-                        code="1000",  # [Sihan] is there a better code for this?
+                        code="1000",
+                        # [Sihan] is there a better code for this?
                         is_error=True,
                     )
             else:

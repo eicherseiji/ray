@@ -1082,6 +1082,8 @@ class AnyscaleReplica(ReplicaBase):
                                 )
                                 # Check if this response will include trailers
                                 expecting_trailers = msg.get("trailers", False)
+                            elif msg["type"] == "websocket.accept":
+                                replica_response_generator.stop_checking_for_disconnect()
                             elif (
                                 msg["type"] == "http.response.body"
                                 and not msg.get("more_body", False)
@@ -1095,6 +1097,16 @@ class AnyscaleReplica(ReplicaBase):
                                 # the trailers message has been sent.
                                 if not msg.get("more_trailers", False):
                                     replica_response_generator.stop_checking_for_disconnect()
+                            elif msg["type"] in [
+                                "websocket.close",
+                                "websocket.disconnect",
+                            ]:
+                                status_code = str(msg["code"])
+                                status = ResponseStatus(
+                                    code=status_code,
+                                    is_error=status_code not in ["1000", "1001"],
+                                )
+                                replica_response_generator.stop_checking_for_disconnect()
                             await send(msg)
                             response_started = True
                 except BaseException as e:
