@@ -111,8 +111,10 @@ def test_removed_nodes_not_added_back(ray_start_cluster):
     "compute", [TaskPoolStrategy(), ActorPoolStrategy(size=1)], ids=["tasks", "actors"]
 )
 def test_map_operator_counts_lineage_reconstruction_tasks(
-    ray_start_cluster_enabled, compute: ComputeStrategy
+    ray_start_cluster_enabled, disable_timed_cache_fixture, compute: ComputeStrategy
 ):
+    # the `disable_timed_cache_fixture` is neccessary because this test relies on
+    # the most up-to-date values from `get_local_ongoing_lineage_reconstruction_tasks`
     data_context = ray.data.DataContext.get_current()
 
     # Create a cluster with a head node and a single worker node.

@@ -1,6 +1,8 @@
 from typing import Tuple
 
-import ray
+from ray.anyscale.data._internal.util.cached_ray_internals import (
+    get_local_ongoing_lineage_reconstruction_tasks,
+)
 from ray.data._internal.execution.interfaces import ExecutionResources
 from ray.data._internal.execution.interfaces.physical_operator import (
     ReportsExtraResourceUsage,
@@ -58,9 +60,7 @@ class TaskPoolMapOperator(OSSTaskPoolMapOperator, ReportsExtraResourceUsage):
     def _num_lineage_reconstruction_tasks(self) -> int:
         # This method assumes the base class launches tasks with the
         # `PhysicalOperator._OPERATOR_ID_LABEL_KEY` label.
-        task_infos = (
-            ray._private.internal_api.get_local_ongoing_lineage_reconstruction_tasks()
-        )
+        task_infos = get_local_ongoing_lineage_reconstruction_tasks()
         return sum(
             num_tasks
             for task_info, num_tasks in task_infos

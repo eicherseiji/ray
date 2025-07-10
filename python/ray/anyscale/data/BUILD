@@ -12,6 +12,7 @@ py_test_module_list(
             "tests/test_checkpoint.py",
             "tests/test_snowflake.py",
             "tests/test_delta.py",
+            "tests/test_cache.py",
         ],
     ),
     tags = [
@@ -65,6 +66,20 @@ py_test(
     tags = [
         "exclusive",
         "manual",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
+    name = "test_cache",
+    size = "small",
+    srcs = ["tests/test_cache.py"],
+    tags = [
+        "exclusive",
         "team:data",
     ],
     deps = [

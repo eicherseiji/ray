@@ -3,6 +3,7 @@ import copy
 import pytest
 
 import ray
+from ray.anyscale.data._internal.util.cache import _disable_timed_cache_for_tests
 
 
 @pytest.fixture
@@ -15,3 +16,9 @@ def restore_data_context(request):
     yield
     original.issue_detectors_config = original_issue_detectors_config
     ray.data.context.DataContext._set_current(original)
+
+
+@pytest.fixture
+def disable_timed_cache_fixture():
+    with _disable_timed_cache_for_tests():
+        yield

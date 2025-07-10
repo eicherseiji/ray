@@ -1,11 +1,13 @@
 from collections import defaultdict
 import math
 from typing import Optional, Tuple, Dict, List, Iterator
+from ray.anyscale.data._internal.util.cached_ray_internals import (
+    get_local_ongoing_lineage_reconstruction_tasks,
+)
 from ray.anyscale.data._internal.util.heapdict import heapdict
 from ray.data._internal.execution.bundle_queue.bundle_queue import BundleQueue
 from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 from ray.actor import ActorHandle
-import ray
 from ray.data._internal.execution.interfaces import (
     ExecutionResources,
     ReportsExtraResourceUsage,
@@ -81,9 +83,7 @@ class ActorPoolMapOperator(OSSActorPoolMapOperator, ReportsExtraResourceUsage):
 
         # These are all of the actors that are running lineage reconstruction tasks.
         # These actors may or may not have been previously removed from the actor pool.
-        task_infos = (
-            ray._private.internal_api.get_local_ongoing_lineage_reconstruction_tasks()
-        )
+        task_infos = get_local_ongoing_lineage_reconstruction_tasks()
         actors_running_lineage_reconstruction_tasks = {
             task_info.labels[actor_pool.get_logical_id_label_key()]
             for task_info, _ in task_infos
