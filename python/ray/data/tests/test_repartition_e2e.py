@@ -225,7 +225,6 @@ def test_streaming_repartition_write_no_operator_fusion(
 ):
     """Test that write with streaming repartition produces exact partitions
     without operator fusion.
-
     This test verifies:
     1. StreamingRepartition and Write operators are not fused
     2. Exact partition structure is maintained
