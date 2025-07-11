@@ -4,6 +4,7 @@ import inspect
 import logging
 import pickle
 import time
+import errno
 from contextlib import contextmanager
 from functools import wraps
 from typing import (
@@ -417,6 +418,7 @@ class AnyscaleReplica(ReplicaBase):
 
         async def allocate_and_start_server(start_server_fn, protocol):
             """Attempt to allocate a port and start the server with retries."""
+            is_port_in_use = False
             for _ in range(RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT):
                 port = await self._controller_handle.allocate_replica_port.remote(
                     self._node_id, self._replica_id.unique_id, protocol
@@ -433,6 +435,16 @@ class AnyscaleReplica(ReplicaBase):
                     logger.warning(
                         f"Failed to start {protocol} server on port {port}: {e}. Retrying..."
                     )
+
+                    # `start_asgi_http_server` raises a RuntimeError with the original OSError as the cause.
+                    if isinstance(e.__cause__, OSError) and e.__cause__.errno in (
+                        errno.EADDRINUSE,
+                        errno.EADDRNOTAVAIL,
+                    ):
+                        is_port_in_use = True
+                    else:
+                        is_port_in_use = False
+
                     # setting block_port to True because we are concluding that the port is
                     # in use by another service on the same node. Blocking port here is a small
                     # optimization to avoid trying to start the server on a the same port
@@ -444,9 +456,14 @@ class AnyscaleReplica(ReplicaBase):
                         protocol,
                         block_port=True,
                     )
-            raise RuntimeError(
-                f"Failed to allocate and start {protocol} server after retries"
-            )
+
+            err_msg = f"Failed to allocate and start {protocol} server after retries"
+            if is_port_in_use:
+                err_msg = f"""
+                Failed to start {protocol} server: port already in use. Suggestion: Ensure that the Ray Serve direct ingress port ranges do not overlap with the Ray worker port range (min_worker_port to max_worker_port).
+                """
+
+            raise RuntimeError(err_msg)
 
         # Fetch configs
         self._http_options, self._grpc_options = ray.get(
