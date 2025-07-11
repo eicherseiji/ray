@@ -35,6 +35,7 @@ steps:
         //python/ray/serve/tests:test_callback
         //python/ray/serve/tests:test_deploy
         //python/ray/serve/tests:test_deploy_app
+        //python/ray/serve/tests:test_failure
         //python/ray/serve/tests:test_fastapi
         //python/ray/serve/tests:test_handle_cancellation
         //python/ray/serve/tests:test_metrics
