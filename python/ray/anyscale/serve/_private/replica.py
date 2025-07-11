@@ -44,8 +44,6 @@ from ray.serve.generated.serve_pb2 import HealthzResponse, ListApplicationsRespo
 from ray.serve._private.http_util import (
     ASGIReceiveProxy,
     convert_object_to_asgi_messages,
-    get_http_response_status,
-    send_http_response_on_exception,
     start_asgi_http_server,
     MessageQueue,
     configure_http_options_with_defaults,
@@ -89,6 +87,14 @@ from ray.util import metrics
 
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
+
+
+async def send_http_response(message, status_code, send):
+    for msg in convert_object_to_asgi_messages(
+        message,
+        status_code=status_code,
+    ):
+        await send(msg)
 
 
 def _wrap_grpc_call(f):
@@ -1041,90 +1047,51 @@ class AnyscaleReplica(ReplicaBase):
 
         receive_proxy = ASGIReceiveProxy(scope, request_metadata, receive_thread_safe)
         response_started = False
-        status = None
         with self._wrap_request(request_metadata) as status_code_callback:
             self._num_queued_requests += 1
-            async with self._start_request(request_metadata):
-                self._num_queued_requests -= 1
 
-                if proxy_asgi_receive_task.done():
-                    status_code_callback("499")
-                    raise asyncio.CancelledError
-
-                try:
-                    result_gen = self._user_callable_wrapper.call_http_entrypoint(
-                        request_metadata,
-                        status_code_callback,
-                        scope,
-                        receive_proxy,
-                    )
-
-                    # Use the generic disconnect detecting wrapper
-                    replica_response_generator = ReplicaResponseGenerator(
-                        result_gen,
-                        disconnected_task=proxy_asgi_receive_task,
-                        timeout_s=self._http_options.request_timeout_s,
-                    )
-
-                    # Stream the response
-                    expecting_trailers = False
-                    async for asgi_messages in replica_response_generator:
-                        for msg in asgi_messages:
-                            # Stop checking for disconnect when response is complete
-                            if msg["type"] == "http.response.start":
-                                # HTTP responses begin with exactly one
-                                # "http.response.start" message containing the "status"
-                                # field. Other response types (e.g., WebSockets) may not.
-                                status_code = str(msg["status"])
-                                status = ResponseStatus(
-                                    code=status_code,
-                                    is_error=status_code.startswith(("4", "5")),
-                                )
-                                # Check if this response will include trailers
-                                expecting_trailers = msg.get("trailers", False)
-                            elif msg["type"] == "websocket.accept":
-                                replica_response_generator.stop_checking_for_disconnect()
-                            elif (
-                                msg["type"] == "http.response.body"
-                                and not msg.get("more_body", False)
-                                and not expecting_trailers
-                            ):
-                                # If the body is completed and we aren't expecting trailers,
-                                # response is done so we should stop listening for disconnects.
-                                replica_response_generator.stop_checking_for_disconnect()
-                            elif msg["type"] == "http.response.trailers":
-                                # If we are expecting trailers, the response is only done when
-                                # the trailers message has been sent.
-                                if not msg.get("more_trailers", False):
-                                    replica_response_generator.stop_checking_for_disconnect()
-                            elif msg["type"] in [
-                                "websocket.close",
-                                "websocket.disconnect",
-                            ]:
-                                status_code = str(msg["code"])
-                                status = ResponseStatus(
-                                    code=status_code,
-                                    is_error=status_code not in ["1000", "1001"],
-                                )
-                                replica_response_generator.stop_checking_for_disconnect()
-                            await send(msg)
-                            response_started = True
-                except BaseException as e:
-                    status = get_http_response_status(
-                        e,
-                        self._http_options.request_timeout_s,
-                        request_metadata.request_id,
-                    )
-                    status_code_callback(str(status.code))
-
-                    for asgi_message in send_http_response_on_exception(
-                        status, response_started
+            async def call_asgi():
+                async with self._start_request(request_metadata):
+                    self._num_queued_requests -= 1
+                    nonlocal response_started
+                    async for asgi_messages in self._user_callable_wrapper.call_http_entrypoint(
+                        request_metadata, status_code_callback, scope, receive_proxy
                     ):
-                        await send(asgi_message)
-                    raise
-                finally:
-                    if not proxy_asgi_receive_task.done():
-                        proxy_asgi_receive_task.cancel()
+                        for message in asgi_messages:
+                            await send(message)
+                            response_started = True
+
+            request_task = asyncio.create_task(call_asgi())
+            done, _ = await asyncio.wait(
+                [request_task, proxy_asgi_receive_task],
+                timeout=self._http_options.request_timeout_s,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if request_task in done:
+                pass
+            elif proxy_asgi_receive_task in done:
+                request_task.cancel()
+                status_code_callback("499")
+                if not response_started:
+                    msg = (
+                        f"Client for request {request_id} disconnected, "
+                        "cancelling request."
+                    )
+                    await send_http_response(msg, 499, send)
+            else:
+                request_task.cancel()
+                status_code_callback("408")
+                if not response_started:
+                    msg = (
+                        f"Request {request_id} timed out after "
+                        f"{self._http_options.request_timeout_s}s."
+                    )
+                    await send_http_response(msg, 408, send)
+
+            # Always wait for the request task to complete, so that cancellation
+            # errors (or other exceptions) are properly handled by the context manager.
+            await request_task
 
     async def perform_graceful_shutdown(self):
         if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS or not self._ingress:
