@@ -32,7 +32,7 @@ def test_send_recv_text_and_binary(serve_instance, route_prefix: str):
     serve.run(WebSocketServer.bind(), route_prefix=route_prefix or "/")
 
     msg = "Hello world!"
-    url = f"{get_application_url(is_websocket=True)}/"
+    url = f"{get_application_url(is_websocket=True, use_localhost=True)}/"
 
     with connect(url) as websocket:
         websocket.send(msg)
@@ -66,7 +66,6 @@ def test_client_disconnect(serve_instance):
 
     h = serve.run(WebSocketServer.bind())
     wait_response = h.wait_for_disconnect.remote()
-
     url = f"{get_application_url(is_websocket=True)}/"
 
     with connect(url):
@@ -135,9 +134,10 @@ def test_unary_streaming_websocket_same_deployment(serve_instance):
 
     serve.run(RenaissanceMan.bind())
 
-    assert httpx.get(get_application_url()).json() == "hi"
+    http_url = get_application_url()
+    assert httpx.get(http_url).json() == "hi"
 
-    with httpx.stream("GET", f"{get_application_url()}/stream") as r:
+    with httpx.stream("GET", f"{http_url}/stream") as r:
         r.raise_for_status()
         for chunk in r.iter_text():
             assert chunk == "hi"
