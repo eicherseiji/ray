@@ -12,6 +12,7 @@ worker_node_types:
       max_workers: 50
       min_workers: 50
       use_spot: true
+      fallback_to_ondemand: true
       resources:
         gpu: 4
         # Larger object store memory make the test run faster.
