@@ -720,7 +720,6 @@ def get_application_urls(
     use_localhost: bool = False,
     is_websocket: bool = False,
     exclude_route_prefix: bool = False,
-    is_websocket: bool = False,
 ) -> List[str]:
     """Get the URL of the application.
 
@@ -732,7 +731,6 @@ def get_application_urls(
             for low latency benchmarking.
         is_websocket: Whether the url should be served as a websocket.
         exclude_route_prefix: The route prefix to exclude from the application.
-        is_websocket: Whether the url should be served as a websocket.
     Returns:
         The URLs of the application.
     """
@@ -784,7 +782,6 @@ def get_application_url(
     use_localhost: bool = False,
     is_websocket: bool = False,
     exclude_route_prefix: bool = False,
-    is_websocket: bool = False,
 ) -> str:
     """Get the URL of the application.
 
@@ -796,7 +793,6 @@ def get_application_url(
             for low latency benchmarking.
         is_websocket: Whether the url should be served as a websocket.
         exclude_route_prefix: The route prefix to exclude from the application.
-        is_websocket: Whether to use websockets instead of HTTP.
     Returns:
         The URL of the application. If there are multiple URLs, a random one is returned.
     """
