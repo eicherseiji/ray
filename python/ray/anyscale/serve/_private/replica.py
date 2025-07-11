@@ -408,9 +408,6 @@ class AnyscaleReplica(ReplicaBase):
 
     async def _maybe_start_direct_ingress_servers(self):
         if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
-            logger.info(
-                "Direct ingress is disabled, skipping direct ingress server start"
-            )
             return
 
         if not self._ingress:
