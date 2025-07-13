@@ -63,6 +63,13 @@ class NonSamplingFileIndexer(FileIndexer):
             for path, file_size in _get_file_infos(
                 resolved_paths[0], filesystem, self._ignore_missing_paths
             ):
+                # Some filesystems (e.g., HTTP) return `None` for file size,
+                # so we explicitly check for zero-byte files rather than checking for
+                # a falsey file size.
+                if file_size == 0:
+                    logger.warning(f"Skipping zero-size file: {path!r}")
+                    continue
+
                 running_paths.append(path)
                 running_file_sizes.append(file_size)
                 if len(running_paths) >= self._MAX_PATHS_PER_LIST_FILES_OUTPUT:
@@ -142,6 +149,9 @@ def filter_paths(
         manifest: The manifest to filter.
         filter_fn: A function that takes a path and returns `True` if the path should be
             included in the new manifest.
+
+    Returns:
+        A new manifest with only the paths that match the filter.
     """
     indices = []
     for i, path in enumerate(manifest.paths):
