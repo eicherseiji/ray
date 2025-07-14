@@ -1022,22 +1022,51 @@ class AnyscaleReplica(ReplicaBase):
         )
         receive_task = receive_proxy.fetch_until_disconnect_task()
         response_started = False
+        response_finished = False
+        first_message_peeked = False
+
         with self._wrap_request(request_metadata) as status_code_callback:
             self._num_queued_requests += 1
+
+            async def send_user_message(msg: Dict):
+                nonlocal response_started
+                nonlocal response_finished
+                nonlocal first_message_peeked
+
+                if not first_message_peeked:
+                    first_message_peeked = True
+                    if msg["type"] == "http.response.start":
+                        status_code_callback(str(msg["status"]))
+
+                await send(msg)
+                response_started = True
+                if msg.get("more_body") is False:
+                    response_finished = True
 
             async def call_asgi():
                 async with self._start_request(request_metadata):
                     self._num_queued_requests -= 1
-                    nonlocal response_started
-                    async for asgi_messages in self._user_callable_wrapper.call_http_entrypoint(
-                        request_metadata,
-                        status_code_callback,
-                        scope,
-                        receive_proxy,
+
+                    if (
+                        not self._user_callable_wrapper._run_user_code_in_separate_thread
                     ):
-                        for message in asgi_messages:
-                            await send(message)
-                            response_started = True
+                        user_method_info = (
+                            self._user_callable_wrapper.get_user_method_info(
+                                request_metadata.call_method
+                            )
+                        )
+                        # `_call_http_entrypoint` will have already called
+                        # `send_user_message`, so the ASGI messages will have
+                        # already been sent back to the client.
+                        await self._user_callable_wrapper._call_http_entrypoint(
+                            user_method_info, scope, receive_proxy, send_user_message
+                        )
+                    else:
+                        async for asgi_messages in self._user_callable_wrapper.call_http_entrypoint(
+                            request_metadata, status_code_callback, scope, receive_proxy
+                        ):
+                            for message in asgi_messages:
+                                await send_user_message(message)
 
             request_task = asyncio.create_task(call_asgi())
             done, _ = await asyncio.wait(
@@ -1046,8 +1075,13 @@ class AnyscaleReplica(ReplicaBase):
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
-            if request_task in done:
+            # NOTE(zcin): it's possible that the request task has finished sending
+            # all ASGI messages, but the task is suspended and before it can fully
+            # complete, the client has sent a disconnect message after the request
+            # is completed. That is why we check for `response_finished` here.
+            if request_task in done or response_finished:
                 receive_task.cancel()
+                await request_task
             elif receive_task in done:
                 request_task.cancel()
                 status_code_callback("499")
@@ -1057,6 +1091,7 @@ class AnyscaleReplica(ReplicaBase):
                         "cancelling request."
                     )
                     await send_http_response(msg, 499, send)
+                raise asyncio.CancelledError
             else:
                 request_task.cancel()
                 status_code_callback("408")
@@ -1066,10 +1101,7 @@ class AnyscaleReplica(ReplicaBase):
                         f"{self._http_options.request_timeout_s}s."
                     )
                     await send_http_response(msg, 408, send)
-
-            # Always wait for the request task to complete, so that cancellation
-            # errors (or other exceptions) are properly handled by the context manager.
-            await request_task
+                raise asyncio.CancelledError
 
     async def perform_graceful_shutdown(self):
         if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS or not self._ingress:
