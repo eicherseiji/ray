@@ -9,9 +9,6 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
 import ray
 from ray.actor import ActorHandle
-from ray.anyscale.data._internal.util.cached_ray_internals import (
-    get_or_create_actor_location_tracker,
-)
 from ray.core.generated import gcs_pb2
 from ray.data._internal.compute import ActorPoolStrategy
 from ray.data._internal.execution.autoscaler import AutoscalingActorPool
@@ -31,6 +28,7 @@ from ray.data._internal.execution.interfaces import (
 from ray.data._internal.execution.interfaces.physical_operator import _ActorPoolInfo
 from ray.data._internal.execution.node_trackers.actor_location import (
     ActorLocationTracker,
+    get_or_create_actor_location_tracker,
 )
 from ray.data._internal.execution.operators.map_operator import MapOperator, _map_task
 from ray.data._internal.execution.operators.map_transformer import MapTransformer
