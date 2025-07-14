@@ -38,11 +38,13 @@ assert len(sys.argv) == 2, "Usage: python run_checkpoint_benchmark.py [small|lar
 scale = sys.argv[1]
 assert scale in ["small", "large"], scale
 
+INPUT_DATA_PREFIX = (
+    "s3://ray-benchmark-data-internal-us-west-2/ray-data/checkpoint-benchmark"
+)
+
 if scale == "small":
     # This dataset contains 10M rows, 5KB per row.
-    INPUT_DATA_PATH = (
-        "s3://ray-benchmark-data-internal/ray-data/checkpoint-benchmark/10M-rows/"
-    )
+    INPUT_DATA_PATH = f"{INPUT_DATA_PREFIX}/10M-rows/"
     NUM_ROWS = 10_000_000
     INFERENCE_CONCURRENCY = 16
     INFERENCE_BATCH_SIZE = 1000
@@ -50,9 +52,7 @@ if scale == "small":
     NUM_OUTPUT_FILES = 20
 else:
     # This dataset contains 3B rows, 500B per row.
-    INPUT_DATA_PATH = (
-        "s3://ray-benchmark-data-internal/ray-data/checkpoint-benchmark/3B-rows/"
-    )
+    INPUT_DATA_PATH = f"{INPUT_DATA_PREFIX}/3B-rows/"
     NUM_ROWS = 3_000_000_000
     INFERENCE_CONCURRENCY = 200
     INFERENCE_BATCH_SIZE = 10000
