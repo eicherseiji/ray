@@ -24,6 +24,7 @@ from ray.serve.config import HTTPOptions, gRPCOptions
 from starlette.types import Receive, Scope, Send
 
 import ray
+from ray.anyscale.serve._private.http_util import ASGIDIReceiveProxy
 from ray import cloudpickle
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
@@ -43,10 +44,8 @@ from ray.anyscale.serve._private.tracing_utils import (
 )
 from ray.serve.generated.serve_pb2 import HealthzResponse, ListApplicationsResponse
 from ray.serve._private.http_util import (
-    ASGIReceiveProxy,
     convert_object_to_asgi_messages,
     start_asgi_http_server,
-    MessageQueue,
     configure_http_options_with_defaults,
     configure_http_middlewares,
 )
@@ -831,10 +830,8 @@ class AnyscaleReplica(ReplicaBase):
         )
 
         async def call_unary():
-            yield await asyncio.wrap_future(
-                self._user_callable_wrapper.call_user_method(
-                    request_metadata, request_args, request_kwargs
-                )
+            yield await self._user_callable_wrapper.call_user_method(
+                request_metadata, request_args, request_kwargs
             )
 
         with self._wrap_request(request_metadata):
@@ -905,32 +902,6 @@ class AnyscaleReplica(ReplicaBase):
                 )
 
         return handler
-
-    async def _proxy_asgi_receive(
-        self, receive: Receive, queue: MessageQueue
-    ) -> Optional[int]:
-        """Proxies the `receive` interface, placing its messages into the queue.
-
-        Once a disconnect message is received, the call exits and `receive` is no longer
-        called.
-        For HTTP messages, `None` is always returned.
-        For websocket messages, the disconnect code is returned if a disconnect code is
-        received.
-        """
-        try:
-            while True:
-                msg = await receive()
-                await queue(msg)
-
-                if msg["type"] == "http.disconnect":
-                    return None
-
-                if msg["type"] == "websocket.disconnect":
-                    return msg["code"]
-        finally:
-            # Close the queue so any subsequent calls to fetch messages return
-            # immediately: https://github.com/ray-project/ray/issues/38368.
-            queue.close()
 
     def get_asgi_tracing_context(self, headers: List[Tuple[bytes, bytes]]):
         """Extract tracing context from ASGI request headers.
@@ -1046,20 +1017,10 @@ class AnyscaleReplica(ReplicaBase):
                 await send(msg)
             return
 
-        receive_queue = MessageQueue()
-        proxy_asgi_receive_task = self._event_loop.create_task(
-            self._proxy_asgi_receive(receive, receive_queue)
+        receive_proxy = ASGIDIReceiveProxy(
+            scope, receive, self._user_callable_wrapper.event_loop
         )
-
-        async def receive_thread_safe(*args):
-            return await asyncio.wrap_future(
-                asyncio.run_coroutine_threadsafe(
-                    receive_queue.get_one_message(),
-                    self._event_loop,
-                )
-            )
-
-        receive_proxy = ASGIReceiveProxy(scope, request_metadata, receive_thread_safe)
+        receive_task = receive_proxy.fetch_until_disconnect_task()
         response_started = False
         with self._wrap_request(request_metadata) as status_code_callback:
             self._num_queued_requests += 1
@@ -1069,7 +1030,10 @@ class AnyscaleReplica(ReplicaBase):
                     self._num_queued_requests -= 1
                     nonlocal response_started
                     async for asgi_messages in self._user_callable_wrapper.call_http_entrypoint(
-                        request_metadata, status_code_callback, scope, receive_proxy
+                        request_metadata,
+                        status_code_callback,
+                        scope,
+                        receive_proxy,
                     ):
                         for message in asgi_messages:
                             await send(message)
@@ -1077,14 +1041,14 @@ class AnyscaleReplica(ReplicaBase):
 
             request_task = asyncio.create_task(call_asgi())
             done, _ = await asyncio.wait(
-                [request_task, proxy_asgi_receive_task],
+                [request_task, receive_task],
                 timeout=self._http_options.request_timeout_s,
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
             if request_task in done:
-                pass
-            elif proxy_asgi_receive_task in done:
+                receive_task.cancel()
+            elif receive_task in done:
                 request_task.cancel()
                 status_code_callback("499")
                 if not response_started:

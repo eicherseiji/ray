@@ -79,17 +79,20 @@ class Hybrid:
         if initialize_signal is not None:
             ray.get(initialize_signal.wait.remote())
 
-    def check_health(self):
+    async def check_health(self):
         # Fail health check once the signal is sent, else pass.
         if self._fail_hc_signal is not None:
-            obj_ref = self._fail_hc_signal.wait.remote()
-            ready, _ = ray.wait([obj_ref], timeout=0.1)
-            if len(ready) == 1:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(self._fail_hc_signal.wait.remote()), timeout=0.1
+                )
                 raise RuntimeError("Failing health check!")
+            except asyncio.TimeoutError:
+                pass
 
-    def __del__(self):
+    async def __del__(self):
         if self._shutdown_signal is not None:
-            ray.get(self._shutdown_signal.wait.remote())
+            await self._shutdown_signal.wait.remote()
 
     async def __call__(self, request: Request):
         if self._raise_error:
