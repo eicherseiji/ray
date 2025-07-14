@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -220,10 +220,20 @@ class TestActorTaskSelectorImpl(unittest.TestCase):
         found_actor = self.selector._find_actor_with_locality(bundle, node_map)
         assert found_actor is None
 
-    def test_valid_actors_in_pool(self):
+    @patch("ray.anyscale.data._internal.util.cached_ray_internals.get_actor_locations")
+    def test_valid_actors_in_pool(self, mock_get_actor_locations):
         """Test filtering valid actors based on state and task count."""
         actor1 = MagicMock()
         actor2 = MagicMock()
+        mock_get_actor_locations.return_value = {
+            "actor1": "node1",
+            "actor2": "node1",
+        }
+        self.mock_actor_pool.get_logical_ids.return_value = ["actor1", "actor2"]
+        self.mock_actor_pool._actor_to_logical_id = {
+            actor1: "actor1",
+            actor2: "actor2",
+        }
         self.mock_actor_pool.running_actors.return_value = {
             actor1: MagicMock(num_tasks_in_flight=0, is_restarting=False),
             actor2: MagicMock(num_tasks_in_flight=0, is_restarting=False),

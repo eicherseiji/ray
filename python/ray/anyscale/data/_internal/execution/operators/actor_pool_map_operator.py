@@ -1,6 +1,11 @@
 from collections import defaultdict
 import math
 from typing import Optional, Tuple, Dict, List, Iterator
+
+from ray.anyscale.data._internal.util.cached_ray_internals import (
+    get_draining_nodes,
+    get_actor_locations,
+)
 from ray.anyscale.data._internal.util.cached_ray_internals import (
     get_local_ongoing_lineage_reconstruction_tasks,
 )
@@ -109,12 +114,23 @@ class _ActorTaskSelectorImpl(_ActorTaskSelector):
     def _valid_actors_in_pool(self) -> List[ActorHandle]:
         # Filter out actors that are invalid, i.e. actors with number of tasks in
         # flight >= _max_tasks_in_flight or actor_state is not ALIVE.
+
+        draining_node_ids = get_draining_nodes()
+        actor_locations = get_actor_locations(tuple(self._actor_pool.get_logical_ids()))
+        draining_actors = {
+            actor
+            for actor in self._actor_pool.running_actors()
+            if actor_locations[self._actor_pool._actor_to_logical_id[actor]]
+            in draining_node_ids
+        }
+
         return [
             actor
             for actor in self._actor_pool.running_actors()
             if self._actor_pool.running_actors()[actor].num_tasks_in_flight
             < self._actor_pool.max_tasks_in_flight_per_actor()
             and not self._actor_pool.running_actors()[actor].is_restarting
+            and actor not in draining_actors
         ]
 
     def _build_node_to_actor_map(

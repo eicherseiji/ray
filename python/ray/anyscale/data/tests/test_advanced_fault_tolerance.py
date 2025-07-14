@@ -22,6 +22,8 @@ from ray.data._internal.execution.streaming_executor import StreamingExecutor
 from ray.data.block import BlockAccessor
 from ray.tests.conftest import *  # noqa  # noqa
 from ray.tests.conftest import wait_for_condition
+import ray._private.services as services
+from ray.core.generated import autoscaler_pb2
 
 
 def test_removed_nodes_not_added_back(ray_start_cluster):
@@ -189,6 +191,104 @@ def test_map_operator_counts_lineage_reconstruction_tasks(
     wait_for_condition(
         lambda: map_op.extra_resource_usage() == ExecutionResources.zero(), timeout=10
     )
+
+
+def test_map_operator_does_not_launch_actor_tasks_on_draining_nodes(
+    ray_start_cluster_enabled, disable_timed_cache_fixture
+):
+    # Create a cluster with a head node and two worker nodes.
+    cluster = ray_start_cluster_enabled
+    cluster.add_node(resources={"head": 1})
+    cluster.wait_for_nodes()
+    ray.init(address=cluster.address)
+
+    @ray.remote(num_cpus=0)
+    class DrainNodeSignal:
+        def __init__(self, waiting_for_num_actors: int):
+            self.actor_init_event = asyncio.Event()
+            self.node_drained_event = asyncio.Event()
+            self.lock = asyncio.Lock()
+            self.waiting_for_num_actors = waiting_for_num_actors
+
+        async def send_actor_started(self):
+            async with self.lock:
+                self.waiting_for_num_actors -= 1
+                if self.waiting_for_num_actors == 0:
+                    self.actor_init_event.set()
+
+        def send_node_drained(self):
+            self.node_drained_event.set()
+
+        async def wait_for_actors_to_start(self):
+            await self.actor_init_event.wait()
+
+        async def wait_for_node_drained(self):
+            await self.node_drained_event.wait()
+
+    # Make sure signal actor created on the head node
+    signal_actor = DrainNodeSignal.remote(2)
+
+    # now add worker nodes
+    worker1 = cluster.add_node(resources={"worker": 1}, num_cpus=1)
+    _worker2 = cluster.add_node(resources={"worker": 1}, num_cpus=1)
+    cluster.wait_for_nodes()
+
+    drained_node_id = worker1.node_id
+
+    class AssertingUDF:
+        def __init__(self, signal_actor):
+            self._node_id = ray.get_runtime_context().get_node_id()
+            self._signal_actor = signal_actor
+            ray.get(self._signal_actor.send_actor_started.remote())
+            ray.get(self._signal_actor.wait_for_node_drained.remote())
+
+        def __call__(self, batch):
+            # Check that this task isn't running on the draining node.
+            assert self._node_id != drained_node_id
+
+            return batch
+
+    exception = None
+
+    def run_dataset():
+        try:
+            ray.data.range(50, override_num_blocks=50).map_batches(
+                AssertingUDF,
+                fn_constructor_args=[signal_actor],
+                concurrency=2,
+                num_cpus=0,
+                resources={"worker": 1},
+            ).take_all()
+        except Exception as e:
+            nonlocal exception
+            exception = e
+
+    # Execute the Dataset in a separate thread
+    thread = threading.Thread(target=run_dataset)
+    thread.start()
+
+    # Wait for actors to start.
+    ray.get(signal_actor.wait_for_actors_to_start.remote())
+
+    # Drain the first worker.
+    print("Draining node", drained_node_id)
+    address = services.canonicalize_bootstrap_address_or_die(addr="auto")
+    gcs_client = ray._raylet.GcsClient(address=address)
+    deadline_timestamp_ms = (time.time_ns() // 1e6) + (999999 * 1e3)
+    is_accepted, _ = gcs_client.drain_node(
+        drained_node_id,
+        autoscaler_pb2.DrainNodeReason.Value("DRAIN_NODE_REASON_PREEMPTION"),
+        "",
+        deadline_timestamp_ms,
+    )
+    assert is_accepted
+
+    ray.get(signal_actor.send_node_drained.remote())
+
+    # Wait for the dataset to finish.
+    thread.join()
+
+    assert exception is None, exception
 
 
 if __name__ == "__main__":
