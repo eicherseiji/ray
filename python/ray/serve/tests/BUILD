@@ -133,7 +133,6 @@ py_test_module_list(
         "test_autoscaling_policy.py",
         "test_deploy.py",
         "test_grpc.py",
-        "test_logging.py",
         "test_standalone.py",
         "test_standalone_3.py",
         "test_telemetry_1.py",
@@ -351,6 +350,28 @@ py_test_module_list(
     tags = [
         "exclusive",
         "no_windows",
+        "team:serve",
+    ],
+    deps = [
+        ":common",
+        ":conftest",
+        "//python/ray/serve:serve_lib",
+    ],
+)
+
+# Large tests with direct ingress
+py_test_module_list(
+    size = "large",
+    env = {
+        "ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS": "1",
+        "ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
+    },
+    files = [
+        "test_logging.py",
+    ],
+    tags = [
+        "direct_ingress",
+        "exclusive",
         "team:serve",
     ],
     deps = [
