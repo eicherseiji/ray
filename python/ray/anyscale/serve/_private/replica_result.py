@@ -135,8 +135,6 @@ class gRPCReplicaResult(ReplicaResult):
                         self._actor_id.binary(),
                     )
                 raise
-            except asyncio.CancelledError:
-                raise RequestCancelledError from None
 
             return deserialize_or_raise_error(grpc_response)
 
