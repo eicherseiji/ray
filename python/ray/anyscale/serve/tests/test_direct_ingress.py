@@ -15,6 +15,7 @@ from ray.serve._private.test_utils import (
     check_num_replicas_gte,
     check_num_replicas_lte,
     send_signal_on_cancellation,
+    ping_grpc_list_applications,
 )
 from starlette.responses import PlainTextResponse
 
@@ -31,6 +32,7 @@ from ray.anyscale.serve._private.constants import (
     RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT,
     RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
 )
+from ray.serve._private.constants import HEALTHY_MESSAGE
 from ray.serve.schema import ApplicationStatus, RequestProtocol
 from ray.serve.schema import ServeInstanceDetails
 from ray.dashboard.modules.serve.sdk import ServeSubmissionClient
@@ -369,7 +371,7 @@ def test_health_check(_skip_if_ff_not_enabled, serve_instance):
     # Signal the constructor to finish and verify that health checks start to pass.
     ray.get(initialize_signal.send.remote())
     wait_for_condition(
-        lambda: _verify_health_check(passing=True, message="OK"),
+        lambda: _verify_health_check(passing=True, message=HEALTHY_MESSAGE),
     )
 
     # Signal the health check method to fail and verify that health checks fail.
@@ -381,7 +383,7 @@ def test_health_check(_skip_if_ff_not_enabled, serve_instance):
     # Signal the health check method to pass and verify that health checks pass.
     ray.get(fail_hc_signal.send.remote(clear=True))
     wait_for_condition(
-        lambda: _verify_health_check(passing=True, message="OK"),
+        lambda: _verify_health_check(passing=True, message=HEALTHY_MESSAGE),
     )
 
     # Initiate graceful shutdown and verify that health checks fail.
@@ -1266,7 +1268,7 @@ class TestDirectIngressBackpressure:
             # Health check should still pass during backpressure
             hc_response = httpx.get(f"{http_url}/-/healthz")
             assert hc_response.status_code == 200
-            assert hc_response.text == "OK"
+            assert hc_response.text == HEALTHY_MESSAGE
 
             # Fail health check
             ray.get(fail_hc_signal.send.remote())
@@ -1923,6 +1925,82 @@ def test_shutdown_replica_only_after_draining_requests(
         lambda: "replica-shutdown-deployment" not in serve.status().applications,
         timeout=10,
     )
+
+
+def test_http_routes_endpoint(_skip_if_ff_not_enabled, serve_instance):
+    """Test that the routes endpoint returns pair of routes_prefix and
+    app_name of which the replica is serving for.
+    """
+
+    @serve.deployment
+    class D1:
+        def __call__(self, *args):
+            return "D1"
+
+    @serve.deployment
+    class D2:
+        def __call__(self, *args):
+            return "D2"
+
+    serve.run(D1.bind(), name="app1", route_prefix="/D1")
+    serve.run(D2.bind(), name="app2", route_prefix="/hello/world")
+
+    # Test routes endpoint on the replica running for app1 directly
+    url = get_application_url(app_name="app1", exclude_route_prefix=True)
+    routes = httpx.get(f"{url}/-/routes").json()
+    assert routes == {"/D1": "app1"}, routes
+
+    # Test routes endpoint on the replica running for app2 directly
+    url = get_application_url(app_name="app2", exclude_route_prefix=True)
+    routes = httpx.get(f"{url}/-/routes").json()
+    assert routes == {"/hello/world": "app2"}, routes
+
+    # Test routes endpoint on the proxy
+    url = "http://localhost:8000/-/routes"
+    routes = httpx.get(url).json()
+    assert routes == {"/D1": "app1", "/hello/world": "app2"}, routes
+
+
+def test_grpc_list_applications_endpoint(_skip_if_ff_not_enabled, serve_instance):
+    """Each replica's gRPC `ListApplications` method should only report the
+    single application that replica is serving.
+    """
+
+    @serve.deployment
+    class D1:
+        def __call__(self, *args):
+            return "D1"
+
+    @serve.deployment
+    class D2:
+        def __call__(self, *args):
+            return "D2"
+
+    serve.run(D1.bind(), name="app1", route_prefix="/D1")
+    serve.run(D2.bind(), name="app2", route_prefix="/hello/world")
+
+    # Test gRPC `ListApplications` on the replica running for app1 directly
+    url = get_application_url("gRPC", app_name="app1")
+    channel = grpc.insecure_channel(url)
+    try:
+        ping_grpc_list_applications(channel, ["app1"])
+    finally:
+        channel.close()
+
+    # Test gRPC `ListApplications` on the replica running for app2 directly
+    url = get_application_url("gRPC", app_name="app2")
+    channel = grpc.insecure_channel(url)
+    try:
+        ping_grpc_list_applications(channel, ["app2"])
+    finally:
+        channel.close()
+
+    # Test gRPC `ListApplications` on the proxy
+    channel = grpc.insecure_channel("localhost:9000")
+    try:
+        ping_grpc_list_applications(channel, ["app1", "app2"])
+    finally:
+        channel.close()
 
 
 if __name__ == "__main__":

@@ -59,6 +59,7 @@ from ray.serve._private.common import (
 )
 from ray.serve._private.constants import (
     GRPC_CONTEXT_ARG_NAME,
+    HEALTHY_MESSAGE,
     REQUEST_LATENCY_BUCKETS_MS,
     SERVE_LOGGER_NAME,
     SERVE_CONTROLLER_NAME,
@@ -742,7 +743,7 @@ class AnyscaleReplica(ReplicaBase):
             yield result
 
     async def _dataplane_health_check(self) -> Tuple[bool, str]:
-        healthy, message = True, "OK"
+        healthy, message = True, HEALTHY_MESSAGE
         if self._shutting_down:
             healthy = False
             message = "DRAINING"
@@ -791,7 +792,11 @@ class AnyscaleReplica(ReplicaBase):
                 grpc.StatusCode.OK if healthy else grpc.StatusCode.UNAVAILABLE
             )
             context.set_details(message)
-            return ListApplicationsResponse(application_names=[]).SerializeToString()
+            # ListApplications returns only the app name the replica is serving.
+            application_names = [self._deployment_id.app_name]
+            return ListApplicationsResponse(
+                application_names=application_names
+            ).SerializeToString()
 
         request_id = generate_request_id()
         c = RayServegRPCContext(context)
@@ -958,6 +963,11 @@ class AnyscaleReplica(ReplicaBase):
         if route in ["/-/healthz", "/-/routes"]:
             healthy, message = await self._dataplane_health_check()
             status_code = 200 if healthy else 503
+            if route == "/-/routes" and healthy:
+                # routes endpoint returns only the route prefix andapp name the replica is serving.
+                message = {
+                    self._route_prefix: self._deployment_id.app_name,
+                }
             for msg in convert_object_to_asgi_messages(
                 message,
                 status_code=status_code,
