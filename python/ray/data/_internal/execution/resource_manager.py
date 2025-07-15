@@ -560,7 +560,7 @@ class ReservationOpResourceAllocator(OpResourceAllocator):
         return res
 
     def get_budget(self, op: PhysicalOperator) -> Optional[ExecutionResources]:
-        return self._op_budgets.get(op, None)
+        return self._op_budgets.get(op)
 
     def _should_unblock_streaming_output_backpressure(
         self, op: PhysicalOperator
@@ -705,9 +705,15 @@ class ReservationOpResourceAllocator(OpResourceAllocator):
                 to_borrow,
             )
             self._op_budgets[op] = self._op_budgets[op].add(op_shared)
-            # We don't limit GPU resources, as not all operators
-            # use GPU resources.
-            self._op_budgets[op].gpu = float("inf")
+            if op.min_max_resource_requirements()[1].gpu > 0:
+                # If an operator needs GPU, we just allocate all GPUs to it.
+                # TODO(hchen): allocate resources across multiple GPU operators.
+                self._op_budgets[op].gpu = (
+                    self._resource_manager.get_global_limits().gpu
+                    - self._resource_manager.get_op_usage(op).gpu
+                )
+            else:
+                self._op_budgets[op].gpu = 0
 
         # A materializing operator like `AllToAllOperator` waits for all its input
         # operator's outputs before processing data. This often forces the input
