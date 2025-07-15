@@ -1,5 +1,5 @@
 import functools
-import importlib.util
+import importlib
 import inspect
 import time
 import warnings
@@ -7,12 +7,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Uni
 
 import numpy as np
 
+from ray.anyscale.data._internal.readers.orjson_jsonl_reader import OrjsonJSONLReader
 import ray
 import ray.data.read_api as oss_read_api
 from ray._private.auto_init_hook import wrap_auto_init
 from ray._private.ray_constants import env_bool
 from ray._private.utils import INT32_MAX
 from ray.anyscale.data._internal.file_indexer import (
+    FileChunker,
     NonSamplingFileIndexer,
 )
 from ray.anyscale.data._internal.logical.operators.list_files_operator import ListFiles
@@ -31,7 +33,6 @@ from ray.anyscale.data._internal.readers import (
     ImageReader,
     InMemorySizeEstimator,
     NumpyReader,
-    OrjsonJSONLReader,
     PandasJSONLReader,
     ParquetInMemorySizeEstimator,
     ParquetReader,
@@ -506,6 +507,7 @@ def read_json(
     concurrency: Optional[int] = None,
     **arrow_json_args,
 ) -> Dataset:
+    file_chunker = None
     if lines:
         if arrow_json_args:
             raise ValueError("If `lines=True`, you can't specify `arrow_json_args`.")
@@ -517,6 +519,17 @@ def read_json(
                 partitioning=partitioning,
                 open_args=arrow_open_stream_args,
             )
+
+            # Enable file chunking if compression is not specified in arrow_open_stream_args
+            if (
+                arrow_open_stream_args is None
+                or "compression" not in arrow_open_stream_args
+            ):
+                from ray.anyscale.data._internal.file_indexer import (
+                    LineDelimitedFileChunker,
+                )
+
+                file_chunker = LineDelimitedFileChunker()
         else:
             warnings.warn(
                 "orjson provides the fastest `read_json` implementation, but it’s not "
@@ -548,6 +561,7 @@ def read_json(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        file_chunker=file_chunker,
     )
 
 
@@ -751,6 +765,7 @@ def read_files(
     shuffle: Optional[Union[Literal["files"], FileShuffleConfig]],
     concurrency: Optional[int],
     ray_remote_args: Optional[Dict[str, Any]],
+    file_chunker: Optional[FileChunker] = None,
 ) -> Dataset:
 
     if ray_remote_args is None:
@@ -777,7 +792,10 @@ def read_files(
             else shuffle
         )
 
-    file_indexer = NonSamplingFileIndexer(ignore_missing_paths=ignore_missing_paths)
+    file_indexer = NonSamplingFileIndexer(
+        ignore_missing_paths=ignore_missing_paths,
+        file_chunker=file_chunker,
+    )
     file_partitioner = RoundRobinPartitioner(
         in_memory_size_estimator=in_memory_size_estimator,
         min_bucket_size=DataContext.get_current().min_read_partition_size,

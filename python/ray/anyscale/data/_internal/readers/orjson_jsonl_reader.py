@@ -1,6 +1,8 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from .text_reader import TextReader
+from ray.data.datasource.partitioning import Partitioning
+
+from .line_delimited_file_reader import LineDelimitedFileReader
 
 
 def decode_fn(data: bytes) -> Dict[str, Any]:
@@ -21,6 +23,19 @@ def decode_fn(data: bytes) -> Dict[str, Any]:
         raise NotImplementedError(f"Unsupported JSON type: {type(obj)}")
 
 
-class OrjsonJSONLReader(TextReader):
-    def __init__(self, *args, **kwargs):
-        super().__init__(decode_fn=decode_fn, drop_empty_lines=True, *args, **kwargs)
+class OrjsonJSONLReader(LineDelimitedFileReader):
+    """Reader for newline‑delimited JSON (*JSONL*) files using orjson."""
+
+    def __init__(
+        self,
+        *,
+        include_paths: bool = False,
+        partitioning: Optional[Partitioning] = None,
+        open_args: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(
+            include_paths=include_paths,
+            partitioning=partitioning,
+            open_args=open_args,
+            decode_fn=decode_fn,
+        )

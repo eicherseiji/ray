@@ -9,6 +9,7 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
 )
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
 from ray.data.block import BlockAccessor, BlockColumn
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 if TYPE_CHECKING:
     from .file_reader import FileReader
@@ -53,12 +54,16 @@ class SamplingInMemorySizeEstimator(InMemorySizeEstimator):
     def estimate_in_memory_sizes(self, manifest: FileManifest) -> BlockColumn:
         assert np.all(manifest.file_sizes >= 0)
 
-        for path, file_size in zip(manifest.paths, manifest.file_sizes):
+        for path, file_size, metadata in zip(
+            manifest.paths, manifest.file_sizes, manifest.file_chunk_metadatas
+        ):
             if self._encoding_ratio is None:
                 # Estimating the encoding ratio can be expensive since it requires
                 # reading the file. So, we only estimate the encoding ratio if we don't
                 # already have one.
-                self._encoding_ratio = self._estimate_encoding_ratio(path, file_size)
+                self._encoding_ratio = self._estimate_encoding_ratio(
+                    path, file_size, metadata
+                )
                 break
 
         if self._encoding_ratio is None:
@@ -71,8 +76,15 @@ class SamplingInMemorySizeEstimator(InMemorySizeEstimator):
         self,
         path: str,
         file_size: int,
+        metadata: Optional[ChunkMetadata],
     ) -> Optional[float]:
         """
+        Estimate the encoding ratio (in-memory size / on-disk size) for a file.
+
+        Args:
+            path: The path to the file.
+            file_size: The on-disk size of the file/chunk in bytes.
+            metadata: Optional metadata for the file (e.g., chunking information).
 
         Returns:
             The estimated encoding ratio of the file, or `None` if the ratio can't
@@ -82,7 +94,7 @@ class SamplingInMemorySizeEstimator(InMemorySizeEstimator):
         if not file_size:
             return None
 
-        manifest = FileManifest.from_paths_and_sizes([path], [file_size])
+        manifest = FileManifest.construct_manifest([path], [file_size], [metadata])
         batches = self._reader.read_files(manifest, filesystem=self._filesystem)
 
         try:

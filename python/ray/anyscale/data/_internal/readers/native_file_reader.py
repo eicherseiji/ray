@@ -1,6 +1,6 @@
 import abc
 import io
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import pyarrow
@@ -17,6 +17,8 @@ from ray.data._internal.util import (
 from ray.data.block import DataBatch
 from ray.data.context import DataContext
 from ray.data.datasource import Partitioning, PathPartitionParser
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
+from ray.anyscale.data._internal.util.compression import infer_compression
 
 
 class NativeFileReader(FileReader):
@@ -48,7 +50,12 @@ class NativeFileReader(FileReader):
         return self._data_context
 
     @abc.abstractmethod
-    def read_stream(self, file: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        file: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterable[DataBatch]:
         ...
 
     def read_files(
@@ -61,6 +68,7 @@ class NativeFileReader(FileReader):
         filesystem,
     ) -> Iterable[DataBatch]:
         paths = file_manifest.paths
+        file_chunk_metadatas = file_manifest.file_chunk_metadatas
         num_threads = self._NUM_THREADS_PER_TASK
         if len(paths) < num_threads:
             num_threads = len(paths)
@@ -76,17 +84,17 @@ class NativeFileReader(FileReader):
                 f"Invalid keys: {set(columns_rename.keys()) - set(columns)}"
             )
 
-        def _read_paths(paths: List[str]):
-            for path in paths:
+        def _read_paths(path_info: List[Tuple[str, ChunkMetadata]]):
+            for path, file_chunk_metadata in path_info:
                 partitions = {}
                 if self._partitioning is not None:
                     parse = PathPartitionParser(self._partitioning)
                     partitions = parse(path)
 
-                file = self._open_input_source(path, filesystem=filesystem)
+                file = self.open_input_source(path, filesystem=filesystem)
 
                 for batch in iterate_with_retry(
-                    lambda: self.read_stream(file, path),
+                    lambda: self.read_stream(file, path, file_chunk_metadata),
                     description="read stream iteratively",
                     match=self._data_context.retried_io_errors,
                 ):
@@ -103,7 +111,7 @@ class NativeFileReader(FileReader):
 
         if num_threads > 0:
             yield from make_async_gen(
-                iter(paths),
+                iter(zip(paths, file_chunk_metadatas)),
                 _read_paths,
                 # NOTE: It's crucial for the sequence to have preserved (deterministic)
                 #       ordering so that that tasks could be safely retried (when
@@ -112,9 +120,15 @@ class NativeFileReader(FileReader):
                 num_workers=num_threads,
             )
         else:
-            yield from _read_paths(paths)
+            yield from _read_paths(zip(paths, file_chunk_metadatas))
 
-    def _open_input_source(
+    def resolve_compression(self, path: str) -> Optional[str]:
+        compression = self._open_args.get("compression", None)
+        if compression is None:
+            compression = infer_compression(path)
+        return compression
+
+    def open_input_source(
         self,
         path: str,
         *,
@@ -130,22 +144,7 @@ class NativeFileReader(FileReader):
         from pyarrow.fs import HadoopFileSystem
 
         open_args = self._open_args.copy()
-        compression = open_args.get("compression", None)
-        if compression is None:
-            try:
-                # If no compression manually given, try to detect
-                # compression codec from path.
-                compression = pa.Codec.detect(path).name
-            except (ValueError, TypeError):
-                # Arrow's compression inference on the file path
-                # doesn't work for Snappy, so we double-check ourselves.
-                import pathlib
-
-                suffix = pathlib.Path(path).suffix
-                if suffix and suffix[1:] == "snappy":
-                    compression = "snappy"
-                else:
-                    compression = None
+        compression = self.resolve_compression(path)
 
         buffer_size = open_args.pop("buffer_size", None)
         if buffer_size is None:

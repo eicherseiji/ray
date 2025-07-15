@@ -9,6 +9,7 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
 )
 from ray.data._internal.util import _check_import
 from ray.data.block import BlockMetadata, DataBatch
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 from .native_file_reader import NativeFileReader
 from .supports_metadata import MetadataType, SupportsMetadata
@@ -39,7 +40,12 @@ class ImageReader(NativeFileReader, SupportsMetadata):
         self.size = size
         self.mode = mode
 
-    def read_stream(self, file: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        file: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterable[DataBatch]:
         from PIL import Image, UnidentifiedImageError
 
         data = file.readall()

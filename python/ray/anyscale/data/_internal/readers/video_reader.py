@@ -1,10 +1,11 @@
-from typing import Iterable
+from typing import Iterable, Optional
 
 import pyarrow
 
 from .native_file_reader import NativeFileReader
 from ray.data._internal.util import _check_import
 from ray.data.block import DataBatch
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 
 class VideoReader(NativeFileReader):
@@ -16,7 +17,12 @@ class VideoReader(NativeFileReader):
 
         _check_import(self, module="decord", package="decord")
 
-    def read_stream(self, file: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        file: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterable[DataBatch]:
         from decord import VideoReader
 
         reader = VideoReader(file)

@@ -403,8 +403,8 @@ def test_read_parquet_batching(
         target_block_size=target_block_size,
     )
 
-    file_manifest = FileManifest.from_paths_and_sizes(
-        [file_path], [0]
+    file_manifest = FileManifest.construct_manifest(
+        [file_path], [0], [None]
     )  # Use dummy file size for test
     tables = list(
         reader.read_files(

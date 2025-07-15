@@ -8,6 +8,7 @@ import pyarrow as pa
 
 from .native_file_reader import NativeFileReader
 from ray.data.block import DataBatch
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 if TYPE_CHECKING:
     import pyarrow
@@ -32,7 +33,12 @@ class ArrowJSONReader(NativeFileReader):
         self._arrow_json_args = arrow_json_args
 
     # TODO(ekl) The PyArrow JSON reader doesn't support streaming reads.
-    def read_stream(self, f: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        f: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterable[DataBatch]:
         buffer: pa.lib.Buffer = f.read_buffer()
 
         if buffer.size == 0:

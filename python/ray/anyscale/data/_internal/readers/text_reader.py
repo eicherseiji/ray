@@ -41,7 +41,12 @@ class TextReader(NativeFileReader):
         self._target_max_block_size = DataContext.get_current().target_max_block_size
         self._newline_bytes = "\n".encode(encoding)
 
-    def read_stream(self, f: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        f: "pyarrow.NativeFile",
+        path: str,
+        metadata: Any = None,
+    ) -> Iterable[DataBatch]:
         builder = BlockOutputBuffer(
             OutputBlockSizeOption(target_max_block_size=self._target_max_block_size)
         )

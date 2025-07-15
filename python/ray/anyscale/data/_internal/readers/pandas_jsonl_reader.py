@@ -1,11 +1,12 @@
 import logging
 from io import BytesIO
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, Optional
 
 import pandas as pd
 
 from .native_file_reader import NativeFileReader
 from ray.data.block import DataBatch
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 if TYPE_CHECKING:
     import pyarrow
@@ -17,7 +18,12 @@ _JSONL_ROWS_PER_CHUNK = 10000
 
 
 class PandasJSONLReader(NativeFileReader):
-    def read_stream(self, f: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        f: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterable[DataBatch]:
         buffer: "pyarrow.lib.Buffer" = f.read_buffer()
 
         # Check if the buffer is empty

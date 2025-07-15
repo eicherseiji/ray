@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 PATH_COLUMN_NAME = "__path"
 FILE_SIZE_COLUMN_NAME = "__file_size"
+FILE_CHUNK_METADATA_COLUMN_NAME = "__file_chunk_metadata"
 
 
 class FileManifest:
@@ -39,11 +40,13 @@ class FileManifest:
         column_names = BlockAccessor.for_block(block).column_names()
         assert FILE_SIZE_COLUMN_NAME in column_names
         assert PATH_COLUMN_NAME in column_names
+        assert FILE_CHUNK_METADATA_COLUMN_NAME in column_names
 
         self._block = block
 
         self._paths = block[PATH_COLUMN_NAME]
         self._file_sizes = block[FILE_SIZE_COLUMN_NAME]
+        self._file_chunk_metadatas = block[FILE_CHUNK_METADATA_COLUMN_NAME]
 
     def __len__(self) -> int:
         return len(self._block)
@@ -59,6 +62,10 @@ class FileManifest:
     def file_sizes(self) -> np.ndarray:
         return BlockColumnAccessor.for_column(self._file_sizes).to_numpy()
 
+    @cached_property
+    def file_chunk_metadatas(self) -> np.ndarray:
+        return BlockColumnAccessor.for_column(self._file_chunk_metadatas).to_numpy()
+
     def as_block(self) -> Block:
         """Return the underlying block for the `FileManifest`.
 
@@ -67,10 +74,16 @@ class FileManifest:
         return self._block
 
     @classmethod
-    def from_paths_and_sizes(cls, paths, sizes) -> "FileManifest":
-        assert len(paths) == len(sizes)
+    def construct_manifest(cls, paths, sizes, chunk_metadatas) -> "FileManifest":
+        assert len(paths) == len(sizes) == len(chunk_metadatas)
 
-        block = pa.table({PATH_COLUMN_NAME: paths, FILE_SIZE_COLUMN_NAME: sizes})
+        block = pa.table(
+            {
+                PATH_COLUMN_NAME: paths,
+                FILE_SIZE_COLUMN_NAME: sizes,
+                FILE_CHUNK_METADATA_COLUMN_NAME: chunk_metadatas,
+            }
+        )
         return cls(block)
 
 

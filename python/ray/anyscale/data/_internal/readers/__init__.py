@@ -9,6 +9,7 @@ from .in_memory_size_estimator import (
     InMemorySizeEstimator,
     SamplingInMemorySizeEstimator,
 )
+from .line_delimited_file_reader import LineDelimitedFileReader
 from .numpy_reader import NumpyReader
 from .orjson_jsonl_reader import OrjsonJSONLReader
 from .pandas_jsonl_reader import PandasJSONLReader
@@ -29,6 +30,7 @@ __all__ = [
     "FileReader",
     "ImageReader",
     "InMemorySizeEstimator",
+    "LineDelimitedFileReader",
     "NumpyReader",
     "OrjsonJSONLReader",
     "PandasJSONLReader",

@@ -1,9 +1,10 @@
 from collections import defaultdict
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, Optional
 
 from .native_file_reader import NativeFileReader
 from ray.data._internal.util import _check_import
 from ray.data.block import DataBatch
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 if TYPE_CHECKING:
     import pyarrow
@@ -18,7 +19,12 @@ class AvroReader(NativeFileReader):
 
         _check_import(self, module="fastavro", package="fastavro")
 
-    def read_stream(self, file: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        file: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterable[DataBatch]:
         import fastavro
 
         # Read the Avro file. This assumes the Avro file includes its schema.

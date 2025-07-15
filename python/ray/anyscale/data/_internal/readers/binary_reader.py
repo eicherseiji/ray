@@ -6,6 +6,7 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
 from ray.data.block import BlockMetadata, DataBatch
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 from .in_memory_size_estimator import InMemorySizeEstimator
 from .native_file_reader import NativeFileReader
@@ -16,7 +17,12 @@ if TYPE_CHECKING:
 
 
 class BinaryReader(NativeFileReader, SupportsMetadata):
-    def read_stream(self, file: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        file: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterable[DataBatch]:
         yield {"bytes": [file.readall()]}
 
     def read_metadata(

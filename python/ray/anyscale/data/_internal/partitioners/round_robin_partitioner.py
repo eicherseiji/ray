@@ -1,5 +1,6 @@
 import collections
 import logging
+from typing import Tuple
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -17,6 +18,7 @@ class _FileBucket:
     def __init__(self):
         self._paths = []
         self._file_sizes = []
+        self._file_chunk_metadatas = []
         self._in_memory_size = 0
 
     @property
@@ -31,14 +33,26 @@ class _FileBucket:
     def file_sizes(self):
         return self._file_sizes
 
-    def add(self, path: str, file_size: int, in_memory_size: int):
+    @property
+    def file_chunk_metadatas(self):
+        return self._file_chunk_metadatas
+
+    def add(
+        self,
+        path: str,
+        file_size: int,
+        file_chunk_metadata: Tuple[int, int],
+        in_memory_size: int,
+    ):
         self._paths.append(path)
         self._file_sizes.append(file_size)
+        self._file_chunk_metadatas.append(file_chunk_metadata)
         self._in_memory_size += in_memory_size
 
     def clear(self):
         self._paths.clear()
         self._file_sizes.clear()
+        self._file_chunk_metadatas.clear()
         self._in_memory_size = 0
 
 
@@ -85,9 +99,10 @@ class RoundRobinPartitioner(FilePartitioner):
         in_memory_size_estimates = (
             self._in_memory_size_estimator.estimate_in_memory_sizes(input)
         )
-        for file_path, file_size, in_memory_size_estimate in zip(
+        for file_path, file_size, file_chunk_metadata, in_memory_size_estimate in zip(
             input.paths,
             input.file_sizes,
+            input.file_chunk_metadatas,
             in_memory_size_estimates,
         ):
             current_bucket = self._buckets[self._current_bucket_index]
@@ -100,16 +115,20 @@ class RoundRobinPartitioner(FilePartitioner):
             # This is a special-case for file systems that don't provide file sizes
             # like HTTP-based file systems.
             if in_memory_size_estimate is None:
-                current_bucket.add(file_path, file_size, 0)
+                current_bucket.add(file_path, file_size, file_chunk_metadata, 0)
                 self._current_bucket_index = (
                     self._current_bucket_index + 1
                 ) % self._num_buckets
                 continue
 
-            current_bucket.add(file_path, file_size, in_memory_size_estimate)
+            current_bucket.add(
+                file_path, file_size, file_chunk_metadata, in_memory_size_estimate
+            )
             if current_bucket.in_memory_size >= self._max_bucket_size:
-                manifest = FileManifest.from_paths_and_sizes(
-                    current_bucket.paths, current_bucket.file_sizes
+                manifest = FileManifest.construct_manifest(
+                    current_bucket.paths,
+                    current_bucket.file_sizes,
+                    current_bucket.file_chunk_metadatas,
                 )
                 self._output_queue.append(manifest)
                 self._current_bucket_index = (
@@ -130,7 +149,7 @@ class RoundRobinPartitioner(FilePartitioner):
     def finalize(self):
         for bucket in self._buckets:
             if bucket.paths:
-                manifest = FileManifest.from_paths_and_sizes(
-                    bucket.paths, bucket.file_sizes
+                manifest = FileManifest.construct_manifest(
+                    bucket.paths, bucket.file_sizes, bucket.file_chunk_metadatas
                 )
                 self._output_queue.append(manifest)

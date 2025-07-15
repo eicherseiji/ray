@@ -8,6 +8,7 @@ from ray.data._internal.datasource.webdataset_datasource import (
     _tar_file_iterator,
 )
 from ray.data.block import DataBatch
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 if TYPE_CHECKING:
     import pyarrow
@@ -31,7 +32,12 @@ class WebDatasetReader(NativeFileReader):
         self.suffixes = suffixes
         self.verbose_open = verbose_open
 
-    def read_stream(self, file: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        file: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterable[DataBatch]:
         import pandas as pd
 
         files = _tar_file_iterator(

@@ -5,6 +5,7 @@ import numpy as np
 
 from .native_file_reader import NativeFileReader
 from ray.data.block import Block
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 if TYPE_CHECKING:
     import pyarrow
@@ -24,7 +25,12 @@ class NumpyReader(NativeFileReader):
 
         self._numpy_load_args = numpy_load_args
 
-    def read_stream(self, file: "pyarrow.NativeFile", path: str) -> Iterator[Block]:
+    def read_stream(
+        self,
+        file: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterator[Block]:
         # TODO(ekl) Ideally numpy can read directly from the file, but it
         # seems like it requires the file to be seekable.
         buf = BytesIO()

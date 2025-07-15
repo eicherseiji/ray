@@ -1,11 +1,12 @@
 import io
-from typing import Iterable
+from typing import Iterable, Optional
 
 import pyarrow
 
 from .native_file_reader import NativeFileReader
 from ray.data._internal.util import _check_import
 from ray.data.block import DataBatch
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 
 class AudioReader(NativeFileReader):
@@ -17,7 +18,12 @@ class AudioReader(NativeFileReader):
 
         _check_import(self, module="soundfile", package="soundfile")
 
-    def read_stream(self, file: "pyarrow.NativeFile", path: str) -> Iterable[DataBatch]:
+    def read_stream(
+        self,
+        file: "pyarrow.NativeFile",
+        path: str,
+        metadata: Optional[ChunkMetadata] = None,
+    ) -> Iterable[DataBatch]:
         import soundfile
 
         # `soundfile` doesn't support reading from a `pyarrow.NativeFile` directly, so
