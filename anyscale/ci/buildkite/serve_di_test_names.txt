@@ -15,3 +15,9 @@
 //python/ray/anyscale/serve:tests/test_direct_ingress
 //python/ray/anyscale/serve:tests/test_direct_ingress_with_grpc
 //python/ray/anyscale/serve:tests/test_tracing_utils
+//python/ray/anyscale/serve:tests/test_az_routing.py
+//python/ray/anyscale/serve:tests/test_cluster_node_info_cache.py
+//python/ray/anyscale/serve:tests/test_draining.py
+//python/ray/anyscale/serve:tests/test_grpc_e2e.py
+//python/ray/anyscale/serve:tests/test_grpc_replica_wrapper.py
+//python/ray/anyscale/serve:tests/test_handle.py
