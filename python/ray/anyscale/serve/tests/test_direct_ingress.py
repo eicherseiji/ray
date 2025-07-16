@@ -1062,7 +1062,7 @@ class TestDirectIngressBackpressure:
         channel = grpc.insecure_channel(url)
         stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
         try:
-            stub.Method1(serve_pb2.UserDefinedMessage(), timeout=10)
+            stub.Method1(serve_pb2.UserDefinedMessage(), timeout=20)
             return True
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
@@ -1455,28 +1455,27 @@ class TestDirectIngressBackpressure:
         grpc_url = get_application_url("gRPC", app_name="composite-app")
 
         num_requests = 10
-        for do_request in [self._do_grpc_request, self._do_http_request]:
-            if do_request == self._do_grpc_request:
-                # TODO(abrar): fix the grpc test
-                continue
+        for do_request in [self._do_http_request, self._do_grpc_request]:
             url = http_url if do_request == self._do_http_request else grpc_url
-            is_grpc = do_request == self._do_grpc_request
             with ThreadPoolExecutor(num_requests) as tpe:
-                futures = [
-                    tpe.submit(do_request, url)
-                    if is_grpc
-                    else tpe.submit(do_request, url)
-                    for _ in range(num_requests)
-                ]
+                futures = []
+                # there is a race condition in the router where if multiple requests
+                # are submitted at the same time, then we could reject more requests
+                # than strictly necessary. Hence we submit 1 request first and then
+                # submit the rest of the requests.
+                futures.append(tpe.submit(do_request, url))
                 wait_for_condition(
                     lambda: ray.get(signal.cur_num_waiters.remote()) == 1
+                )
+                futures.extend(
+                    [tpe.submit(do_request, url) for _ in range(num_requests - 1)]
                 )
 
                 def _func():
                     rejected = sum(
                         [f.done() and f.result(timeout=0) is False for f in futures]
                     )
-                    assert rejected == num_requests - 2
+                    assert rejected == num_requests - 3
                     return True
 
                 wait_for_condition(_func, timeout=5)
@@ -1484,7 +1483,7 @@ class TestDirectIngressBackpressure:
                 ray.get(signal.send.remote())
 
                 successful = sum(1 for f in futures if f.result() is True)
-                assert successful == 2
+                assert successful == 3
 
             ray.get(signal.send.remote(clear=True))
 
