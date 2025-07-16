@@ -12,6 +12,8 @@
 //python/ray/serve/tests:test_request_timeout
 //python/ray/serve/tests:test_streaming_response
 //python/ray/serve/tests:test_callback
+//python/ray/serve/tests:test_http_cancellation
+//python/ray/serve/tests:test_http_headers
 //python/ray/anyscale/serve:tests/test_direct_ingress
 //python/ray/anyscale/serve:tests/test_direct_ingress_with_grpc
 //python/ray/anyscale/serve:tests/test_tracing_utils
