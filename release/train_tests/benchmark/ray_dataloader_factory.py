@@ -33,6 +33,7 @@ class RayDataLoaderFactory(BaseDataLoaderFactory):
         data_context.execution_options.actor_locality_enabled = (
             dataloader_config.actor_locality_enabled
         )
+        data_context.execution_options.preserve_order = dataloader_config.preserve_order
         data_context._enable_read_files_fusion_override = True
 
     @abstractmethod
