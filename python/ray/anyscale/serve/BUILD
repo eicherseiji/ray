@@ -84,3 +84,22 @@ py_test_module_list(
         "//:ray_lib",
     ],
 )
+
+py_test_module_list(
+    size = "medium",
+    data = glob(["tests/fixtures/*.*"]),
+    env = {"ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT": "1"},
+    files = [
+        "tests/test_direct_ingress.py",
+    ],
+    name_suffix = "_with_grpc",
+    tags = [
+        "direct_ingress",
+        "exclusive",
+        "team:serve",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
