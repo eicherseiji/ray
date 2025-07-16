@@ -1457,9 +1457,7 @@ plotly==5.23.0
 pluggy==1.3.0
     # via pytest
 polars==1.30.0
-    # via
-    #   -r python/requirements.txt
-    #   -r python/requirements/test-requirements.txt
+    # via -r python/requirements/test-requirements.txt
 portalocker==2.8.2
     # via
     #   azure-cli-telemetry
