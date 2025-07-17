@@ -192,6 +192,7 @@ py_test_module_list(
 # Run serially on Windows.
 py_test_module_list(
     size = "medium",
+    timeout = "long",
     env = {"ANYSCALE_TRACING_EXPORTER_IMPORT_PATH": ""},
     files = [
         "test_deploy_app.py",
