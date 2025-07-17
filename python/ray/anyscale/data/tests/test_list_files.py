@@ -50,7 +50,9 @@ def test_configure_max_num_list_tasks(
 def test_non_sampling_file_indexer_logs_warning_for_zero_size_files(
     tmp_path, caplog, propagate_logs
 ):
-    indexer = NonSamplingFileIndexer(ignore_missing_paths=True)
+    indexer = NonSamplingFileIndexer(
+        ignore_missing_paths=True, reader=None, file_chunker=None
+    )
     path = str(tmp_path / "file.dat")
     with open(path, "w"):
         pass
@@ -59,7 +61,14 @@ def test_non_sampling_file_indexer_logs_warning_for_zero_size_files(
     filesystem, _ = FileSystem.from_uri(tmp_path)
 
     with caplog.at_level(logging.WARNING):
-        list(indexer.list_files(block["path"], filesystem=filesystem))
+        list(
+            indexer.list_files(
+                block["path"],
+                filesystem=filesystem,
+                file_extensions=None,
+                partition_filter=None,
+            )
+        )
 
     assert "Skipping zero-size file" in caplog.text
 
