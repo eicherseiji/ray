@@ -598,7 +598,7 @@ class _ActorTaskSelectorImpl(_ActorTaskSelector):
         while input_queue:
             # Filter out actors that are invalid, i.e. actors with number of tasks in
             # flight >= _max_tasks_in_flight or actor_state is not ALIVE.
-            bundle = input_queue.peek()
+            bundle = input_queue.peek_next()
             valid_actors = [
                 actor
                 for actor in self._actor_pool.running_actors()

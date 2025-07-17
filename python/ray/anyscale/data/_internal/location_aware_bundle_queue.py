@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 
 import ray
 from ray._private.ray_constants import DEFAULT_MAX_DIRECT_CALL_OBJECT_SIZE
+from ray.anyscale.data._internal.util.object_utils import all_objects_exist_for_bundle
 from ray.data._internal.execution.bundle_queue import BundleQueue, FIFOBundleQueue
 
 if TYPE_CHECKING:
@@ -43,22 +44,26 @@ class LocationAwareBundleQueue(BundleQueue):
             self._bundle_nbytes[bundle] = bundle.size_bytes()
             self._total_nbytes += self._bundle_nbytes[bundle]
 
-    def pop(self) -> "RefBundle":
+    def get_next(self) -> "RefBundle":
         with self._lock:
             if not self._fifo_queue:
                 raise IndexError("You can't pop from an empty queue")
 
             self._try_ensure_first_bundle_exists()
-            bundle = self._fifo_queue.peek()
+            bundle = self._fifo_queue.peek_next()
             if bundle is None:
                 raise IndexError("Unexpected empty queue")
             self.remove(bundle)
             return bundle
 
-    def peek(self) -> Optional["RefBundle"]:
+    def peek_next(self) -> Optional["RefBundle"]:
         with self._lock:
             self._try_ensure_first_bundle_exists()
-            return self._fifo_queue.peek()
+            return self._fifo_queue.peek_next()
+
+    def has_next(self) -> bool:
+        bundle = self.peek_next()
+        return bundle is not None and all_objects_exist_for_bundle(bundle)
 
     def remove(self, bundle: "RefBundle") -> None:
         with self._lock:
@@ -104,31 +109,16 @@ class LocationAwareBundleQueue(BundleQueue):
 
         num_bundles_skipped = 0
         while num_bundles_skipped < len(self._bundle_nbytes):
-            first_bundle = self._fifo_queue.peek()
+            first_bundle = self._fifo_queue.peek_next()
             if first_bundle is None:
                 return
 
-            if self._objects_exist(first_bundle):
+            if all_objects_exist_for_bundle(first_bundle):
                 break
 
-            self._fifo_queue.pop()
+            self._fifo_queue.get_next()
             self._fifo_queue.add(first_bundle)
             num_bundles_skipped += 1
-
-    def _objects_exist(self, bundle) -> bool:
-        # 'get_local_object_locations' †ells us which nodes each object resides on. If
-        # "node_ids" is an empty list, it means that block isn't in object store memory.
-        object_locs = ray.experimental.get_local_object_locations(bundle.block_refs)
-        return all(
-            # If the object is small enough, the object isn't placed in the object
-            # store and the list of node IDs is empty.
-            (
-                object_info["object_size"] is not None
-                and object_info["object_size"] < DEFAULT_MAX_DIRECT_CALL_OBJECT_SIZE
-            )
-            or len(object_info["node_ids"]) > 0
-            for object_info in object_locs.values()
-        )
 
     def _refresh_bundle_sizes(self) -> None:
         for bundle in self._bundle_nbytes:

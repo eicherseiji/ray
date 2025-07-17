@@ -44,7 +44,7 @@ def test_location_aware_bundle_queue_thread_safety():
                     bundle = MagicMock(size_bytes=lambda: 100)
                     queue.add(bundle)
                     time.sleep(0.001)  # Small delay to increase thread interleaving
-                    queue.pop()
+                    queue.get_next()
             except Exception as e:
                 exceptions.append(f"Add/Pop thread: {str(e)}")
 

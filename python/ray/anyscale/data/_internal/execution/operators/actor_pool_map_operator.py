@@ -261,7 +261,7 @@ class _ActorTaskSelectorImpl(_ActorTaskSelector):
         actor_busyness_rank_heap = self._build_actor_busyness_heap(valid_actors)
 
         while input_queue and len(actor_busyness_rank_heap) > 0:
-            bundle = input_queue.peek()
+            bundle = input_queue.peek_next()
             target_actor = None
             if actor_locality_enabled:
                 target_actor = self._find_actor_with_locality(bundle, node_to_actor_map)
