@@ -25,10 +25,16 @@ def _create_bundle(data: Any) -> RefBundle:
 
 def test_location_aware_bundle_queue_thread_safety():
     """Test that the LocationAwareBundleQueue is thread-safe."""
-    with patch.object(ray, "experimental", MagicMock()) as mock_experimental:
+    with patch.object(
+        ray, "experimental", MagicMock()
+    ) as mock_experimental, patch.object(
+        ray._private.state.state, "get_draining_nodes", MagicMock()
+    ) as mock_get_draining_nodes:
         mock_experimental.get_local_object_locations.return_value = {
             "": {"node_ids": ["node1"], "object_size": 100}
         }
+
+        mock_get_draining_nodes.return_value = {}  # node_id: deadline_ms
 
         queue = LocationAwareBundleQueue(update_frequency_s=0)
         exceptions = []
