@@ -5,6 +5,7 @@ import logging
 import pickle
 import time
 import errno
+from collections import defaultdict, deque
 from contextlib import contextmanager
 from functools import wraps
 from typing import (
@@ -199,6 +200,21 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
             )
             self._ingress_ongoing_http_requests = 0
 
+            if self._cached_metrics_enabled:
+                # Cache metrics in the following format: protocol -> tags -> value
+                self._cached_ingress_request_counter = defaultdict(
+                    lambda: defaultdict(int)
+                )
+                self._cached_ingress_request_error_counter = defaultdict(
+                    lambda: defaultdict(int)
+                )
+                self._cached_deployment_request_error_counter = defaultdict(
+                    lambda: defaultdict(int)
+                )
+                self._cached_ingress_processing_latencies = defaultdict(
+                    lambda: defaultdict(deque)
+                )
+
     @property
     def _is_direct_ingress(self) -> bool:
         return self._ingress and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
@@ -320,41 +336,112 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
             # https://anyscale1.atlassian.net/browse/SERVE-872
             return
 
-        request_counter.inc(tags=self._filter_tags(request_counter, tags))
-        latency_tracker.observe(
-            latency_ms, tags=self._filter_tags(latency_tracker, tags)
-        )
-        if was_error:
-            request_error_counter.inc(
-                tags=self._filter_tags(request_error_counter, tags)
-            )
-            deployment_error_counter.inc(
-                tags=self._filter_tags(deployment_error_counter, tags)
-            )
+        request_tags = self._filter_tags(request_counter, tags)
+        latency_tags = self._filter_tags(latency_tracker, tags)
+        request_error_tags = self._filter_tags(request_error_counter, tags)
+        deployment_error_tags = self._filter_tags(deployment_error_counter, tags)
+
+        if self._cached_metrics_enabled:
+            self._cached_ingress_request_counter[protocol][
+                frozenset(request_tags.items())
+            ] += 1
+            self._cached_ingress_processing_latencies[protocol][
+                frozenset(latency_tags.items())
+            ].append(latency_ms)
+            if was_error:
+                self._cached_ingress_request_error_counter[protocol][
+                    frozenset(request_error_tags.items())
+                ] += 1
+                self._cached_deployment_request_error_counter[protocol][
+                    frozenset(deployment_error_tags.items())
+                ] += 1
+        else:
+            request_counter.inc(tags=request_tags)
+            latency_tracker.observe(latency_ms, tags=latency_tags)
+            if was_error:
+                request_error_counter.inc(tags=request_error_tags)
+                deployment_error_counter.inc(tags=deployment_error_tags)
 
     def inc_num_ongoing_requests(self, request_metadata: RequestMetadata) -> int:
         self._num_ongoing_requests += 1
+
+        if self._is_direct_ingress and request_metadata.is_direct_ingress:
+            self._ingress_ongoing_http_requests += 1
+
         if not self._cached_metrics_enabled:
             self._num_ongoing_requests_gauge.set(self._num_ongoing_requests)
 
-        if self._is_direct_ingress and request_metadata.is_direct_ingress:
-            if request_metadata.is_http_request:
-                self._ingress_ongoing_http_requests += 1
-                self.ingress_num_ongoing_http_requests_gauge.set(
-                    self._ingress_ongoing_http_requests
-                )
+            if self._is_direct_ingress and request_metadata.is_direct_ingress:
+                if request_metadata.is_http_request:
+                    self.ingress_num_ongoing_http_requests_gauge.set(
+                        self._ingress_ongoing_http_requests
+                    )
 
     def dec_num_ongoing_requests(self, request_metadata: RequestMetadata) -> int:
         self._num_ongoing_requests -= 1
+
+        if self._is_direct_ingress and request_metadata.is_direct_ingress:
+            self._ingress_ongoing_http_requests -= 1
+
         if not self._cached_metrics_enabled:
             self._num_ongoing_requests_gauge.set(self._num_ongoing_requests)
 
-        if self._is_direct_ingress and request_metadata.is_direct_ingress:
-            if request_metadata.is_http_request:
-                self._ingress_ongoing_http_requests -= 1
+            if self._is_direct_ingress and request_metadata.is_direct_ingress:
+                if request_metadata.is_http_request:
+                    self.ingress_num_ongoing_http_requests_gauge.set(
+                        self._ingress_ongoing_http_requests
+                    )
+
+    def _report_cached_metrics(self):
+        super()._report_cached_metrics()
+
+        if not self._is_direct_ingress:
+            return
+
+        for protocol in [RequestProtocol.HTTP]:
+            if protocol == RequestProtocol.HTTP:
+                ingress_request_counter = self.ingress_http_request_counter
+                ingress_request_error_counter = self.ingress_http_request_error_counter
+                deployment_request_error_counter = (
+                    self.deployment_http_request_error_counter
+                )
+                ingress_processing_latencies = (
+                    self.ingress_http_processing_latency_tracker
+                )
                 self.ingress_num_ongoing_http_requests_gauge.set(
                     self._ingress_ongoing_http_requests
                 )
+            else:
+                # TODO(alexyang): Add metrics for gRPC.
+                continue
+
+            for request_tags, count in self._cached_ingress_request_counter[
+                protocol
+            ].items():
+                ingress_request_counter.inc(count, tags=dict(request_tags))
+
+            for request_tags, count in self._cached_ingress_request_error_counter[
+                protocol
+            ].items():
+                ingress_request_error_counter.inc(count, tags=dict(request_tags))
+
+            for request_tags, count in self._cached_deployment_request_error_counter[
+                protocol
+            ].items():
+                deployment_request_error_counter.inc(count, tags=dict(request_tags))
+
+            for latency_tags, latencies in self._cached_ingress_processing_latencies[
+                protocol
+            ].items():
+                for latency_ms in latencies:
+                    ingress_processing_latencies.observe(
+                        latency_ms, tags=dict(latency_tags)
+                    )
+
+        self._cached_ingress_request_counter.clear()
+        self._cached_ingress_request_error_counter.clear()
+        self._cached_deployment_request_error_counter.clear()
+        self._cached_ingress_processing_latencies.clear()
 
 
 class AnyscaleReplica(ReplicaBase):
