@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Set
 
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    ANYSCALE_RAY_SERVE_THROUGHPUT_OPT,
 )
 from ray.serve._private.common import DeploymentID, RequestProtocol
 from ray.serve._private.constants import SERVE_LOGGER_NAME
@@ -38,6 +39,16 @@ class AnyscaleServeController(ServeController):
         global_logging_config: LoggingConfig,
         grpc_options: Optional[gRPCOptions] = None,
     ):
+        # Set the feature flags for throughput optimized Ray Serve.
+        if ANYSCALE_RAY_SERVE_THROUGHPUT_OPT:
+            logger.info(
+                "Throughput optimized Ray Serve enabled with the following configurations:\n"
+                "  • Direct ingress enabled\n"
+                "  • gRPC communication enabled\n"
+                "  • User code running in main thread (not separate)\n"
+                "  • Request path log buffer size: 1000"
+            )
+
         self._direct_ingress_enabled = ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
         if self._direct_ingress_enabled:
             logger.info(

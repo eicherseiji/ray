@@ -468,3 +468,9 @@ RAY_SERVE_REQUEST_PATH_LOG_BUFFER_SIZE = int(
 
 # The message to return when the replica is healthy.
 HEALTHY_MESSAGE = "success"
+
+# If throughput optimized Ray Serve is enabled, set the following constants.
+# This should be at the end.
+if os.environ.get("ANYSCALE_RAY_SERVE_THROUGHPUT_OPT", "0") == "1":
+    RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD = False
+    RAY_SERVE_REQUEST_PATH_LOG_BUFFER_SIZE = 1000
