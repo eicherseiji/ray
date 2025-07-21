@@ -887,6 +887,7 @@ class AnyscaleReplica(ReplicaBase):
 
         request_id = generate_request_id()
         c = RayServegRPCContext(context)
+        c.set_trailing_metadata([("request_id", request_id)])
         request_metadata = RequestMetadata(
             # TODO: pick up the request ID from gRPC initial metadata.
             request_id=request_id,
