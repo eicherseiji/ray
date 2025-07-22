@@ -27,6 +27,9 @@ class BundleQueue(abc.ABC):
 
         Raises:
             IndexError: If the queue is empty.
+
+        Returns:
+            A Refbundle if has_next() is True
         """
         ...
 
@@ -40,10 +43,7 @@ class BundleQueue(abc.ABC):
 
     @abc.abstractmethod
     def has_next(self) -> bool:
-        """Check if the queue has a valid bundle.
-
-        A valid bundle is one that has all its objects in the object store.
-        """
+        """Check if the queue has a valid bundle."""
         ...
 
     @abc.abstractmethod
