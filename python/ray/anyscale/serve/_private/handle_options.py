@@ -34,6 +34,8 @@ class AnyscaleInitHandleOptions(InitHandleOptionsBase):
 @dataclass(frozen=True)
 class AnyscaleDynamicHandleOptions(DynamicHandleOptionsBase):
     _by_reference: bool = not ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT
+    request_serialization: str = "cloudpickle"
+    response_serialization: str = "cloudpickle"
 
     def copy_and_update(self, **kwargs) -> "AnyscaleDynamicHandleOptions":
         new_kwargs = {}

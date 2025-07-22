@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Callable, Coroutine, Iterator, Optional, 
 import grpc
 
 import ray
-from ray import cloudpickle
+from ray.anyscale.serve._private.serialization import RPCSerializer
 from ray.exceptions import ActorUnavailableError, RayTaskError
 from ray.serve._private.common import RequestMetadata
 from ray.serve._private.constants import SERVE_LOGGER_NAME
@@ -45,6 +45,7 @@ class gRPCReplicaResult(ReplicaResult):
     ):
         self._call: grpc.aio.Call = call
         self._actor_id: ray.ActorID = actor_id
+        self._metadata: RequestMetadata = metadata  # Store metadata for serialization
         self._result_queue: MessageQueue = MessageQueue()
         # This is the asyncio event loop that the gRPC Call object is attached to
         self._grpc_call_loop = loop or asyncio._get_running_loop()
@@ -92,9 +93,16 @@ class gRPCReplicaResult(ReplicaResult):
     def _process_grpc_response(f: Union[Callable, Coroutine]):
         def deserialize_or_raise_error(
             grpc_response: serve_proprietary_pb2.ASGIResponse,
+            metadata: RequestMetadata,
         ):
+            # Create serializer with options from metadata
+            serializer = RPCSerializer(
+                metadata.request_serialization,
+                metadata.response_serialization,
+            )
+
             if grpc_response.is_error:
-                err = cloudpickle.loads(grpc_response.serialized_message)
+                err = serializer.loads_response(grpc_response.serialized_message)
                 if isinstance(err, RayTaskError):
                     raise err.as_instanceof_cause()
                 else:
@@ -106,7 +114,7 @@ class gRPCReplicaResult(ReplicaResult):
                 if ray.serve.context._get_serve_request_context().is_http_request:
                     return grpc_response.serialized_message
                 else:
-                    return cloudpickle.loads(grpc_response.serialized_message)
+                    return serializer.loads_response(grpc_response.serialized_message)
 
         @wraps(f)
         def wrapper(self, *args, **kwargs):
@@ -122,7 +130,7 @@ class gRPCReplicaResult(ReplicaResult):
             except concurrent.futures.CancelledError:
                 raise RequestCancelledError from None
 
-            return deserialize_or_raise_error(grpc_response)
+            return deserialize_or_raise_error(grpc_response, self._metadata)
 
         @wraps(f)
         async def async_wrapper(self, *args, **kwargs):
@@ -136,7 +144,7 @@ class gRPCReplicaResult(ReplicaResult):
                     )
                 raise
 
-            return deserialize_or_raise_error(grpc_response)
+            return deserialize_or_raise_error(grpc_response, self._metadata)
 
         if inspect.iscoroutinefunction(f):
             return async_wrapper

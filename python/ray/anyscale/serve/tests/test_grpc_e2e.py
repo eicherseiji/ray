@@ -136,5 +136,35 @@ def test_same_loop_handle(serve_instance):
     assert h.options(_by_reference=False).remote().result() == "hi"
 
 
+def test_custom_serialization_method(serve_instance):
+    @serve.deployment
+    class Downstream:
+        def __call__(self, message: str):
+            return f"Hello {message}!"
+
+    h = serve.run(Downstream.bind())
+    assert (
+        h.options(
+            _by_reference=False,
+            request_serialization="pickle",
+            response_serialization="pickle",
+        )
+        .remote("world1")
+        .result()
+        == "Hello world1!"
+    )
+
+    assert (
+        h.options(
+            _by_reference=False,
+            request_serialization="pickle",
+            response_serialization="cloudpickle",
+        )
+        .remote("world2")
+        .result()
+        == "Hello world2!"
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", "-s", __file__]))

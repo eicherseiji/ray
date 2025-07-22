@@ -340,6 +340,8 @@ def get_request_metadata(init_options, handle_options):  # noqa: F811
         grpc_context=_request_context.grpc_context,
         _by_reference=handle_options._by_reference,
         _on_separate_loop=init_options._run_router_in_separate_loop,
+        request_serialization=handle_options.request_serialization,
+        response_serialization=handle_options.response_serialization,
     )
 
 

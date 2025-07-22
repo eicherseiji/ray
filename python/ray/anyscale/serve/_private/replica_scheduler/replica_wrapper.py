@@ -4,11 +4,11 @@ from typing import Tuple
 
 import grpc
 
-from ray import cloudpickle
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
 )
 from ray.anyscale.serve._private.replica_result import gRPCReplicaResult
+from ray.anyscale.serve._private.serialization import RPCSerializer
 from ray.exceptions import ActorUnavailableError
 from ray.serve._private.common import ReplicaQueueLengthInfo, RunningReplicaInfo
 from ray.serve._private.request_router.common import PendingRequest
@@ -34,10 +34,19 @@ class gRPCReplicaWrapper(ReplicaWrapper):
     ) -> grpc.aio.Call:
         """Send the request to a Python replica."""
 
+        # Get serialization options from request metadata
+        request_serialization = pr.metadata.request_serialization
+        response_serialization = pr.metadata.response_serialization
+
+        # Get cached serializer for this request to avoid per-request instantiation overhead
+        serializer = RPCSerializer.get_cached_serializer(
+            request_serialization, response_serialization
+        )
+
         asgi_request = serve_proprietary_pb2.ASGIRequest(
             pickled_request_metadata=pickle.dumps(pr.metadata),
-            request_args=cloudpickle.dumps(pr.args),
-            request_kwargs=cloudpickle.dumps(pr.kwargs),
+            request_args=serializer.dumps_request(pr.args),
+            request_kwargs=serializer.dumps_request(pr.kwargs),
         )
         if with_rejection:
             # Call a separate handler that may reject the request.

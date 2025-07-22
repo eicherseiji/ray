@@ -26,7 +26,6 @@ from starlette.types import Receive, Scope, Send
 
 import ray
 from ray.anyscale.serve._private.http_util import ASGIDIReceiveProxy
-from ray import cloudpickle
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
@@ -86,6 +85,7 @@ from ray.serve._private.grpc_util import (
     start_grpc_server,
 )
 from ray.util import metrics
+from ray.anyscale.serve._private.serialization import RPCSerializer
 
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
@@ -106,7 +106,12 @@ def _wrap_grpc_call(f):
         if metadata.is_streaming and metadata.is_http_request:
             return result
         else:
-            return cloudpickle.dumps(result)
+            # Use cached serializer to avoid per-request instantiation overhead
+            serializer = RPCSerializer.get_cached_serializer(
+                metadata.request_serialization,
+                metadata.response_serialization,
+            )
+            return serializer.dumps_response(result)
 
     @wraps(f)
     async def wrapper(
@@ -115,8 +120,15 @@ def _wrap_grpc_call(f):
         context: grpc.aio.ServicerContext,
     ):
         request_metadata = pickle.loads(request.pickled_request_metadata)
-        request_args = cloudpickle.loads(request.request_args)
-        request_kwargs = cloudpickle.loads(request.request_kwargs)
+
+        # Get cached serializer with options from metadata
+        serializer = RPCSerializer.get_cached_serializer(
+            request_metadata.request_serialization,
+            request_metadata.response_serialization,
+        )
+
+        request_args = serializer.loads_request(request.request_args)
+        request_kwargs = serializer.loads_request(request.request_kwargs)
 
         if request_metadata.is_http_request or request_metadata.is_grpc_request:
             request_args = (pickle.loads(request_args[0]),)
@@ -130,7 +142,7 @@ def _wrap_grpc_call(f):
             )
         except (Exception, asyncio.CancelledError) as e:
             return serve_proprietary_pb2.ASGIResponse(
-                serialized_message=cloudpickle.dumps(e),
+                serialized_message=serializer.dumps_response(e),
                 is_error=True,
             )
 
@@ -141,8 +153,15 @@ def _wrap_grpc_call(f):
         context: grpc.aio.ServicerContext,
     ):
         request_metadata = pickle.loads(request.pickled_request_metadata)
-        request_args = cloudpickle.loads(request.request_args)
-        request_kwargs = cloudpickle.loads(request.request_kwargs)
+
+        # Get cached serializer with options from metadata
+        serializer = RPCSerializer.get_cached_serializer(
+            request_metadata.request_serialization,
+            request_metadata.response_serialization,
+        )
+
+        request_args = serializer.loads_request(request.request_args)
+        request_kwargs = serializer.loads_request(request.request_kwargs)
 
         if request_metadata.is_http_request or request_metadata.is_grpc_request:
             request_args = (pickle.loads(request_args[0]),)
@@ -156,7 +175,7 @@ def _wrap_grpc_call(f):
                 )
         except (Exception, asyncio.CancelledError) as e:
             yield serve_proprietary_pb2.ASGIResponse(
-                serialized_message=cloudpickle.dumps(e),
+                serialized_message=serializer.dumps_response(e),
                 is_error=True,
             )
 

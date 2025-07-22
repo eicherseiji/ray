@@ -679,6 +679,10 @@ class RequestMetadata:
     _by_reference: bool = True
     _on_separate_loop: bool = True
 
+    # gRPC serialization options
+    request_serialization: str = "cloudpickle"
+    response_serialization: str = "cloudpickle"
+
     @property
     def is_http_request(self) -> bool:
         return self._request_protocol == RequestProtocol.HTTP
