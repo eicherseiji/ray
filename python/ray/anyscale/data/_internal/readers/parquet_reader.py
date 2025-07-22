@@ -1,0 +1,546 @@
+import functools
+import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    Iterable,
+    List,
+    Optional,
+    Set,
+)
+
+import numpy as np
+import pyarrow
+import pyarrow as pa
+import pyarrow.dataset
+
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
+from ray.data._internal.datasource.parquet_datasource import (
+    PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT,
+    ParquetDatasource,
+    _infer_schema,
+    check_for_legacy_tensor_type,
+    emit_file_extensions_future_warning,
+    get_parquet_dataset,
+)
+from ray.data._internal.util import (
+    call_with_retry,
+    iterate_with_retry,
+    make_async_gen,
+)
+from ray.data.block import Block, BlockMetadata, DataBatch, Schema
+from ray.data.context import DataContext, MAX_SAFE_BLOCK_SIZE_FACTOR
+from ray.data.datasource import Partitioning, PathPartitionParser
+from ray.data.datasource.path_util import _has_file_extension
+from ray.util.debug import log_once
+
+from .file_reader import FileReader
+from .in_memory_size_estimator import (
+    InMemorySizeEstimator,
+)
+from .supports_metadata import MetadataType, SupportsMetadata, SupportsSchema
+
+
+logger = logging.getLogger(__name__)
+
+
+class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
+    """Reads Parquet files.
+
+    This file reader implementation leverages PyArrow's `ParquetDataset` and
+    `ParquetFileFragment.to_batches` APIs to efficiently read Parquet files. It first
+    creates fragments from the given paths and then reads batches from each fragment
+    using multiple threads.
+    """
+
+    _NUM_THREADS_PER_TASK = 16
+
+    # NOTE: This is a mostly arbitrary number. We might get better performance by tuning
+    # this value.
+    _COUNT_ROWS_BATCH_SIZE = 16
+
+    def __init__(
+        self,
+        *,
+        schema: Optional["pyarrow.Schema"],
+        dataset_kwargs: Dict[str, Any],
+        batch_size: Optional[int],
+        use_threads: bool,
+        to_batches_kwargs: Dict[str, Any],
+        block_udf: Optional[Callable[[Block], Block]],
+        include_paths: bool,
+        partitioning: Optional[Partitioning],
+        target_block_size: Optional[int],
+    ):
+        """Initialize the ParquetReader.
+
+        Args:
+            schema: An explicit user-provided schema. If not provided, the schema is
+                inferred from the data.
+            dataset_kwargs: Additional keyword arguments to pass to `ParquetDataset`
+                when this class creates fragments.
+            batch_size: The number of rows to read per batch. If not provided, a default
+                value is used.
+            use_threads: Whether PyArrow should use multiple threads to read batches.
+                Separately from PyArrow, this class always uses multiple threads to read
+                fragments.
+            to_batches_kwargs: Additional keyword arguments to pass to
+                `ParquetFileFragment.to_batches`.
+            block_udf: A function that takes a `Block` and returns a `Block`. This
+                argument is required for legacy reasons.
+            include_paths: Whether to include the file path in the output.
+            partitioning: The partitioning scheme to use when reading the data.
+            target_block_size: The target block size to use for reading the data.
+        """
+        self._schema = schema
+        self._dataset_kwargs = dataset_kwargs
+        self._batch_size = batch_size
+        self._use_threads = use_threads
+        self._to_batches_kwargs = to_batches_kwargs
+        self._block_udf = block_udf
+        self._include_paths = include_paths
+        self._partitioning = partitioning
+        self._target_block_size = target_block_size
+
+        # Users should use the top-level 'partitioning' argument instead of passing it
+        # through 'dataset_kwargs'.
+        assert "partitioning" not in dataset_kwargs
+        # This reader adds partitions at the Ray Data-level. To prevent PyArrow from
+        # adding partitions, we set the 'partitioning' to 'None'.
+        self._dataset_kwargs["partitioning"] = None
+
+        ctx = DataContext.get_current()
+
+        self._should_preserve_order = ctx.execution_options.preserve_order
+        self._retried_io_errors = ctx.retried_io_errors
+        self._include_row_id = (
+            ctx.checkpoint_config.generate_row_id if ctx.checkpoint_config else None
+        )
+
+    def read_files(
+        self,
+        file_manifest: FileManifest,
+        *,
+        filter_expr: Optional[pyarrow.dataset.Expression] = None,
+        columns: Optional[List[str]] = None,
+        columns_rename: Optional[Dict[str, str]] = None,
+        filesystem,
+    ) -> Iterable[DataBatch]:
+        if columns and columns_rename:
+            assert set(columns_rename.keys()).issubset(columns), (
+                f"All column rename keys must be a subset of the columns list. "
+                f"Invalid keys: {set(columns_rename.keys()) - set(columns)}"
+            )
+
+        paths = list(file_manifest.paths)
+        for path in paths:
+            if not _has_file_extension(
+                path, ParquetDatasource._FUTURE_FILE_EXTENSIONS
+            ) and log_once("read_parquet_file_extensions_future_warning"):
+                emit_file_extensions_future_warning(
+                    ParquetDatasource._FUTURE_FILE_EXTENSIONS
+                )
+                break
+
+        fragments = self._create_fragments(paths, filesystem=filesystem)
+
+        # Check for column name collision with include_row_id
+        if self._include_row_id:
+            # Check collision with columns_rename mapping
+            if columns_rename is not None:
+                if self._include_row_id in columns_rename:
+                    raise ValueError(
+                        f"include_row_id='{self._include_row_id}' conflicts with a column "
+                        f"that will be renamed (original name)"
+                    )
+                if self._include_row_id in columns_rename.values():
+                    raise ValueError(
+                        f"include_row_id='{self._include_row_id}' conflicts with a renamed "
+                        f"column (target name)"
+                    )
+
+            existing_columns = fragments[0].physical_schema.names or columns
+
+            # Check collision with existing columns
+            if self._include_row_id in existing_columns:
+                if columns is not None and self._include_row_id in columns:
+                    raise ValueError(
+                        f"include_row_id='{self._include_row_id}' conflicts with a column in the columns list"
+                    )
+                else:
+                    raise ValueError(
+                        f"include_row_id='{self._include_row_id}' conflicts with an existing column"
+                    )
+
+        # Users can pass both data columns and partition columns in the 'columns'
+        # argument. To prevent PyArrow from complaining about missing columns, we
+        # separate the partition columns from the data columns. When we read the
+        # fragments, we pass the data columns to PyArrow and add the partition
+        # columns manually.
+        data_columns = None
+        partition_columns = None
+        if columns is not None:
+            data_columns = [
+                column
+                for column in columns
+                if column in fragments[0].physical_schema.names
+            ]
+            if self._partitioning is not None:
+                parse = PathPartitionParser(self._partitioning)
+                partitions = parse(fragments[0].path)
+                partition_columns = [
+                    column for column in columns if column in partitions
+                ]
+
+        num_threads = self._get_num_threads(paths)
+        if num_threads > 0:
+            yield from make_async_gen(
+                iter(fragments),
+                functools.partial(
+                    self._read_fragments,
+                    file_manifest=file_manifest,
+                    filter_expr=filter_expr,
+                    schema=self._schema,
+                    data_columns=data_columns,
+                    partition_columns=partition_columns,
+                    columns_rename=columns_rename,
+                ),
+                # NOTE: It's crucial for the sequence to have preserved (deterministic)
+                #       ordering so that that tasks could be safely retried (when
+                #       reconstructing lost blocks)
+                preserve_ordering=True,
+                num_workers=num_threads,
+            )
+        else:
+            yield from self._read_fragments(
+                fragments,
+                file_manifest=file_manifest,
+                filter_expr=filter_expr,
+                schema=self._schema,
+                data_columns=data_columns,
+                partition_columns=partition_columns,
+                columns_rename=columns_rename,
+            )
+
+    def _create_fragments(
+        self,
+        paths: List[str],
+        *,
+        filesystem: pa.fs.FileSystem,
+    ) -> List[pyarrow.dataset.ParquetFileFragment]:
+        parquet_dataset = call_with_retry(
+            lambda: get_parquet_dataset(paths, filesystem, self._dataset_kwargs),
+            "create ParquetDataset",
+            match=self._retried_io_errors,
+        )
+        check_for_legacy_tensor_type(parquet_dataset.schema)
+        return parquet_dataset.fragments
+
+    def _get_num_threads(self, paths: List[str]) -> int:
+        num_threads = self._NUM_THREADS_PER_TASK
+        if len(paths) < num_threads:
+            num_threads = len(paths)
+
+        # TODO: We should refactor the code so that we can get the results in order even
+        # when using multiple threads.
+        if self._should_preserve_order:
+            num_threads = 0
+
+        return num_threads
+
+    def _read_fragments(
+        self,
+        fragments: List[pyarrow.dataset.ParquetFileFragment],
+        file_manifest: FileManifest,
+        filter_expr: pyarrow.dataset.Expression,
+        schema: pyarrow.Schema,
+        data_columns: Optional[List[str]] = None,
+        partition_columns: Optional[List[str]] = None,
+        columns_rename: Optional[Dict[str, str]] = None,
+    ) -> Iterable["pyarrow.Table"]:
+        # Create a mapping from file path to row range for ID generation
+        path_to_row_range = {}
+        if self._include_row_id and file_manifest.has_row_ranges():
+            for i, path in enumerate(file_manifest.paths):
+                start_row = file_manifest.file_start_row_counts[i]
+                end_row = file_manifest.file_end_row_counts[i]
+                if start_row is not None and end_row is not None:
+                    path_to_row_range[path] = (start_row, end_row)
+
+        for fragment in fragments:
+            partitions = {}
+            if self._partitioning is not None:
+                parse = PathPartitionParser(self._partitioning)
+                partitions = parse(fragment.path)
+
+            # Get the starting row ID for this fragment's file
+            file_start_row = 0
+            if self._include_row_id and fragment.path in path_to_row_range:
+                file_start_row = path_to_row_range[fragment.path][0]
+
+            for batch in self._read_batches(
+                fragment,
+                filter_expr,
+                schema,
+                data_columns,
+                file_start_row,
+                self._include_row_id,
+            ):
+                if self._include_paths:
+                    batch = batch.append_column(
+                        "path", pa.array([fragment.path] * len(batch))
+                    )
+                for partition, value in partitions.items():
+                    if partition_columns is None or partition in partition_columns:
+                        if partition not in batch.column_names:
+                            batch = batch.append_column(
+                                partition, pa.array([value] * len(batch))
+                            )
+                        elif log_once(f"duplicate_partition_field_{partition}"):
+                            directory = os.path.dirname(fragment.path)
+                            filename = os.path.basename(fragment.path)
+                            logger.warning(
+                                f"The partition field '{partition}' exists in both the "
+                                f"path '{directory}' and in the Parquet file "
+                                f"'{filename}'. Ray Data will default to using the "
+                                "value in the Parquet file."
+                            )
+                if columns_rename is not None:
+                    batch = batch.rename_columns(
+                        [columns_rename.get(col, col) for col in batch.schema.names]
+                    )
+                yield batch
+
+    def _get_batch_iterable(
+        self,
+        fragment: pyarrow.dataset.ParquetFileFragment,
+        batch_size: int,
+        columns: Optional[List[str]],
+        filter_expr: pyarrow.dataset.Expression,
+        schema: pyarrow.Schema,
+    ) -> Iterable[pyarrow.RecordBatch]:
+        """Get an iterable of batches from a parquet fragment."""
+        try:
+            return fragment.to_batches(
+                use_threads=self._use_threads,
+                columns=columns,
+                filter=filter_expr,
+                schema=schema,
+                batch_size=batch_size,
+                **self._to_batches_kwargs,
+            )
+        except pyarrow.lib.ArrowInvalid as e:
+            error_message = str(e)
+            if (
+                "No match for FieldRef.Name" in error_message
+                and filter_expr is not None
+            ):
+                filename = os.path.basename(fragment.path)
+                file_columns = set(fragment.physical_schema.names)
+                raise RuntimeError(
+                    f"Filter expression: '{filter_expr}' failed on parquet "
+                    f"file: '{filename}' with columns: {file_columns}"
+                )
+            raise
+
+    def _get_batch_size(
+        self,
+        fragment: pyarrow.dataset.ParquetFileFragment,
+        target_block_size: int,
+        target_column_indices: List[int],
+    ) -> int:
+        """Calculate optimal batch size based on first row group stats."""
+        # Handle case where fragment has no row groups
+        if fragment.metadata is None or fragment.metadata.num_row_groups == 0:
+            # Fragment has no row groups
+            return 1
+
+        row_group_meta = fragment.metadata.row_group(0)
+        row_group_num_rows = row_group_meta.num_rows
+
+        if row_group_num_rows == 0:
+            # First row group has no rows
+            return 1
+
+        # Calculate row group size in bytes for the projected columns
+        row_group_size_bytes = sum(
+            row_group_meta.column(col_idx).total_uncompressed_size
+            for col_idx in target_column_indices
+        )
+
+        if row_group_size_bytes > MAX_SAFE_BLOCK_SIZE_FACTOR * target_block_size:
+            # If row group size is large, calculate batch size based on target block
+            # size and average row size.
+            average_row_size = row_group_size_bytes / row_group_num_rows
+            batch_size = max(1, int(target_block_size / average_row_size))
+        else:
+            # If row group size is small, read it all at once
+            batch_size = max(1, row_group_num_rows)
+
+        return batch_size
+
+    def _read_batches(
+        self,
+        fragment: pyarrow.dataset.ParquetFileFragment,
+        filter_expr: pyarrow.dataset.Expression,
+        schema: pyarrow.Schema,
+        columns: Optional[List[str]],
+        file_start_row: int = 0,
+        row_id_column_name: Optional[str] = None,
+    ) -> Iterable[pyarrow.Table]:
+        target_column_indices = None
+
+        if self._batch_size is None:
+            # Get column indices for projected columns
+            target_column_indices = (
+                [fragment.physical_schema.get_field_index(col) for col in columns]
+                if columns is not None
+                else list(range(len(fragment.physical_schema)))
+            )
+
+            # Estimate batch size from first row group stats
+            batch_size = self._get_batch_size(
+                fragment, self._target_block_size, target_column_indices
+            )
+        else:
+            batch_size = self._batch_size
+
+        current_row_offset = file_start_row
+
+        # S3 can raise transient errors during iteration, and PyArrow doesn't expose a
+        # way to retry specific batches.
+        for batch in iterate_with_retry(
+            lambda: self._get_batch_iterable(
+                fragment, batch_size, columns, filter_expr, schema
+            ),
+            "ParquetReader load batch",
+            match=self._retried_io_errors,
+        ):
+            # TODO: If the table is much larger than the target block size, emit a
+            # warning instructing the user to decrease the batch size.
+            if batch.num_rows == 0:
+                continue
+            table = pa.Table.from_batches([batch])
+
+            # Add row IDs if requested
+            if row_id_column_name:
+                row_ids = list(
+                    range(current_row_offset, current_row_offset + table.num_rows)
+                )
+                table = table.append_column(
+                    row_id_column_name, pa.array(row_ids, type=pa.int64())
+                )
+                current_row_offset += table.num_rows
+
+            if self._block_udf is not None:
+                table = self._block_udf(table)
+            yield table
+
+    def read_metadata(
+        self,
+        file_manifest: FileManifest,
+        *,
+        filesystem: pyarrow.fs.FileSystem,
+    ) -> Iterator[BlockMetadata]:
+
+        parquet_dataset = call_with_retry(
+            lambda: get_parquet_dataset(
+                file_manifest.paths.tolist(), filesystem, self._dataset_kwargs
+            ),
+            "open ParquetDataset",
+            match=self._retried_io_errors,
+        )
+
+        def get_metadata_for_path(
+            fragment: "pa.dataset.ParquetFileFragment",
+        ) -> int:
+            # Getting the metadata requires network calls, so it might fail with
+            # transient errors.
+            num_rows = call_with_retry(
+                lambda: fragment.metadata.num_rows,
+                "fragment num_rows",
+                match=self._retried_io_errors,
+            )
+
+            return num_rows
+
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(get_metadata_for_path, fragment)
+                for fragment in parquet_dataset.fragments
+            ]
+            # Wait for all futures to complete and collect results in order
+            results = []
+            for future in futures:
+                num_rows = future.result()
+                results.append(num_rows)
+
+            # Yield metadata in the same order as the fragments
+            for num_rows in results:
+                metadata = BlockMetadata(
+                    num_rows=num_rows,
+                    size_bytes=None,
+                    exec_stats=None,
+                    input_files=None,
+                )
+                yield metadata
+
+    def read_schema(
+        self,
+        file_manifest: FileManifest,
+        *,
+        filesystem: pyarrow.fs.FileSystem,
+        columns: Optional[List[str]],
+    ) -> "Schema":
+
+        schema = self._schema
+        parquet_dataset = call_with_retry(
+            lambda: get_parquet_dataset(
+                file_manifest.paths.tolist(), filesystem, self._dataset_kwargs
+            ),
+            "open ParquetDataset",
+            match=self._retried_io_errors,
+        )
+
+        if not schema:
+            schema = _infer_schema(
+                parquet_dataset,
+                None,
+                columns,
+                self._partitioning,
+                self._block_udf,
+            )
+
+        # Add row ID column to schema if requested
+        if self._include_row_id:
+            row_id_field = pa.field(self._include_row_id, pa.int64())
+            schema = pa.schema(list(schema) + [row_id_field])
+
+        return schema
+
+    def available_metadata(self) -> Set[MetadataType]:
+        available = set()
+        if "filter" not in self._to_batches_kwargs:
+            available.add(MetadataType.NUM_ROWS)
+            available.add(MetadataType.NUM_BYTES)
+        return available
+
+    def get_target_metadata_batch_size(self) -> int:
+        return self._COUNT_ROWS_BATCH_SIZE
+
+    def supports_predicate_pushdown(self) -> bool:
+        return True
+
+
+class ParquetInMemorySizeEstimator(InMemorySizeEstimator):
+    def estimate_in_memory_sizes(self, manifest: FileManifest) -> np.ndarray:
+        # Reading a batch of Parquet data can be slow, even if you try to read a single
+        # row. To avoid slow startup times, just return a constant value. For more
+        # information, see https://github.com/anyscale/rayturbo/issues/924.
+        return PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT * manifest.file_sizes
