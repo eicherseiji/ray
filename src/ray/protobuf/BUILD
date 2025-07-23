@@ -474,8 +474,8 @@ python_grpc_compile(
 proto_library(
     name = "serve_proto",
     srcs = [
-        "serve.proto"
-        "serve_proprietary.proto",     
+        "serve.proto",
+        "serve_proprietary.proto",
     ],
     visibility = ["//java:__subpackages__"],
 )
