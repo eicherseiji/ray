@@ -49,13 +49,6 @@ def _insert_write_checkpoint_transform_fn(
         it1, it2 = itertools.tee(blocks, 2)
         for block in it1:
             ba = BlockAccessor.for_block(block)
-            if ba.num_rows() > 0:
-                if data_context.checkpoint_config.id_column not in ba.column_names():
-                    raise ValueError(
-                        f"ID column {data_context.checkpoint_config.id_column} is "
-                        f"absent in the block to be written. Do not drop or rename "
-                        f"this column."
-                    )
             checkpoint_writer.write_block_checkpoint(ba)
 
         return list(it2)

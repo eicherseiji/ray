@@ -15,7 +15,6 @@ from ray.data._internal.execution.operators.map_transformer import (
 )
 from ray.data._internal.logical.operators.read_operator import Read
 from ray.data._internal.planner.plan_read_op import plan_read_op
-from ray.anyscale.data._internal.readers.parquet_reader import ParquetReader
 
 
 def plan_read_op_with_checkpoint_filter(
@@ -24,15 +23,6 @@ def plan_read_op_with_checkpoint_filter(
     data_context: DataContext,
     get_checkpoint_ref: Optional[Callable[[], Any]] = None,
 ) -> PhysicalOperator:
-    if (
-        data_context.checkpoint_config is not None
-        and data_context.checkpoint_config.generate_row_id
-    ):
-        assert isinstance(op._datasource_or_legacy_reader, ParquetReader), (
-            f"For checkpointing with `generate_row_id`, Read operator must use a "
-            f"ParquetReader, but got {type(op._datasource_or_legacy_reader)}"
-        )
-
     physical_op = plan_read_op(op, physical_children, data_context)
     _insert_filter_transform_fn(physical_op, data_context, get_checkpoint_ref)
     return physical_op

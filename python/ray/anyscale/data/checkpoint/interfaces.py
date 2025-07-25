@@ -74,10 +74,9 @@ class CheckpointConfig:
 
     def __init__(
         self,
-        id_column: Optional[str] = None,
+        id_column: str,
         checkpoint_path: Optional[str] = None,
         *,
-        generate_row_id: Optional[str] = None,
         delete_checkpoint_on_success: bool = True,
         override_filesystem: Optional["pyarrow.fs.FileSystem"] = None,
         override_backend: Optional[CheckpointBackend] = None,
@@ -87,12 +86,8 @@ class CheckpointConfig:
         """
         Args:
             id_column: Name of the ID column in the input dataset.
-                ID values must be unique across all rows in the dataset and must persist
-                during all operators. Either `id_column` or `generate_row_id` must be provided.
-            generate_row_id: Name of the ID column to generate a row ID for each row.
-                Use this when you don't have an `id_column` in the input dataset.
-                Currently, only Parquet files based data sources are supported for
-                auto-generated row IDs feature.
+                ID values must the unique across all rows in the dataset and must persist
+                during all operators.
             checkpoint_path: Path to store the checkpoint data. It can be a path to a cloud
                 object storage (e.g. `s3://bucket/path`) or a file system path.
                 If the latter, the path must be a network-mounted file system (e.g.
@@ -112,29 +107,12 @@ class CheckpointConfig:
             write_num_threads: Number of threads used to write checkpoint files for
                 completed rows.
         """
-
-        self.id_column: Optional[str] = id_column
-        self.generate_row_id: Optional[str] = generate_row_id
-
-        # Validate that we don't have both `id_column` and `generate_row_id` explicitly specified
-        if id_column is not None and generate_row_id is not None:
-            raise InvalidCheckpointingConfig(
-                "Cannot specify both `id_column` and `generate_row_id`. "
-                "Use `id_column` when you have an existing ID column in your dataset, "
-                "or use `generate_row_id` when you want to generate row IDs automatically."
-            )
-
-        # If no `id_column` is provided, use the generated row ID column
-        elif self.id_column is None and generate_row_id is None:
-            raise InvalidCheckpointingConfig(
-                "Either `id_column` or `generate_row_id` must be provided. "
-                "Use `id_column` when you have an existing ID column in your dataset, "
-                "or use `generate_row_id` when you want to generate row IDs automatically."
-            )
-        elif self.id_column is None:
-            self.id_column = generate_row_id
-
-        if not isinstance(self.id_column, str) or len(self.id_column) == 0:
+        self.id_column: str = id_column
+        if (
+            self.id_column is None
+            or not isinstance(self.id_column, str)
+            or len(self.id_column) == 0
+        ):
             raise InvalidCheckpointingConfig(
                 "Checkpoint ID column must be as an non-empty string, "
                 f"but got {self.id_column}"

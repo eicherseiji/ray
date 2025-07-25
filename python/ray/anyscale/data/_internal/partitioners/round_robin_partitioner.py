@@ -1,6 +1,6 @@
 import collections
 import logging
-from typing import List, Optional, Tuple
+from typing import Tuple
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -15,37 +15,27 @@ logger = logging.getLogger(__name__)
 class _FileBucket:
     """A bucket of paths."""
 
-    def __init__(self) -> None:
-        self._paths: List[str] = []
-        self._file_sizes: List[int] = []
-        self._file_chunk_metadatas: List[Tuple[int, int]] = []
-        self._in_memory_size: int = 0
-        self._file_start_row_counts: List[int] = []
-        self._file_end_row_counts: List[int] = []
+    def __init__(self):
+        self._paths = []
+        self._file_sizes = []
+        self._file_chunk_metadatas = []
+        self._in_memory_size = 0
 
     @property
-    def paths(self) -> List[str]:
+    def paths(self):
         return self._paths
 
     @property
-    def in_memory_size(self) -> int:
+    def in_memory_size(self):
         return self._in_memory_size
 
     @property
-    def file_sizes(self) -> List[int]:
+    def file_sizes(self):
         return self._file_sizes
 
     @property
-    def file_chunk_metadatas(self) -> List[Tuple[int, int]]:
+    def file_chunk_metadatas(self):
         return self._file_chunk_metadatas
-
-    @property
-    def file_start_row_counts(self) -> List[int]:
-        return self._file_start_row_counts
-
-    @property
-    def file_end_row_counts(self) -> List[int]:
-        return self._file_end_row_counts
 
     def add(
         self,
@@ -53,23 +43,17 @@ class _FileBucket:
         file_size: int,
         file_chunk_metadata: Tuple[int, int],
         in_memory_size: int,
-        file_start_row_count: int,
-        file_end_row_count: int,
-    ) -> None:
+    ):
         self._paths.append(path)
         self._file_sizes.append(file_size)
         self._file_chunk_metadatas.append(file_chunk_metadata)
         self._in_memory_size += in_memory_size
-        self._file_start_row_counts.append(file_start_row_count)
-        self._file_end_row_counts.append(file_end_row_count)
 
-    def clear(self) -> None:
+    def clear(self):
         self._paths.clear()
         self._file_sizes.clear()
         self._file_chunk_metadatas.clear()
         self._in_memory_size = 0
-        self._file_start_row_counts.clear()
-        self._file_end_row_counts.clear()
 
 
 class RoundRobinPartitioner(FilePartitioner):
@@ -111,60 +95,15 @@ class RoundRobinPartitioner(FilePartitioner):
         self._current_bucket_index = 0
         self._output_queue: collections.deque[FileManifest] = collections.deque()
 
-    def _get_row_ranges_from_input(
-        self, input: FileManifest
-    ) -> Tuple[List[Optional[int]], List[Optional[int]]]:
-        """Get start and end row counts from input, or None lists if not available."""
-        if input.has_row_ranges():
-            return input.file_start_row_counts, input.file_end_row_counts
-        else:
-            return [None] * len(input.paths), [None] * len(input.paths)
-
-    def _has_bucket_row_ranges(self, bucket: _FileBucket) -> bool:
-        """Check if a bucket has valid row range information."""
-        return (
-            len(bucket.file_start_row_counts) > 0
-            and all(count is not None for count in bucket.file_start_row_counts)
-            and all(count is not None for count in bucket.file_end_row_counts)
-        )
-
-    def _create_manifest_from_bucket(self, bucket: _FileBucket) -> FileManifest:
-        """Create a FileManifest from a bucket, preserving row ranges if available."""
-        if self._has_bucket_row_ranges(bucket):
-            return FileManifest.construct_manifest(
-                bucket.paths,
-                bucket.file_sizes,
-                bucket.file_chunk_metadatas,
-                (bucket.file_start_row_counts, bucket.file_end_row_counts),
-            )
-        else:
-            return FileManifest.construct_manifest(
-                bucket.paths,
-                bucket.file_sizes,
-                bucket.file_chunk_metadatas,
-            )
-
     def add_input(self, input: FileManifest):
         in_memory_size_estimates = (
             self._in_memory_size_estimator.estimate_in_memory_sizes(input)
         )
-
-        start_row_counts, end_row_counts = self._get_row_ranges_from_input(input)
-
-        for (
-            file_path,
-            file_size,
-            file_chunk_metadata,
-            in_memory_size_estimate,
-            start_row_count,
-            end_row_count,
-        ) in zip(
+        for file_path, file_size, file_chunk_metadata, in_memory_size_estimate in zip(
             input.paths,
             input.file_sizes,
             input.file_chunk_metadatas,
             in_memory_size_estimates,
-            start_row_counts,
-            end_row_counts,
         ):
             current_bucket = self._buckets[self._current_bucket_index]
 
@@ -176,29 +115,21 @@ class RoundRobinPartitioner(FilePartitioner):
             # This is a special-case for file systems that don't provide file sizes
             # like HTTP-based file systems.
             if in_memory_size_estimate is None:
-                current_bucket.add(
-                    file_path,
-                    file_size,
-                    file_chunk_metadata,
-                    0,
-                    start_row_count,
-                    end_row_count,
-                )
+                current_bucket.add(file_path, file_size, file_chunk_metadata, 0)
                 self._current_bucket_index = (
                     self._current_bucket_index + 1
                 ) % self._num_buckets
                 continue
 
             current_bucket.add(
-                file_path,
-                file_size,
-                file_chunk_metadata,
-                in_memory_size_estimate,
-                start_row_count,
-                end_row_count,
+                file_path, file_size, file_chunk_metadata, in_memory_size_estimate
             )
             if current_bucket.in_memory_size >= self._max_bucket_size:
-                manifest = self._create_manifest_from_bucket(current_bucket)
+                manifest = FileManifest.construct_manifest(
+                    current_bucket.paths,
+                    current_bucket.file_sizes,
+                    current_bucket.file_chunk_metadatas,
+                )
                 self._output_queue.append(manifest)
                 self._current_bucket_index = (
                     self._current_bucket_index + 1
@@ -218,5 +149,7 @@ class RoundRobinPartitioner(FilePartitioner):
     def finalize(self):
         for bucket in self._buckets:
             if bucket.paths:
-                manifest = self._create_manifest_from_bucket(bucket)
+                manifest = FileManifest.construct_manifest(
+                    bucket.paths, bucket.file_sizes, bucket.file_chunk_metadatas
+                )
                 self._output_queue.append(manifest)

@@ -147,7 +147,7 @@ class TestNonSamplingFileIndexerWithChunking:
 
         # Create indexer
         indexer = NonSamplingFileIndexer(
-            ignore_missing_paths=False, file_chunker=chunker, reader=None
+            ignore_missing_paths=False, file_chunker=chunker
         )
 
         # List files
@@ -189,7 +189,7 @@ class TestNonSamplingFileIndexerWithChunking:
         # Test with chunking enabled
         chunker = LineDelimitedFileChunker()
         indexer = NonSamplingFileIndexer(
-            ignore_missing_paths=False, file_chunker=chunker, reader=None
+            ignore_missing_paths=False, file_chunker=chunker
         )
 
         paths_column = pa.array([str(regular_file), str(zero_file)])

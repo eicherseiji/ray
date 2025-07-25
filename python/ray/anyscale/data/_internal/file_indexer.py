@@ -1,6 +1,6 @@
 import abc
 import logging
-from typing import Iterable, List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 from typing import TypedDict, Type, get_type_hints
 
 import math
@@ -11,7 +11,7 @@ from pyarrow.fs import FileSelector, FileSystem, FileType
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
-from ray.data.block import BlockColumn
+from ray.data.block import BlockAccessor, BlockColumn
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
 from ray.data.datasource.partitioning import PathPartitionFilter
 from ray.data.datasource.path_util import (
@@ -19,7 +19,6 @@ from ray.data.datasource.path_util import (
     _resolve_paths_and_filesystem,
 )
 from ray.anyscale.data._internal.util.compression import infer_compression
-from ray.anyscale.data._internal.readers.file_reader import FileReader
 
 logger = logging.getLogger(__name__)
 
@@ -136,21 +135,13 @@ class LineDelimitedFileChunker(FileChunker):
 class FileIndexer(abc.ABC):
     @abc.abstractmethod
     def list_files(
-        self,
-        paths: "BlockColumn",
-        *,
-        filesystem: "FileSystem",
-        file_extensions: Optional[List[str]] = None,
-        partition_filter: Optional[PathPartitionFilter] = None,
+        self, paths: "BlockColumn", *, filesystem: "FileSystem"
     ) -> Iterable[FileManifest]:
         """List files and their on-disk sizes for the given path.
 
         Args:
             paths: A column of paths pointing to files or directories.
             filesystem: A PyArrow filesystem object.
-            file_extensions: A list of file extensions to include in the manifest.
-            partition_filter: A function that takes a path and returns `True` if the path
-                should be included in the manifest.
 
         Returns:
             An iterator of `FileManifest` objects, each of which contains a file path
@@ -172,62 +163,19 @@ class NonSamplingFileIndexer(FileIndexer):
     _MAX_PATHS_PER_LIST_FILES_OUTPUT = 1000
 
     def __init__(
-        self,
-        *,
-        ignore_missing_paths: bool,
-        reader: FileReader,
-        file_chunker: Optional[FileChunker] = None,
+        self, *, ignore_missing_paths: bool, file_chunker: Optional[FileChunker] = None
     ):
         self._ignore_missing_paths = ignore_missing_paths
-        self._reader = reader
         self._file_chunker = (
             file_chunker if file_chunker is not None else WholeFileChunker()
         )
 
-    def _create_batch_manifest(
-        self,
-        paths: List[str],
-        file_sizes: List[int],
-        file_chunk_metadatas: List[Optional[ChunkMetadata]],
-        cumulative_row_count: int,
-        filesystem: "FileSystem",
-    ) -> Tuple[FileManifest, int]:
-        """Create a manifest for a batch of files.
-        Args:
-            paths: List of file paths.
-            file_sizes: List of file sizes.
-            file_chunk_metadatas: List of file chunk metadata.
-            cumulative_row_count: Cumulative row count across all files.
-            filesystem: Filesystem object.
-        Returns:
-            A tuple containing the manifest and the cumulative row count.
-        """
-        row_ranges = FileManifest.get_row_ranges_from_metadata(
-            paths,
-            file_sizes,
-            file_chunk_metadatas,
-            self._reader,
-            filesystem,
-            cumulative_row_count,
-        )
-        manifest = FileManifest.construct_manifest(
-            paths, file_sizes, file_chunk_metadatas, row_ranges
-        )
-        cumulative_row_count += manifest.num_rows
-        return manifest, cumulative_row_count
-
     def list_files(
-        self,
-        paths: "BlockColumn",
-        *,
-        filesystem: "FileSystem",
-        file_extensions: Optional[List[str]] = None,
-        partition_filter: Optional[PathPartitionFilter] = None,
+        self, paths: "BlockColumn", *, filesystem: "FileSystem"
     ) -> Iterable[FileManifest]:
         running_paths = []
         running_file_sizes = []
         running_file_chunk_metadatas = []
-        cumulative_row_count = 0  # Tracking cumulative row count across all files
         for input_path in paths.to_pylist():
             resolved_paths, _ = _resolve_paths_and_filesystem(input_path, filesystem)
             assert len(resolved_paths) == 1
@@ -241,9 +189,6 @@ class NonSamplingFileIndexer(FileIndexer):
                     logger.warning(f"Skipping zero-size file: {path!r}")
                     continue
 
-                if not should_include_file(path, file_extensions, partition_filter):
-                    continue
-
                 for chunk_metadata, size in self._file_chunker.generate_chunk_metadatas(
                     path, file_size
                 ):
@@ -252,27 +197,19 @@ class NonSamplingFileIndexer(FileIndexer):
                     running_file_chunk_metadatas.append(chunk_metadata)
 
                     if len(running_paths) >= self._MAX_PATHS_PER_LIST_FILES_OUTPUT:
-                        manifest, cumulative_row_count = self._create_batch_manifest(
+                        yield FileManifest.construct_manifest(
                             running_paths,
                             running_file_sizes,
                             running_file_chunk_metadatas,
-                            cumulative_row_count,
-                            filesystem,
                         )
-                        yield manifest
                         running_paths = []
                         running_file_sizes = []
                         running_file_chunk_metadatas = []
 
         if running_paths:
-            manifest, cumulative_row_count = self._create_batch_manifest(
-                running_paths,
-                running_file_sizes,
-                running_file_chunk_metadatas,
-                cumulative_row_count,
-                filesystem,
+            yield FileManifest.construct_manifest(
+                running_paths, running_file_sizes, running_file_chunk_metadatas
             )
-            yield manifest
 
 
 def _get_file_infos(
@@ -330,27 +267,50 @@ def _expand_directory(
             raise FileNotFoundError(file_.path)
 
 
-def should_include_file(
-    path: str,
+# TODO: Maybe push these down to the `FileIndexer` interface so that `FileIndexer`
+#       implementations can more efficiently filter paths.
+def filter_paths(
+    manifest: FileManifest, filter_fn: Callable[[str], bool]
+) -> FileManifest:
+    """Return a new manifest with only the paths that match the filter.
+
+    Args:
+        manifest: The manifest to filter.
+        filter_fn: A function that takes a path and returns `True` if the path should be
+            included in the new manifest.
+
+    Returns:
+        A new manifest with only the paths that match the filter.
+    """
+    indices = []
+    for i, path in enumerate(manifest.paths):
+        if filter_fn(path):
+            indices.append(i)
+
+    if not indices:
+        # `Table.take` doesn't work if `indices` is empty. So, we explicitly return an
+        # empty manifest.
+        return FileManifest.construct_manifest([], [], [])
+    else:
+        filtered_block = BlockAccessor.for_block(manifest.as_block()).take(indices)
+        return FileManifest(filtered_block)
+
+
+def filter_file_manifest(
+    file_manifest: FileManifest,
     file_extensions: Optional[List[str]],
     partition_filter: Optional[PathPartitionFilter],
-) -> bool:
-    """Check if a single file should be included based on filtering criteria.
-    Args:
-        path: The file path to check.
-        file_extensions: Optional list of file extensions to filter by.
-        partition_filter: Optional partition filter to apply.
-    Returns:
-        True if the file should be included, False otherwise.
-    """
-    # Apply file_extensions filter
+) -> FileManifest:
+    # Apply `file_extensions` parameter.
     if file_extensions is not None:
-        if not _has_file_extension(path, file_extensions):
-            return False
+        file_manifest = filter_paths(
+            file_manifest,
+            lambda path: _has_file_extension(path, file_extensions),
+        )
 
-    # Apply partition_filter
+    # Apply `partition_filter` parameter.
     if partition_filter is not None:
-        if not partition_filter([path]):
-            return False
-
-    return True
+        file_manifest = filter_paths(
+            file_manifest, lambda path: partition_filter([path])
+        )
+    return file_manifest

@@ -794,7 +794,6 @@ def read_files(
 
     file_indexer = NonSamplingFileIndexer(
         ignore_missing_paths=ignore_missing_paths,
-        reader=reader,
         file_chunker=file_chunker,
     )
     file_partitioner = RoundRobinPartitioner(
