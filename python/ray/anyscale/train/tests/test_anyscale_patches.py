@@ -34,6 +34,9 @@ def test_scaling_policy():
     elastic_policy = create_scaling_policy(ScalingConfig(num_workers=(2, 4)))
     assert isinstance(elastic_policy, ElasticScalingPolicy)
 
+    elastic_policy = create_scaling_policy(ScalingConfig(num_workers=(2, 2)))
+    assert isinstance(elastic_policy, ElasticScalingPolicy)
+
     fixed_policy = create_scaling_policy(RayScalingConfig(num_workers=2))
 
 

@@ -15,10 +15,7 @@ class ScalingConfig(RayScalingConfig):
 
     @property
     def elasticity_enabled(self):
-        return (
-            isinstance(self.num_workers, tuple)
-            and self.num_workers[0] != self.num_workers[1]
-        )
+        return isinstance(self.num_workers, tuple)
 
     @property
     def min_workers(self):
@@ -53,4 +50,9 @@ class ScalingConfig(RayScalingConfig):
         if self.elastic_resize_monitor_interval_s < 0:
             raise ValueError(
                 "ScalingConfig(elastic_resize_monitor_interval_s) must be non-negative."
+            )
+        if self.min_workers > self.max_workers:
+            raise ValueError(
+                f"Invalid ScalingConfig(num_workers={self.num_workers}): "
+                f"min_workers={self.min_workers} must be <= max_workers={self.max_workers}."
             )
