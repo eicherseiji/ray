@@ -37,12 +37,6 @@ def parse_args():
         help="Number of concurrent readers for binary files",
     )
     parser.add_argument(
-        "--num-blocks",
-        type=int,
-        default=None,
-        help="Number of blocks to override for binary read",
-    )
-    parser.add_argument(
         "--process-concurrency",
         type=int,
         default=None,
@@ -184,7 +178,6 @@ def main(args):
         args.source_directory,
         include_paths=True,
         concurrency=args.read_concurrency,
-        override_num_blocks=args.num_blocks,
     )
     # Record start time after metadata fetching
     start_time_without_metadata_fetching = time.time()
