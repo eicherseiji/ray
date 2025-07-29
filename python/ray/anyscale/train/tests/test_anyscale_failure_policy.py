@@ -10,17 +10,13 @@ from ray.train.v2._internal.execution.failure_handling import (
     FailureDecision,
     create_failure_policy,
 )
-from ray.train.v2._internal.execution.worker_group import (
-    WorkerGroupPollStatus,
-    WorkerStatus,
-)
+from ray.train.v2.api.exceptions import WorkerGroupError
 
 
-def _worker_group_status_from_errors(errors):
-    return WorkerGroupPollStatus(
-        worker_statuses={
-            i: WorkerStatus(running=False, error=errors[i]) for i in range(len(errors))
-        }
+def _worker_group_error_from_errors(errors):
+    return WorkerGroupError(
+        "Worker group failed",
+        dict(enumerate(errors)),
     )
 
 
@@ -33,18 +29,18 @@ def test_worker_group_status_has_preemption():
         message="Worker health check failed due to node preemption.",
         failure=PreemptionRayActorError(),
     )
-    status = _worker_group_status_from_errors(
+    worker_group_error = _worker_group_error_from_errors(
         [None, worker_health_check_failure_error, None, RuntimeError(), None]
     )
-    assert _contains_preemption_error(status.errors)
+    assert _contains_preemption_error(worker_group_error.worker_failures)
 
-    status = _worker_group_status_from_errors(
+    worker_group_error = _worker_group_error_from_errors(
         [None, RuntimeError(), None, RuntimeError(), None]
     )
-    assert not _contains_preemption_error(status.errors)
+    assert not _contains_preemption_error(worker_group_error.worker_failures)
 
-    status = _worker_group_status_from_errors([None, None, None, None])
-    assert not _contains_preemption_error(status.errors)
+    worker_group_error = _worker_group_error_from_errors([None, None, None, None])
+    assert not _contains_preemption_error(worker_group_error.worker_failures)
 
 
 def test_failure_on_preemption_errors():
@@ -61,17 +57,17 @@ def test_failure_on_preemption_errors():
         failure=PreemptionRayActorError(),
     )
 
-    status = _worker_group_status_from_errors(
+    worker_group_error = _worker_group_error_from_errors(
         [None, worker_health_check_failure_error, None, RuntimeError(), None]
     )
 
-    assert policy.make_decision(status) == FailureDecision.RESTART
+    assert policy.make_decision(worker_group_error) == FailureDecision.RETRY
 
-    status = _worker_group_status_from_errors(
+    worker_group_error = _worker_group_error_from_errors(
         [None, RuntimeError(), None, RuntimeError(), None]
     )
 
-    assert policy.make_decision(status) == FailureDecision.RAISE
+    assert policy.make_decision(worker_group_error) == FailureDecision.RAISE
 
 
 if __name__ == "__main__":

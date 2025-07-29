@@ -2,17 +2,20 @@ import logging
 from typing import Dict
 
 from ray.exceptions import RayActorError
+from ray.train.v2.api.exceptions import (
+    TrainingFailedError,
+    WorkerGroupError,
+)
 from ray.train.v2._internal.exceptions import WorkerHealthCheckFailedError
 from ray.train.v2._internal.execution.failure_handling import (
     DefaultFailurePolicy,
     FailureDecision,
 )
-from ray.train.v2._internal.execution.worker_group import WorkerGroupPollStatus
 
 logger = logging.getLogger(__name__)
 
 
-def _contains_preemption_error(errors: Dict[str, Exception]) -> bool:
+def _contains_preemption_error(errors: Dict[int, Exception]) -> bool:
     """Returns True if any one of the workers died due to node preemption."""
     if not errors:
         return False
@@ -30,7 +33,8 @@ def _contains_preemption_error(errors: Dict[str, Exception]) -> bool:
 
 class AnyscaleFailurePolicy(DefaultFailurePolicy):
     def make_decision(
-        self, worker_group_status: WorkerGroupPollStatus
+        self,
+        training_failed_error: TrainingFailedError,
     ) -> FailureDecision:
         # TODO: Generic hardware failures (node/GPU failures) should be handled
         # the same way as preemption errors. These are expected errors when
@@ -39,13 +43,15 @@ class AnyscaleFailurePolicy(DefaultFailurePolicy):
         # At the moment, it's not possible to get ActorDiedError cause information
         # (NodeDeathInfo). Only the `preempted` flag is available.
 
-        # Try restarting in the case any worker failed due to preemption.
-        if _contains_preemption_error(worker_group_status.errors):
+        # Try retrying in the case any worker failed due to preemption.
+        if isinstance(
+            training_failed_error, WorkerGroupError
+        ) and _contains_preemption_error(training_failed_error.worker_failures):
             logger.info(
-                "Deciding to RESTART, since at least one of the worker failures "
+                "Deciding to RETRY, since at least one of the worker failures "
                 "was caused by node preemption. Ray Train will not increment the "
                 "total failure count and will restart the worker group."
             )
-            return FailureDecision.RESTART
+            return FailureDecision.RETRY
 
-        return super().make_decision(worker_group_status)
+        return super().make_decision(training_failed_error)
