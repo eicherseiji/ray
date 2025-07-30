@@ -125,9 +125,6 @@ python/ray/_private/resource_isolation_config.py
     DOC103: Method `ResourceIsolationConfig.__init__`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [cgroup_path: Optional[str], enable_resource_isolation: bool, system_reserved_cpu: Optional[float], system_reserved_memory: Optional[int]].
     DOC201: Method `ResourceIsolationConfig._validate_and_get_system_reserved_cpu` does not have a return section in docstring
 --------------------
-python/ray/_private/resource_spec.py
-    DOC201: Method `ResourceSpec.resolve` does not have a return section in docstring
---------------------
 python/ray/_private/runtime_env/agent/runtime_env_agent.py
     DOC101: Method `RuntimeEnvAgent.__init__`: Docstring contains fewer arguments than in function signature.
     DOC107: Method `RuntimeEnvAgent.__init__`: The option `--arg-type-hints-in-signature` is `True` but not all args in the signature have type hints
@@ -457,9 +454,6 @@ python/ray/anyscale/data/_internal/execution/operators/streaming_hash_aggregate.
     DOC404: Method `Aggregator.aggregate` yield type(s) in docstring not consistent with the return annotation. Return annotation exists, but docstring "yields" section does not exist or has 0 type(s).
     DOC103: Function `shuffle_block`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [*input_blocks: Block]. Arguments in the docstring but not in the function signature: [input_blocks: ].
 --------------------
-python/ray/anyscale/data/_internal/file_indexer.py
-    DOC201: Function `filter_paths` does not have a return section in docstring
---------------------
 python/ray/anyscale/data/_internal/logical/rules/map_fusion.py
     DOC001: Function/method `_optimize`: Potential formatting errors in docstring. Error message: No specification for "Args": "" (Note: DOC001 could trigger other unrelated violations under this function/method too. Please fix the docstring formatting first.)
     DOC101: Method `RedundantMapTransformPruning._optimize`: Docstring contains fewer arguments than in function signature.
@@ -489,10 +483,6 @@ python/ray/anyscale/data/_internal/logical/rules/predicate_pushdown.py
 python/ray/anyscale/data/_internal/readers/file_reader.py
     DOC101: Method `FileReader.read_files`: Docstring contains fewer arguments than in function signature.
     DOC103: Method `FileReader.read_files`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [columns_rename: Optional[Dict[str, str]]].
---------------------
-python/ray/anyscale/data/_internal/readers/in_memory_size_estimator.py
-    DOC101: Method `SamplingInMemorySizeEstimator._estimate_encoding_ratio`: Docstring contains fewer arguments than in function signature.
-    DOC103: Method `SamplingInMemorySizeEstimator._estimate_encoding_ratio`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [file_size: int, path: str].
 --------------------
 python/ray/anyscale/data/_internal/util/cache.py
     DOC101: Function `timed_cache`: Docstring contains fewer arguments than in function signature.
