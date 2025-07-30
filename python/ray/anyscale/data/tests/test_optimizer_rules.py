@@ -52,9 +52,9 @@ def test_apply_local_limit(ray_start_regular_shared):
     ds = ray.data.range(100, parallelism=2).map(f1).limit(1)
     _check_valid_plan_and_result(
         ds,
-        "Read[ReadRange] -> MapRows[Map(f1)] -> Limit[limit=1]",
+        "Read[ReadRange] -> Limit[limit=1] -> MapRows[Map(f1)]",
         [{"id": 0}],
-        ["ReadRange->Map(f1)", "limit=1"],
+        ["ReadRange", "limit=1"],
     )
     assert ds._block_num_rows() == [1]
 
@@ -62,9 +62,9 @@ def test_apply_local_limit(ray_start_regular_shared):
     ds = ray.data.range(10000, parallelism=50).map(f1).limit(50)
     _check_valid_plan_and_result(
         ds,
-        "Read[ReadRange] -> MapRows[Map(f1)] -> Limit[limit=50]",
+        "Read[ReadRange] -> Limit[limit=50] -> MapRows[Map(f1)]",
         [{"id": i} for i in range(50)],
-        ["ReadRange->Map(f1)", "limit=50"],
+        ["ReadRange", "limit=50"],
     )
     assert ds._block_num_rows() == [50]
 

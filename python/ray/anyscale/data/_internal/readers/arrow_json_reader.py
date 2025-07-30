@@ -90,7 +90,10 @@ class ArrowJSONReader(NativeFileReader):
                 break
             except pa.ArrowInvalid as e:
                 if "straddling object straddles two block boundaries" in str(e):
-                    if self._read_options.block_size < max_block_size:
+                    if (
+                        max_block_size is None
+                        or self._read_options.block_size < max_block_size
+                    ):
                         # Increase the block size in case it was too small.
                         logger.debug(
                             f"JSONDatasource read failed with "

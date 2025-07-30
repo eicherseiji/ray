@@ -300,11 +300,15 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     def _get_batch_size(
         self,
         fragment: pyarrow.dataset.ParquetFileFragment,
-        target_block_size: int,
+        target_block_size: Optional[int],
         target_column_indices: List[int],
     ) -> int:
-        """Calculate optimal batch size based on first row group stats."""
-        # Handle case where fragment has no row groups
+        """Calculate an optimal batch size from the first row-group stats.
+
+        If ``target_block_size`` is ``None`` (i.e. unlimited block size),
+        the full first row-group is read in a single batch.
+        """
+        # Handle the cases where there are no row-groups or rows.
         if fragment.metadata is None or fragment.metadata.num_row_groups == 0:
             # Fragment has no row groups
             return 1
@@ -322,13 +326,17 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             for col_idx in target_column_indices
         )
 
-        if row_group_size_bytes > MAX_SAFE_BLOCK_SIZE_FACTOR * target_block_size:
+        if (
+            target_block_size is not None
+            and row_group_size_bytes > MAX_SAFE_BLOCK_SIZE_FACTOR * target_block_size
+        ):
             # If row group size is large, calculate batch size based on target block
             # size and average row size.
             average_row_size = row_group_size_bytes / row_group_num_rows
             batch_size = max(1, int(target_block_size / average_row_size))
         else:
-            # If row group size is small, read it all at once
+            # Row-group is already small enough – read it in one go.
+            # Or: No target block size ⇒ treat as “infinite”: read whole row-group.
             batch_size = max(1, row_group_num_rows)
 
         return batch_size

@@ -56,6 +56,12 @@ from ray.data.datasource.parquet_meta_provider import ParquetMetadataProvider
 from ray.data.datasource.path_util import _resolve_paths_and_filesystem
 from ray.data.read_api import _resolve_parquet_args, _validate_shuffle_arg
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+from ray.util.debug import log_once
+from ray.data.datasource.path_util import _has_file_extension
+from ray.data._internal.datasource.parquet_datasource import (
+    ParquetDatasource,
+    emit_file_extensions_future_warning,
+)
 
 if TYPE_CHECKING:
     import pyarrow
@@ -163,6 +169,27 @@ def read_parquet(
             filter_expr = pq.filters_to_expression(filters)
 
     to_batches_kwargs = arrow_parquet_args
+
+    # ------------------------------------------------------------------
+    # Driver-side warning for upcoming default `file_extensions` change.
+    # Mirrors OSS behaviour so every read triggers its own warning and
+    # `pytest.warns(...)` can see it.
+    # ------------------------------------------------------------------
+    if file_extensions is None:
+        # Best-effort resolution of concrete file paths.
+        try:
+            resolved_paths, _ = _resolve_paths_and_filesystem(paths, filesystem)
+        except Exception:
+            resolved_paths = [paths] if isinstance(paths, str) else list(paths)
+
+        for _p in resolved_paths:
+            if not _has_file_extension(
+                _p, ParquetDatasource._FUTURE_FILE_EXTENSIONS
+            ) and log_once("read_parquet_file_extensions_future_warning"):
+                emit_file_extensions_future_warning(
+                    ParquetDatasource._FUTURE_FILE_EXTENSIONS
+                )
+                break
 
     if "partitioning" in dataset_kwargs:
         raise ValueError(
