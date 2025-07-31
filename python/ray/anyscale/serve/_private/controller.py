@@ -18,7 +18,6 @@ from ray.serve.schema import (
     ReplicaDetails,
     Target,
     TargetGroup,
-    ApplicationStatus,
 )
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
@@ -99,15 +98,12 @@ class AnyscaleServeController(ServeController):
         else:
             apps = [app_name]
 
-        eligible_app_statuses = [
-            ApplicationStatus.NOT_STARTED,
-            ApplicationStatus.DEPLOY_FAILED,
-        ]
+        # TODO(landscapepainter): A better way to handle this is to write an API that can tell
+        # if the ingress deployment is healthy regardless of the application status.
         apps = [
             app
             for app in apps
-            if self.application_state_manager.get_app_status(app)
-            not in eligible_app_statuses
+            if self.application_state_manager.get_route_prefix(app) is not None
         ]
 
         if not apps:
