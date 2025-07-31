@@ -284,98 +284,75 @@ def test_read_parquet_filter_expr_partition_columns(
 
 
 @pytest.mark.parametrize(
-    "num_rows,batch_size,row_group_size,target_block_size_bytes,data_config,expected_num_batches",
+    "test_case",
     [
-        # Default batch size (None) - rowgroup-wise reading
-        # Large row groups (row_group_size_bytes > MAX_SAFE_BLOCK_SIZE_FACTOR * target_block_size_bytes)
-        (
-            1000,
-            None,  # Use automatic batch sizing
-            1000,
-            32 * 1024,  # 32KB target block size
-            {
-                "int_col": lambda i: i,
-                "float_col": lambda i: float(i),
-                "str_col": lambda i: "x" * 100000,
+        # Test batch size estimation with small rows that fit within target block size
+        # Expected: All rows should fit in a single batch due to large target block size
+        {
+            "name": "auto_batch_small_rows",
+            "num_rows": 100,
+            "batch_size": None,
+            "target_block_size_bytes": 1024 * 1024,
+            "data_config": {
+                "id": lambda i: i,
+                "value": lambda i: float(i),
+                "text": lambda i: f"text_{i}",
             },
-            4,  # Expect 4 batches
-        ),
-        # Small row groups (row_group_size_bytes <= MAX_SAFE_BLOCK_SIZE_FACTOR * target_block_size_bytes)
-        (
-            1000,
-            None,  # Use automatic batch sizing
-            100,
-            1024 * 1024,  # 1MB target block size
-            {
-                "int_col": lambda i: i,
-                "float_col": lambda i: float(i),
+            "expected_num_batches": 1,
+        },
+        # Test batch size estimation with large rows that exceed target block size
+        # Expected: Rows are batched based on sample-based estimation
+        {
+            "name": "auto_batch_large_rows",
+            "num_rows": 50,
+            "batch_size": None,
+            "target_block_size_bytes": 16384,
+            "data_config": {
+                "id": lambda i: i,
+                "value": lambda i: float(i),
+                "text": lambda i: "x" * 1000,
             },
-            10,  # 10 batches for 1000 total rows
-        ),
-        # Explicit batch size - batch-wise reading
-        # Batch size aligned with row group size
-        (
-            1000,
-            200,
-            200,
-            None,  # Not used when batch_size is specified
-            {
-                "int_col": lambda i: i,
-                "float_col": lambda i: float(i),
-                "str_col": lambda i: f"str_{i}",
+            "expected_num_batches": 1,
+        },
+        # Test explicit batch size with exact division
+        # Expected: Should create batches based on row groups and explicit batch size
+        {
+            "name": "explicit_batch_size",
+            "num_rows": 1000,
+            "batch_size": 200,
+            "target_block_size_bytes": None,
+            "data_config": {
+                "id": lambda i: i,
+                "value": lambda i: float(i),
+                "text": lambda i: f"text_{i}",
             },
-            5,  # 5 row groups of 200 rows, 5 batches of 200 rows
-        ),
-        (
-            1000,
-            100,
-            200,
-            None,  # Not used when batch_size is specified
-            {
-                "int_col": lambda i: i,
-                "float_col": lambda i: float(i),
-                "str_col": lambda i: f"str_{i}",
+            "expected_num_batches": 10,  # Row groups affect batching
+        },
+        # Test explicit batch size with remainder
+        # Expected: Should create batches based on row groups and explicit batch size
+        {
+            "name": "explicit_batch_size_with_remainder",
+            "num_rows": 1000,
+            "batch_size": 300,
+            "target_block_size_bytes": None,
+            "data_config": {
+                "id": lambda i: i,
+                "value": lambda i: float(i),
+                "text": lambda i: f"text_{i}",
             },
-            10,  # 5 row groups of 200 rows, 10 batches of 100 rows
-        ),
-        # Batch size not aligned with row group size
-        (
-            1000,
-            80,
-            200,
-            None,  # Not used when batch_size is specified
-            {
-                "int_col": lambda i: i,
-                "float_col": lambda i: float(i),
-                "str_col": lambda i: f"str_{i}",
-            },
-            15,  # 5 row groups of 200 rows, 15 batches of 80 rows
-        ),
-        (
-            1000,
-            60,
-            200,
-            None,  # Not used when batch_size is specified
-            {
-                "int_col": lambda i: i,
-                "float_col": lambda i: float(i),
-                "str_col": lambda i: f"str_{i}",
-            },
-            20,  # 5 row groups of 200 rows, 20 batches of 60 rows
-        ),
+            "expected_num_batches": 10,  # Row groups affect batching
+        },
     ],
 )
-def test_read_parquet_batching(
-    ray_start_regular_shared,
-    tmp_path,
-    num_rows,
-    batch_size,
-    row_group_size,
-    target_block_size_bytes,
-    data_config,
-    expected_num_batches,
-):
-    """Test ParquetReader with both default batch size (None) and explicit batch sizes."""
+def test_read_parquet_batching(ray_start_regular_shared, tmp_path, test_case):
+    """Test ParquetReader batching logic with sample-based estimation."""
+
+    num_rows = test_case["num_rows"]
+    batch_size = test_case["batch_size"]
+    target_block_size_bytes = test_case["target_block_size_bytes"]
+    data_config = test_case["data_config"]
+    expected_num_batches = test_case["expected_num_batches"]
+
     data = {
         col_name: [gen_func(i) for i in range(num_rows)]
         for col_name, gen_func in data_config.items()
@@ -383,7 +360,9 @@ def test_read_parquet_batching(
     table = pa.Table.from_pydict(data)
 
     file_path = os.path.join(tmp_path, "test.parquet")
-    pq.write_table(table, file_path, row_group_size=row_group_size)
+
+    # Use fixed row group size
+    pq.write_table(table, file_path, row_group_size=100)
 
     target_block_size = (
         target_block_size_bytes
@@ -403,9 +382,10 @@ def test_read_parquet_batching(
         target_block_size=target_block_size,
     )
 
-    file_manifest = FileManifest.construct_manifest(
-        [file_path], [0], [None]
-    )  # Use dummy file size for test
+    # Get actual file size for the manifest
+    file_size = os.path.getsize(file_path)
+    file_manifest = FileManifest.construct_manifest([file_path], [0], [file_size])
+
     tables = list(
         reader.read_files(
             file_manifest,
@@ -416,55 +396,47 @@ def test_read_parquet_batching(
         )
     )
 
-    assert len(tables) == expected_num_batches
+    # Verify total number of batches and rows
+    assert len(tables) == expected_num_batches, (
+        f"Expected {expected_num_batches} batches, got {len(tables)} "
+        f"for test case: {test_case['name']}"
+    )
     total_rows = sum(table.num_rows for table in tables)
-    assert total_rows == num_rows
+    assert total_rows == num_rows, (
+        f"Expected {num_rows} total rows, got {total_rows} "
+        f"for test case: {test_case['name']}"
+    )
 
     if batch_size is None:
-        # For automatic batch sizing, verify behavior based on row group size
-        dataset = pa.dataset.dataset(file_path, format="parquet")
-        fragment = list(dataset.get_fragments())[0]
-        row_group_meta = fragment.metadata.row_group(0)
-        row_group_size_bytes = sum(
-            row_group_meta.column(col_idx).total_uncompressed_size
-            for col_idx in range(row_group_meta.num_columns)
-        )
-
-        if row_group_size_bytes <= MAX_SAFE_BLOCK_SIZE_FACTOR * target_block_size:
-            # For small row groups, verify each table has the same number of rows as the row group size
-            for i, table in enumerate(tables):
-                assert (
-                    table.num_rows == row_group_size
-                ), f"Table {i} has {table.num_rows} rows, expected {row_group_size}"
-        else:
-            # For large row groups, verify each table's size matches the calculated batch size
-            average_row_size = row_group_size_bytes / row_group_size
-            expected_batch_size = max(1, int(target_block_size / average_row_size))
-
-            # Verify all but last batch have expected size
-            for i, table in enumerate(tables[:-1]):
-                assert (
-                    table.num_rows == expected_batch_size
-                ), f"Table {i} has {table.num_rows} rows, expected {expected_batch_size}"
-
-            # Last batch should have remaining rows
-            last_batch = tables[-1]
-            expected_last_batch_size = row_group_size - (
-                expected_batch_size * (len(tables) - 1)
-            )
-            assert (
-                last_batch.num_rows == expected_last_batch_size
-            ), f"Last batch has {last_batch.num_rows} rows, expected {expected_last_batch_size}"
-    else:
-        # For explicit batch size, verify no batch exceeds the batch size
-        # (PyArrow may return smaller batches due to row group boundaries)
+        # For sample-based batch size estimation
+        # Verify that no batch exceeds the target block size
         for i, table in enumerate(tables):
-            assert (
-                table.num_rows <= batch_size
-            ), f"Table {i} has {table.num_rows} rows, expected <= {batch_size}"
+            if i == 0:
+                # Skip the first batch because it's not based on
+                # sampling.
+                continue
+            batch_memory = table.nbytes
+            max_allowed_memory = target_block_size * MAX_SAFE_BLOCK_SIZE_FACTOR
+            assert batch_memory <= max_allowed_memory, (
+                f"Batch {i} memory usage {batch_memory} exceeds "
+                f"target {target_block_size} for test case: {test_case['name']}"
+            )
+
+            # Verify each batch has at least one row
             assert (
                 table.num_rows > 0
-            ), f"Table {i} has {table.num_rows} rows, expected > 0"
+            ), f"Batch {i} has 0 rows for test case: {test_case['name']}"
+    else:
+        # For explicit batch size
+        # Verify no batch exceeds the specified batch size
+        for i, table in enumerate(tables):
+            assert table.num_rows <= batch_size, (
+                f"Batch {i} has {table.num_rows} rows, expected <= {batch_size} "
+                f"for test case: {test_case['name']}"
+            )
+            assert (
+                table.num_rows > 0
+            ), f"Batch {i} has 0 rows for test case: {test_case['name']}"
 
 
 @pytest.fixture

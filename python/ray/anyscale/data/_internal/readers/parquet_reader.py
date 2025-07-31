@@ -120,6 +120,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
 
         self._should_preserve_order = ctx.execution_options.preserve_order
         self._retried_io_errors = ctx.retried_io_errors
+        self._sampled_batch_size = None
 
     def read_files(
         self,
@@ -297,10 +298,35 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 )
             raise
 
+    def _calculate_batch_size(self, avg_row_size: float, num_rows: int) -> int:
+        """Calculate optimal batch size based on average row size and target block size.
+
+        Args:
+            avg_row_size: Average size per row in bytes
+            num_rows: Number of rows in the data
+
+        Returns:
+            Calculated batch size (at least 1)
+        """
+        if num_rows == 0 or avg_row_size == 0:
+            return 1
+
+        total_memory_bytes = avg_row_size * num_rows
+        if (
+            self._target_block_size is not None
+            and total_memory_bytes
+            > MAX_SAFE_BLOCK_SIZE_FACTOR * self._target_block_size
+        ):
+            # If memory usage is large, calculate batch size based on target block size
+            return max(1, int(self._target_block_size / avg_row_size))
+        else:
+            # If total memory usage is small, or target block size is not set,
+            # consider batch size as num_rows.
+            return max(1, num_rows)
+
     def _get_batch_size(
         self,
         fragment: pyarrow.dataset.ParquetFileFragment,
-        target_block_size: Optional[int],
         target_column_indices: List[int],
     ) -> int:
         """Calculate an optimal batch size from the first row-group stats.
@@ -326,20 +352,21 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             for col_idx in target_column_indices
         )
 
-        if (
-            target_block_size is not None
-            and row_group_size_bytes > MAX_SAFE_BLOCK_SIZE_FACTOR * target_block_size
-        ):
-            # If row group size is large, calculate batch size based on target block
-            # size and average row size.
-            average_row_size = row_group_size_bytes / row_group_num_rows
-            batch_size = max(1, int(target_block_size / average_row_size))
-        else:
-            # Row-group is already small enough – read it in one go.
-            # Or: No target block size ⇒ treat as “infinite”: read whole row-group.
-            batch_size = max(1, row_group_num_rows)
+        # Estimate the in-memory size of the row group
+        estimated_in_memory_row_group_size = (
+            row_group_size_bytes * PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT
+        )
 
-        return batch_size
+        avg_row_size = estimated_in_memory_row_group_size / row_group_num_rows
+        return self._calculate_batch_size(avg_row_size, row_group_num_rows)
+
+    def _get_sampled_batch_size(self, table: pyarrow.Table) -> int:
+        """Estimate the batch size based on the table size and the target block size."""
+        if not table:
+            return 1
+
+        avg_row_size = table.nbytes / table.num_rows
+        return self._calculate_batch_size(avg_row_size, table.num_rows)
 
     def _read_batches(
         self,
@@ -348,9 +375,11 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         schema: pyarrow.Schema,
         columns: Optional[List[str]],
     ) -> Iterable[pyarrow.Table]:
-        target_column_indices = None
-
-        if self._batch_size is None:
+        if self._batch_size is not None:
+            batch_size = self._batch_size
+        elif self._sampled_batch_size is not None:
+            batch_size = self._sampled_batch_size
+        else:
             # Get column indices for projected columns
             target_column_indices = (
                 [fragment.physical_schema.get_field_index(col) for col in columns]
@@ -359,11 +388,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             )
 
             # Estimate batch size from first row group stats
-            batch_size = self._get_batch_size(
-                fragment, self._target_block_size, target_column_indices
-            )
-        else:
-            batch_size = self._batch_size
+            batch_size = self._get_batch_size(fragment, target_column_indices)
 
         # S3 can raise transient errors during iteration, and PyArrow doesn't expose a
         # way to retry specific batches.
@@ -381,6 +406,16 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             table = pa.Table.from_batches([batch])
             if self._block_udf is not None:
                 table = self._block_udf(table)
+            if self._sampled_batch_size is None:
+                # Note: _sampled_batch_size is only updated locally in each read task,
+                # which means for each read task, we'll always use the
+                # PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT-based batch size to read the
+                # first file. Only the remaining files will be read with the sampled
+                # batch size.
+                #
+                # Ideally, we can propagate the sampled batch size back to
+                # the executor and use it for future tasks.
+                self._sampled_batch_size = self._get_sampled_batch_size(table)
             yield table
 
     def read_metadata(
