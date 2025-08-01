@@ -9,6 +9,7 @@ from ray.anyscale.data.checkpoint.checkpoint_writer import CheckpointWriter
 from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointConfig,
 )
+from ray.anyscale.data.checkpoint.util import normalize_id
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
 from ray.data.block import Block, BlockAccessor
 
@@ -44,7 +45,8 @@ class RowBasedFileStorageCheckpointFilter(RowBasedCheckpointFilter):
         files = []
         for row in block_accessor.iter_rows(False):
             _id = row[self.id_column]
-            files.append(f"{_id}.jsonl")
+            normalized_id = normalize_id(_id)
+            files.append(f"{normalized_id}.jsonl")
 
         # Check if each checkpoint file exists, and re-build
         # the block with only rows that do not have a checkpoint file.
@@ -107,10 +109,13 @@ class RowBasedFileStorageCheckpointWriter(CheckpointWriter):
         """Write a checkpoint for a single row to the checkpoint
         output directory given by `self.checkpoint_path_unwrapped`.
 
-        The name of the checkpoint file is `f"{row[self.id_col]}.jsonl"`."""
+        The name of the checkpoint file is `f"{normalize_id(row[self.id_col])}.jsonl"`."""
 
         row_id = row[self.id_col]
-        file_key = os.path.join(self.checkpoint_path_unwrapped, f"{row_id}.jsonl")
+        normalized_id = normalize_id(row_id)
+        file_key = os.path.join(
+            self.checkpoint_path_unwrapped, f"{normalized_id}.jsonl"
+        )
 
         file = Path(file_key)
         file.parent.mkdir(parents=True, exist_ok=True)

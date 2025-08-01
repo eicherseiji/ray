@@ -12,9 +12,136 @@ from ray.data.context import MAX_SAFE_BLOCK_SIZE_FACTOR
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
+from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
 
 import ray
 from ray.data.tests.conftest import *  # noqa
+
+
+@pytest.fixture
+def checkpoint_config_fixture():
+    """Fixture to set up and clean up checkpoint config.
+
+    We set CheckpointConfig here because the include_row_id feature currently can only
+    be enabled with CheckpointConfig.generate_id_column. If we expose a new API for
+    read_parquet, we should update this fixture.
+
+    """
+    ctx = ray.data.DataContext.get_current()
+    original_config = ctx.checkpoint_config
+
+    def _setup_checkpoint_config(
+        generate_id_column="row_id", checkpoint_path="/tmp/checkpoint"
+    ):
+        ctx.checkpoint_config = CheckpointConfig(
+            generate_id_column=generate_id_column, checkpoint_path=checkpoint_path
+        )
+        return ctx.checkpoint_config
+
+    yield _setup_checkpoint_config
+
+    ctx.checkpoint_config = original_config
+
+
+@pytest.fixture
+def simple_parquet_file(tmp_path):
+    """Fixture to create a simple Parquet file for testing."""
+
+    def _create_parquet_file(data, filename="test.parquet"):
+        df = pd.DataFrame(data)
+        table = pa.Table.from_pandas(df)
+        file_path = tmp_path / filename
+        pq.write_table(table, file_path)
+        return tmp_path
+
+    return _create_parquet_file
+
+
+@pytest.fixture
+def multi_file_parquet_dataset(tmp_path):
+    """Fixture to create a multi-file Parquet dataset for testing."""
+
+    def _create_multi_file_dataset(total_rows, num_files, data_columns=None):
+        if data_columns is None:
+            data_columns = {"id": lambda i: i, "value": lambda i: i % 20}
+
+        rows_per_file = total_rows // num_files
+        all_data = []
+
+        for i in range(num_files):
+            start_idx = i * rows_per_file
+            end_idx = start_idx + rows_per_file
+
+            file_data = {}
+            for col_name, col_func in data_columns.items():
+                file_data[col_name] = [col_func(j) for j in range(start_idx, end_idx)]
+
+            df = pd.DataFrame(file_data)
+            table = pa.Table.from_pandas(df)
+            file_path = tmp_path / f"test_{i:03d}.parquet"
+            pq.write_table(table, file_path)
+            all_data.append(df)
+
+        return tmp_path, all_data
+
+    return _create_multi_file_dataset
+
+
+@pytest.fixture
+def large_parquet_dataset(tmp_path):
+    """Fixture to create a large Parquet dataset with uneven row distribution."""
+
+    def _create_large_dataset(total_rows=1000, num_files=100):
+        import random
+
+        # Generate uneven distribution of rows per file
+        rows_per_file = [1] * num_files  # Start with 1 row per file
+        remaining_rows = total_rows - num_files
+
+        # Randomly distribute remaining rows
+        random.seed(42)  # For reproducibility
+        for _ in range(remaining_rows):
+            file_idx = random.randint(0, num_files - 1)
+            rows_per_file[file_idx] += 1
+
+        # Verify we have exactly total_rows rows
+        assert sum(rows_per_file) == total_rows
+
+        # Create files with uneven row distribution
+        current_row_start = 0
+        file_info = []  # Track (file_path, start_row, end_row, num_rows)
+
+        for i in range(num_files):
+            num_rows = rows_per_file[i]
+
+            # Create data for this file
+            start_val = current_row_start
+            end_val = current_row_start + num_rows
+
+            df = pd.DataFrame(
+                {
+                    "one": list(range(start_val, end_val)),
+                    "two": [f"value_{j}" for j in range(start_val, end_val)],
+                }
+            )
+
+            table = pa.Table.from_pandas(df)
+            file_path = tmp_path / f"test_{i:03d}.parquet"
+            pq.write_table(table, file_path)
+
+            file_info.append(
+                (
+                    str(file_path),
+                    current_row_start,
+                    current_row_start + num_rows - 1,
+                    num_rows,
+                )
+            )
+            current_row_start += num_rows
+
+        return tmp_path, file_info, total_rows
+
+    return _create_large_dataset
 
 
 def flaky(func):
@@ -574,6 +701,193 @@ def test_read_parquet_with_columns_selectivity(
         f"Column selection {columns} with batch_size={batch_size} "
         f"returned columns {ds.schema().names}"
     )
+
+
+@pytest.mark.parametrize(
+    "test_data,generate_id_column,read_kwargs,rename_columns,expected_error_pattern,test_description",
+    [
+        # Collision with existing schema column
+        (
+            {"one": [1, 2, 3], "row_id": ["a", "b", "c"]},
+            "row_id",
+            {},
+            None,
+            "generate_id_column='row_id' conflicts with an existing column",
+            "collision with existing Parquet column",
+        ),
+        # Collision with columns list
+        (
+            {"one": [1, 2, 3], "two": ["a", "b", "c"], "row_id": ["d", "e", "f"]},
+            "row_id",
+            {"columns": ["one", "two", "row_id"]},
+            None,
+            "generate_id_column='row_id' conflicts with a column in the columns list",
+            "collision with explicit columns list",
+        ),
+        # Collision with renamed column (target name)
+        (
+            {"one": [1, 2, 3], "two": ["a", "b", "c"]},
+            "renamed_col",
+            {},
+            {"one": "renamed_col"},
+            "generate_id_column='renamed_col' conflicts with a renamed column",
+            "collision with renamed column target name",
+        ),
+        # Collision with column being renamed (original name)
+        (
+            {"one": [1, 2, 3], "two": ["a", "b", "c"]},
+            "one",
+            {},
+            {"one": "renamed_col"},
+            "generate_id_column='one' conflicts with a column that will be renamed",
+            "collision with column being renamed",
+        ),
+    ],
+)
+def test_parquet_generated_row_id_collisions(
+    ray_start_regular_shared,
+    tmp_path,
+    checkpoint_config_fixture,
+    simple_parquet_file,
+    test_data,
+    generate_id_column,
+    read_kwargs,
+    rename_columns,
+    expected_error_pattern,
+    test_description,
+):
+    """Test that generate_id_column raises appropriate errors when it collides with various column scenarios."""
+
+    # Create Parquet file with test data
+    simple_parquet_file(test_data)
+
+    # Set up checkpoint config
+    checkpoint_config_fixture(generate_id_column=generate_id_column)
+
+    # Read Parquet and apply any additional operations
+    ds = ray.data.read_parquet(tmp_path, **read_kwargs)
+
+    # Apply rename operation if specified
+    if rename_columns:
+        ds = ds.rename_columns(rename_columns)
+
+    # Should raise error due to collision
+    with pytest.raises(ValueError, match=expected_error_pattern):
+        ds.materialize()
+
+
+def test_parquet_generated_row_id_with_filter_pushdown(
+    ray_start_regular_shared,
+    tmp_path,
+    checkpoint_config_fixture,
+    multi_file_parquet_dataset,
+):
+    """Verify row IDs when filter pushdown is applied with generate_id_column."""
+    import pyarrow as pa
+    import ray
+
+    # Create test data with multiple files
+    total_rows = 200
+    num_files = 4
+    data_path, all_data = multi_file_parquet_dataset(total_rows, num_files)
+
+    # Combine all data for reference
+    all_df = pd.concat(all_data, ignore_index=True)
+
+    # Apply filter: keep rows where value < 10
+    filter_condition = "value < 10"
+    expected_filtered_df = all_df[all_df["value"] < 10].reset_index(drop=True)
+    expected_count = len(expected_filtered_df)
+
+    # Set up checkpoint config with generate_id_column
+    checkpoint_config_fixture(generate_id_column="row_id")
+
+    # Read with row IDs and apply filter
+    ds_filtered = ray.data.read_parquet(data_path).filter(expr=filter_condition)
+
+    # Verify schema includes row_id column
+    assert ds_filtered.schema().names == ["id", "value", "row_id"]
+
+    # Collect filtered data
+    filtered_batches = list(ds_filtered.iter_batches(batch_format="pyarrow"))
+    filtered_table = (
+        pa.concat_tables(filtered_batches)
+        if len(filtered_batches) > 1
+        else filtered_batches[0]
+    )
+
+    # Verify row count matches expected
+    assert (
+        filtered_table.num_rows == expected_count
+    ), f"Expected {expected_count} rows, got {filtered_table.num_rows}"
+
+    # Verify row IDs preserve original file-based positions
+    row_ids = filtered_table["row_id"].to_numpy()
+
+    # Extract row ID strings for uniqueness checks
+    # Row IDs are now simple strings in format "/path/to/file/row_id"
+    row_id_strings = row_ids.tolist()
+
+    # Row IDs should be unique
+    assert len(set(row_id_strings)) == len(row_id_strings), "Row IDs should be unique"
+
+    # Row IDs should correspond to original positions from each file's range
+    # Each file had 50 rows with ranges: file0=[0-49], file1=[50-99], file2=[100-149], file3=[150-199]
+    # After filtering "value < 10", we expect gaps in row IDs where filtered rows were removed
+    filtered_df = filtered_table.to_pandas()
+
+    # Verify the filtered data matches expected
+    filtered_df = filtered_table.to_pandas()
+    filtered_df_sorted = filtered_df.sort_values("id").reset_index(drop=True)
+    expected_filtered_df_sorted = expected_filtered_df.sort_values("id").reset_index(
+        drop=True
+    )
+
+    pd.testing.assert_frame_equal(
+        filtered_df_sorted[["id", "value"]],
+        expected_filtered_df_sorted[["id", "value"]],
+    )
+
+
+def test_parquet_read_with_generate_id_column_checkpoint_config(
+    ray_start_regular_shared, tmp_path, checkpoint_config_fixture, large_parquet_dataset
+):
+    """Test reading Parquet files with generate_id_column from checkpoint config."""
+    import pyarrow as pa
+
+    # Create large dataset with uneven row distribution
+    data_path, file_info, total_rows = large_parquet_dataset()
+
+    # Set up checkpoint config with generate_id_column
+    checkpoint_config_fixture(generate_id_column="row_id")
+
+    # Read all files with row IDs
+    ds = ray.data.read_parquet(data_path)
+
+    # Verify schema includes row_id column
+    assert ds.schema().names == ["one", "two", "row_id"]
+
+    # Collect all data as Arrow table to verify row ID properties
+    batches = list(ds.iter_batches(batch_format="pyarrow"))
+    all_data_table = pa.concat_tables(batches) if len(batches) > 1 else batches[0]
+
+    # Verify we have exactly 1000 rows
+    assert all_data_table.num_rows == total_rows
+
+    # Extract columns as numpy arrays for efficient processing
+    row_ids = all_data_table["row_id"].to_numpy()
+
+    # Extract row ID strings for uniqueness checks
+    # Row IDs are now simple strings in format "/path/to/file/row_id"
+    row_id_strings = row_ids.tolist()
+
+    # Verify row IDs are unique and properly distributed
+    unique_row_ids = set(row_id_strings)
+
+    # All composite keys should be unique since they include both row_id and path information
+    assert (
+        len(unique_row_ids) == total_rows
+    ), f"Expected {total_rows} unique row IDs, got {len(unique_row_ids)}"
 
 
 if __name__ == "__main__":

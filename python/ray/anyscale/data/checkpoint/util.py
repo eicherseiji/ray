@@ -1,4 +1,7 @@
-from typing import Iterable
+from typing import Union, Iterable
+import urllib.parse
+
+import pyarrow as pa
 
 from ray.anyscale.data.checkpoint.checkpoint_filter import (
     BatchBasedCheckpointFilter,
@@ -11,6 +14,9 @@ from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data.block import Block, BlockAccessor, DataBatch
 
 CHECKPOINTED_IDS_KWARG_NAME = "checkpointed_ids"
+
+# Type for generated ID
+GENERATED_ID_COLUMN_TYPE = pa.string()
 
 
 def filter_checkpointed_rows_for_blocks(
@@ -68,3 +74,39 @@ def filter_checkpointed_rows_for_batches(
     for batch in batches:
         filtered_batch = filter_fn(batch)
         yield filtered_batch
+
+
+def get_generated_id_column(
+    path: str, current_row_offset: int, num_rows: int
+) -> pa.StringArray:
+    """Helper function to get generated ID column string array from path
+       information.
+
+    Args:
+        path: Full path to the file
+        current_row_offset: Current row offset for sequential IDs
+        num_rows: Number of rows in the current batch
+
+    Returns:
+        PyArrow StringArray with row ID strings
+    """
+    # Create string IDs in format: "/path/to/file/row_id"
+    row_id_strings = [f"{path}/{current_row_offset + i}" for i in range(num_rows)]
+
+    return pa.array(row_id_strings, type=pa.string())
+
+
+def normalize_id(id: Union[str, int]) -> str:
+    """Normalize an ID for use as a filename.
+
+    Args:
+        id: The ID (string or int)
+
+    Returns:
+        A normalized string safe for use as a filename
+    """
+    if isinstance(id, int):
+        return str(id)
+
+    # For string IDs, URL encode to handle path separators and special characters
+    return urllib.parse.quote(id, safe="")

@@ -29,6 +29,7 @@ class CheckpointFilter(abc.ABC):
             self.ckpt_config.checkpoint_path
         )
         self.id_column = self.ckpt_config.id_column
+        self.generate_id_column = self.ckpt_config.generate_id_column
         self.filesystem = self.ckpt_config.filesystem
         self.filter_num_threads = self.ckpt_config.filter_num_threads
 
@@ -104,6 +105,9 @@ class BatchBasedCheckpointFilter(CheckpointFilter):
             .sort(self.id_column)  # Sort the IDs, as filter will use binary search.
             .repartition(1)
         )
+        # Need to reset the checkpoint config from the checkpoint dataset.
+        checkpoint_ds.context.checkpoint_config = None
+
         ref_bundles: List[RefBundle] = list(checkpoint_ds.iter_internal_ref_bundles())
         assert len(ref_bundles) == 1
         ref_bundle = ref_bundles[0]
@@ -163,7 +167,12 @@ class BatchBasedCheckpointFilter(CheckpointFilter):
 
         def filter_with_ckpt_chunk(ckpt_chunk):
             # Convert checkpoint chunk to numpy for fast search.
-            ckpt_ids = ckpt_chunk.to_numpy(zero_copy_only=True)
+            if not self.generate_id_column:
+                ckpt_ids = ckpt_chunk.to_numpy(zero_copy_only=True)
+            else:
+                # Generated row IDs are GENERATED_ID_COLUMN_TYPE, not ints, so
+                # cannot use zero_copy_only=True.
+                ckpt_ids = ckpt_chunk.to_numpy(zero_copy_only=False)
             # Start with a mask of all True (keep all rows).
             mask = numpy.ones(len(block_ids), dtype=bool)
             # Use binary search to find where block_ids would be in ckpt_ids.

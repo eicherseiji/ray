@@ -154,13 +154,14 @@
     timeout: 3600
     script: python cpu_job_autoscaling_benchmark.py
 
-- name: "checkpoint_benchmark_{{scale}}"
+- name: "checkpoint_benchmark_{{scale}}_{{id_column}}"
   group: data-tests
   working_dir: anyscale/data
 
   matrix:
     setup:
       scale: [small, large]
+      id_column: [default_id, generate_id_column]
 
   frequency: nightly
   team: data
@@ -171,7 +172,7 @@
 
   run:
     timeout: 3600
-    script: python ./run_checkpoint_benchmark.py {{scale}}
+    script: python ./run_checkpoint_benchmark.py {{scale}} {{id_column}}
 
 ###############
 # Rllib tests

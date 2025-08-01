@@ -2,6 +2,7 @@ import functools
 from typing import Any, Callable, List, Optional
 
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
+from ray.anyscale.data._internal.readers.parquet_reader import ParquetReader
 from ray.anyscale.data._internal.planner.plan_read_files_op import plan_read_files_op
 from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_IDS_KWARG_NAME,
@@ -23,6 +24,15 @@ def plan_read_files_op_with_checkpoint_filter(
     data_context: DataContext,
     get_checkpoint_ref: Optional[Callable[[], Any]] = None,
 ) -> PhysicalOperator:
+    if (
+        data_context.checkpoint_config is not None
+        and data_context.checkpoint_config.generate_id_column
+    ):
+        assert isinstance(op.reader, ParquetReader), (
+            f"For checkpointing with `generate_id_column`, ReadFiles operator must use a "
+            f"ParquetReader, but got {type(op.reader)}"
+        )
+
     physical_op = plan_read_files_op(op, physical_children, data_context)
     _insert_filter_transform_fn(physical_op, data_context, get_checkpoint_ref)
     return physical_op

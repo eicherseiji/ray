@@ -11,7 +11,6 @@ from typing import (
     List,
     Optional,
     Set,
-    Tuple,
 )
 
 import numpy as np
@@ -40,6 +39,10 @@ from ray.data.context import DataContext, MAX_SAFE_BLOCK_SIZE_FACTOR
 from ray.data.datasource import Partitioning, PathPartitionParser
 from ray.data.datasource.path_util import _has_file_extension
 from ray.util.debug import log_once
+from ray.anyscale.data.checkpoint.util import (
+    get_generated_id_column,
+    GENERATED_ID_COLUMN_TYPE,
+)
 
 from .file_reader import FileReader
 from .in_memory_size_estimator import (
@@ -99,6 +102,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             partitioning: The partitioning scheme to use when reading the data.
             target_block_size: The target block size to use for reading the data.
         """
+        super().__init__()
+
         self._schema = schema
         self._dataset_kwargs = dataset_kwargs
         self._batch_size = batch_size
@@ -121,6 +126,11 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self._should_preserve_order = ctx.execution_options.preserve_order
         self._retried_io_errors = ctx.retried_io_errors
         self._sampled_batch_size = None
+
+        # Check if ID generation is requested via checkpoint config
+        self._generate_id_column = None
+        if ctx.checkpoint_config and ctx.checkpoint_config.generate_id_column:
+            self._generate_id_column = ctx.checkpoint_config.generate_id_column
 
     def read_files(
         self,
@@ -148,6 +158,34 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 break
 
         fragments = self._create_fragments(paths, filesystem=filesystem)
+
+        # Check for column name collision with generate_id_column
+        if self._generate_id_column:
+            # Check collision with columns_rename mapping
+            if columns_rename is not None:
+                if self._generate_id_column in columns_rename:
+                    raise ValueError(
+                        f"generate_id_column='{self._generate_id_column}' conflicts with a column "
+                        f"that will be renamed (original name)"
+                    )
+                if self._generate_id_column in columns_rename.values():
+                    raise ValueError(
+                        f"generate_id_column='{self._generate_id_column}' conflicts with a renamed "
+                        f"column (target name)"
+                    )
+
+            existing_columns = fragments[0].physical_schema.names or columns
+
+            # Check collision with existing columns
+            if self._generate_id_column in existing_columns:
+                if columns is not None and self._generate_id_column in columns:
+                    raise ValueError(
+                        f"generate_id_column='{self._generate_id_column}' conflicts with a column in the columns list"
+                    )
+                else:
+                    raise ValueError(
+                        f"generate_id_column='{self._generate_id_column}' conflicts with an existing column"
+                    )
 
         # Users can pass both data columns and partition columns in the 'columns'
         # argument. To prevent PyArrow from complaining about missing columns, we
@@ -202,7 +240,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         paths: List[str],
         *,
         filesystem: pa.fs.FileSystem,
-    ) -> Tuple[List[pyarrow.dataset.ParquetFileFragment], pyarrow.Schema]:
+    ) -> List[pyarrow.dataset.ParquetFileFragment]:
         parquet_dataset = call_with_retry(
             lambda: get_parquet_dataset(paths, filesystem, self._dataset_kwargs),
             "create ParquetDataset",
@@ -211,7 +249,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         check_for_legacy_tensor_type(parquet_dataset.schema)
         return parquet_dataset.fragments
 
-    def _get_num_threads(self, paths):
+    def _get_num_threads(self, paths: List[str]) -> int:
         num_threads = self._NUM_THREADS_PER_TASK
         if len(paths) < num_threads:
             num_threads = len(paths)
@@ -239,7 +277,11 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 partitions = parse(fragment.path)
 
             for batch in self._read_batches(
-                fragment, filter_expr, schema, data_columns
+                fragment,
+                filter_expr,
+                fragment.path,
+                schema,
+                data_columns,
             ):
                 if self._include_paths:
                     batch = batch.append_column(
@@ -273,7 +315,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         columns: Optional[List[str]],
         filter_expr: pyarrow.dataset.Expression,
         schema: pyarrow.Schema,
-    ):
+    ) -> Iterable[pyarrow.RecordBatch]:
         """Get an iterable of batches from a parquet fragment."""
         try:
             return fragment.to_batches(
@@ -372,6 +414,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self,
         fragment: pyarrow.dataset.ParquetFileFragment,
         filter_expr: pyarrow.dataset.Expression,
+        path: str,
         schema: pyarrow.Schema,
         columns: Optional[List[str]],
     ) -> Iterable[pyarrow.Table]:
@@ -390,6 +433,9 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             # Estimate batch size from first row group stats
             batch_size = self._get_batch_size(fragment, target_column_indices)
 
+        # Track the current row offset for the row IDs
+        current_row_offset: int = 0
+
         # S3 can raise transient errors during iteration, and PyArrow doesn't expose a
         # way to retry specific batches.
         for batch in iterate_with_retry(
@@ -404,6 +450,15 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             if batch.num_rows == 0:
                 continue
             table = pa.Table.from_batches([batch])
+
+            # Add row IDs if requested
+            if self._generate_id_column:
+                table = table.append_column(
+                    self._generate_id_column,
+                    get_generated_id_column(path, current_row_offset, table.num_rows),
+                )
+                current_row_offset += table.num_rows
+
             if self._block_udf is not None:
                 table = self._block_udf(table)
             if self._sampled_batch_size is None:
@@ -424,7 +479,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         *,
         filesystem: pyarrow.fs.FileSystem,
     ) -> Iterator[BlockMetadata]:
-
         parquet_dataset = call_with_retry(
             lambda: get_parquet_dataset(
                 file_manifest.paths.tolist(), filesystem, self._dataset_kwargs
@@ -435,7 +489,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
 
         def get_metadata_for_path(
             fragment: "pa.dataset.ParquetFileFragment",
-        ) -> Tuple[int, int]:
+        ) -> int:
             # Getting the metadata requires network calls, so it might fail with
             # transient errors.
             num_rows = call_with_retry(
@@ -468,7 +522,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         filesystem: pyarrow.fs.FileSystem,
         columns: Optional[List[str]],
     ) -> "Schema":
-
         schema = self._schema
         parquet_dataset = call_with_retry(
             lambda: get_parquet_dataset(
@@ -486,6 +539,12 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 self._partitioning,
                 self._block_udf,
             )
+
+        # Add row ID column to schema if requested
+        if self._generate_id_column:
+            row_id_field = pa.field(self._generate_id_column, GENERATED_ID_COLUMN_TYPE)
+            schema = pa.schema(list(schema) + [row_id_field])
+
         return schema
 
     def available_metadata(self) -> Set[MetadataType]:
@@ -503,7 +562,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
 
 
 class ParquetInMemorySizeEstimator(InMemorySizeEstimator):
-    def estimate_in_memory_sizes(self, manifest: FileManifest) -> np.array:
+    def estimate_in_memory_sizes(self, manifest: FileManifest) -> np.ndarray:
         # Reading a batch of Parquet data can be slow, even if you try to read a single
         # row. To avoid slow startup times, just return a constant value. For more
         # information, see https://github.com/anyscale/rayturbo/issues/924.

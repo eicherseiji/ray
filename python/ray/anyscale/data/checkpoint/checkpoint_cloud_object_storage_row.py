@@ -9,6 +9,7 @@ from ray.anyscale.data.checkpoint.checkpoint_writer import CheckpointWriter
 from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointConfig,
 )
+from ray.anyscale.data.checkpoint.util import normalize_id
 from ray.data import DataContext
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
 from ray.data._internal.util import call_with_retry
@@ -31,7 +32,8 @@ class RowBasedCloudObjectStorageCheckpointFilter(RowBasedCheckpointFilter):
         files = []
         for row in block_accessor.iter_rows(False):
             _id = row[self.id_column]
-            files.append(f"{_id}.jsonl")
+            normalized_id = normalize_id(_id)
+            files.append(f"{normalized_id}.jsonl")
 
         mask_file_exists = self.check_files_exist(files)
         builder = DelegatingBlockBuilder()
@@ -80,12 +82,13 @@ class RowBasedCloudObjectStorageCheckpointWriter(CheckpointWriter):
         """Write a checkpoint for a single row to the checkpoint
         output directory given by `self.checkpoint_path_unwrapped`.
 
-        The name of the checkpoint file is `f"{row[self.id_col]}.jsonl"`."""
+        The name of the checkpoint file is `f"{normalize_id(row[self.id_col])}.jsonl"`."""
 
         split_bucket = self.checkpoint_path_unwrapped.split("/")
         bucket, key_prefix = split_bucket[0], "/".join(split_bucket[1:])
         row_id = row[self.id_col]
-        file_key = f"{key_prefix}/{row_id}.jsonl"
+        normalized_id = normalize_id(row_id)
+        file_key = f"{key_prefix}/{normalized_id}.jsonl"
 
         def _write():
             # TODO: add some checkpoint metadata, like timestamp, etc. in Body

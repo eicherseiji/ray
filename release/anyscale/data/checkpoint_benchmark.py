@@ -23,8 +23,16 @@ def _parse_checkpoint_config(args: argparse.Namespace) -> Optional[CheckpointCon
     else:
         raise ValueError(f"Unknown checkpoint backend: {backend_str}")
 
+    if args.generate_id_column:
+        id_column: Optional[str] = None
+        generate_id_column: Optional[str] = args.generate_id_column
+    else:
+        id_column: Optional[str] = "id"
+        generate_id_column: Optional[str] = None
+
     return CheckpointConfig(
-        id_column="id",
+        id_column=id_column,
+        generate_id_column=generate_id_column,
         checkpoint_path=args.checkpoint_output_path,
         override_backend=backend,
     )
@@ -204,6 +212,7 @@ if __name__ == "__main__":
     _ = parser.add_argument("--inference_sleep_s", type=float)
     _ = parser.add_argument("--transform_sleep_s", type=float, default=0.001)
     _ = parser.add_argument("--num_output_files", type=int, default=50)
+    _ = parser.add_argument("--generate_id_column", type=str, default=None)
     args = parser.parse_args()
 
     checkpoint_config = _parse_checkpoint_config(args)
