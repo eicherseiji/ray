@@ -21,7 +21,7 @@ Ray Data represents tensors as
 
 .. testoutput::
 
-    Dataset(num_rows=100, schema=...)
+    Dataset(num_rows=?, schema=...)
 
 Batches of fixed-shape tensors
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
