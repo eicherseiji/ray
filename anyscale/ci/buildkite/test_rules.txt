@@ -12,6 +12,10 @@
 #
 # These rules run before
 
+anyscale/ci/buildkite/test_rules.txt
+@ tools
+;
+
 anyscale/go/
 @ gotools
 ;
@@ -22,6 +26,7 @@ python/ray/anyscale/train/
 ;
 
 anyscale/ci/buildkite/serve.rayci.yml
+anyscale/ci/buildkite/serve_di_test_names.txt
 python/ray/anyscale/serve/
 @ serve
 ;
@@ -34,10 +39,12 @@ python/ray/anyscale/data/
 anyscale/ci/buildkite/core.rayci.yml
 python/ray/anyscale/
 @ python core-turbo linux_wheels
+;
 
 anyscale/ci/buildkite/rayturbo.rayci.yml
 python/ray/anyscale/safetensors/
 @ safetensors
+;
 
 anyscale/
 @ docker tools
