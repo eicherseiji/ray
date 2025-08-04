@@ -242,6 +242,7 @@ ray_cc_library(
         ":gcs_task_manager",
         ":gcs_usage_stats_client",
         ":gcs_worker_manager",
+        "//src/ray/anyscale/gcs/gcs_server:gcs_server_io_context_policy",
         "//src/ray/gcs/pubsub:gcs_pub_sub_lib",
         "//src/ray/gcs/store_client:gcs_observable_store_client",
         "//src/ray/protobuf:autoscaler_cc_grpc",
