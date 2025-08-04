@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from typing import Any, Callable, Optional, Tuple
 
@@ -25,6 +26,7 @@ from ray.serve._private.constants import (
     RAY_SERVE_PROXY_PREFER_LOCAL_NODE_ROUTING,
     RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP,
     SERVE_CONTROLLER_NAME,
+    SERVE_LOGGER_NAME,
     SERVE_NAMESPACE,
 )
 from ray.serve._private.deployment_scheduler import (
@@ -42,6 +44,8 @@ from ray.serve._private.utils import (
     resolve_deployment_response,
 )
 from ray.util.placement_group import PlacementGroup
+
+logger = logging.getLogger(SERVE_LOGGER_NAME)
 
 # NOTE: Please read carefully before changing!
 #
@@ -371,7 +375,6 @@ def create_router(  # noqa: F811
     import asyncio
 
     # NOTE(edoakes): this is lazy due to a nasty circular import that should be fixed.
-    from ray.anyscale.serve._private.router import CurrentLoopRouter
     from ray.anyscale.serve.utils import (
         asyncio_grpc_exception_handler,
         resolve_deployment_resp_and_ray_objects,
@@ -439,6 +442,7 @@ def get_proxy_handle(endpoint: DeploymentID, info: EndpointInfo):  # noqa: F811
         ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP,
         ANYSCALE_RAY_SERVE_PROXY_USE_GRPC,
     )
+    from ray.serve._private.constants import RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP
 
     # NOTE(zcin): needs to be lazy import due to a circular dependency.
     # We should not be importing from application_state in context.
@@ -452,12 +456,22 @@ def get_proxy_handle(endpoint: DeploymentID, info: EndpointInfo):  # noqa: F811
     # deleted, then redeployed later. However this is not an issue since
     # we initialize all handles with the same init options.
     if not handle.is_initialized:
+        if ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP:
+            logger.warning(
+                "ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP has been "
+                "deprecated and will be removed in the ray v2.50.0. Please use "
+                "RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP instead."
+            )
+        run_router_in_separate_loop = (
+            ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP
+            and RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP
+        )
         # NOTE(zcin): since the router is eagerly initialized here, the
         # proxy will receive the replica set from the controller early.
         handle._init(
             _prefer_local_routing=RAY_SERVE_PROXY_PREFER_LOCAL_NODE_ROUTING,
             _source=DeploymentHandleSource.PROXY,
-            _run_router_in_separate_loop=ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP,  # noqa
+            _run_router_in_separate_loop=run_router_in_separate_loop,
         )
 
     return handle.options(

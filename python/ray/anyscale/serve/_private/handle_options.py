@@ -12,8 +12,6 @@ from ray.serve._private.utils import DEFAULT
 
 @dataclass(frozen=True)
 class AnyscaleInitHandleOptions(InitHandleOptionsBase):
-    _run_router_in_separate_loop: bool = True
-
     @classmethod
     def create(cls, **kwargs) -> "AnyscaleInitHandleOptions":
         for k in list(kwargs.keys()):

@@ -212,13 +212,6 @@ class _DeploymentHandleBase:
         return self.options(method_name=name)
 
     def shutdown(self, _skip_asyncio_check: bool = False):
-        if self.init_options and not self.init_options._run_router_in_separate_loop:
-            raise RuntimeError(
-                "The synchronous method `shutdown()` cannot be used for a handle that "
-                "isn't running the router on a separate loop. Please use "
-                f"`shutdown_async()` instead. {self.deployment_id}"
-            )
-
         if self._router:
             shutdown_future = self._router.shutdown()
             if self._is_router_running_in_separate_loop():
