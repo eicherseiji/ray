@@ -44,8 +44,9 @@ class AnyscaleServeController(ServeController):
                 "Throughput optimized Ray Serve enabled with the following configurations:\n"
                 "  • Direct ingress enabled\n"
                 "  • gRPC communication enabled\n"
-                "  • User code running in main thread (not separate)\n"
-                "  • Request path log buffer size: 1000"
+                "  • User code and router running in main thread (not separate)\n"
+                "  • Request path log buffer size: 1000\n"
+                "  • Log to stderr is disabled\n"
             )
 
         self._direct_ingress_enabled = ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
