@@ -4,6 +4,13 @@ import sys
 import ray.train
 
 
+def test_logging_manager():
+    from ray.train.v2._internal.logging import LoggingManager
+    from ray.anyscale.train._internal.logging import AnyscaleLoggingManager
+
+    assert LoggingManager is AnyscaleLoggingManager
+
+
 def test_scaling_config():
     """The `ScalingConfig` should be patched to accept min/max workers."""
     # isort: off
