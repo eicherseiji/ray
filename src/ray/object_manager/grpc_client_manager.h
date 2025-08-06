@@ -51,6 +51,7 @@ class GrpcClientManagerImpl final : public GrpcClientManager<ServiceType> {
                         ClientCallManager &client_call_manager) {
     const int conn_num = ::RayConfig::instance().object_manager_client_connection_num();
     grpc_clients_.reserve(conn_num);
+    // RAYTURBO ONLY START
     // TODO(irabbani): This is set in RayTurbo only right now. As part of CORE-1524, this
     // will be converted into a separate implementation behind an interface.
     bool use_multiple_connections =
@@ -62,7 +63,7 @@ class GrpcClientManagerImpl final : public GrpcClientManager<ServiceType> {
         grpc_clients_.emplace_back(std::make_unique<GrpcClient<ServiceType>>(
             address, port, client_call_manager, false, std::move(args)));
       }
-      // End RayTurbo
+      // RAYTURBO ONLY END
     } else {
       for (int idx = 0; idx < conn_num; ++idx) {
         grpc_clients_.emplace_back(std::make_unique<GrpcClient<ServiceType>>(

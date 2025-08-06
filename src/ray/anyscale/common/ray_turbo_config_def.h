@@ -20,3 +20,7 @@
 // TODO(irabbani): Delete this config variable and turn it on by default after
 // piloting it with a few customers. See https://github.com/anyscale/rayturbo/issues/1805.
 RAY_CONFIG(bool, experimental_object_manager_enable_multiple_connections, false)
+
+// TODO(dayshah): Delete this config variable after it's on for a while. See
+// https://github.com/anyscale/rayturbo/issues/2090
+RAY_CONFIG(bool, lazy_subscribe_core_workers, true)
