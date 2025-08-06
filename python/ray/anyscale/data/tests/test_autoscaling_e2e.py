@@ -5,7 +5,7 @@ import pytest
 
 import ray
 from ray.cluster_utils import Cluster
-from ray.data import DataContext
+from ray.data import DataContext, ExecutionResources
 
 
 @pytest.fixture
@@ -29,9 +29,9 @@ def gen_dataset(
     object_store_limit: int,
 ):
     context = DataContext.get_current()
-    context.execution_options.resource_limits.cpu = cpu_limit
-    context.execution_options.resource_limits.gpu = gpu_limit
-    context.execution_options.resource_limits.object_store_memory = object_store_limit
+    context.execution_options.resource_limits = ExecutionResources(
+        cpu=cpu_limit, gpu=gpu_limit, object_store_memory=object_store_limit
+    )
 
     ds = ray.data.range(num_rows_per_dataset, override_num_blocks=num_rows_per_dataset)
 
