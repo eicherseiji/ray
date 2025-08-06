@@ -5,7 +5,7 @@ set -euo pipefail
 PY_VERSION="${1:-3.8}"
 IMG_TYPE="${2:-cpu}"
 BASE_TYPE="${3:-ray}"
-USE_MINIMIZED_BASE="${4:-0}"
+IS_SLIM="${4:-0}"
 
 source anyscale/ci/setup-env.sh
 
@@ -69,7 +69,7 @@ fi
 WHEEL_FILE="ray-${RAY_VERSION}-${WHEEL_PYTHON_CODE}-manylinux2014_${HOSTTYPE}.whl"
 CPP_WHEEL_FILE="ray_cpp-${RAY_VERSION}-${WHEEL_PYTHON_CODE}-manylinux2014_${HOSTTYPE}.whl"
 
-if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
+if [[ "${IS_SLIM}" == "1" ]]; then
     if [[ "${IMG_TYPE}" == "cpu" ]]; then
         IMG_TYPE_CODE=cpu
     elif [[ "${IMG_TYPE}" == "cu11.7.1" ]]; then
@@ -159,10 +159,10 @@ curl -sfL "${OSS_WHEEL_URL_PREFIX}${CPP_WHEEL_FILE}" -o "${BUILD_TMP}/oss-whl/${
 
 aws s3 cp "${S3_TEMP}/${WHEEL_FILE}" "${BUILD_TMP}/runtime-whl/${WHEEL_FILE}"
 
-if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
+if [[ "${IS_SLIM}" == "1" ]]; then
     readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_slim_20250515.tar.gz"
     readonly DATAPLANE_TGZ_WANT="c2060c5a70d39eaeeeee2834b9f3bb4ad27b8f44d2e41f6e6c25449d781fb2d7"
-    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-min-py${PY_VERSION}-${IMG_TYPE}-base${ARCH_SUFFIX}"
+    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-slim-py${PY_VERSION}-${IMG_TYPE}-base${ARCH_SUFFIX}"
 else
     readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_20250624.tar.gz"
     readonly DATAPLANE_TGZ_WANT="3cffb55f1a56f0bc6256cbf1a38bf1e764e202a647a4272b80531760f1250059"
@@ -191,8 +191,11 @@ fi
 
 export DOCKER_BUILDKIT=1
 
-if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
-    BUILD_TAG="${IMAGE_PREFIX}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}-min${ARCH_SUFFIX}"
+if [[ "${IS_SLIM}" == "1" ]]; then
+    BUILD_TAG="${IMAGE_PREFIX}-slim-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${ARCH_SUFFIX}"
+    # The site package tarball name cannot be changed from min to slim because it is
+    # already a coded convention in Anyscale product, and we worry that changing it
+    # might break some users. We will keep the min name for now.
     SITEPKG_TGZ="${BASE_TYPE}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}-min${ARCH_SUFFIX}.tar.gz"
 else
     BUILD_TAG="${IMAGE_PREFIX}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${ARCH_SUFFIX}"
@@ -285,7 +288,7 @@ chmod +x "${CONTEXT_TMP}/download_anyscale_data"
 
 # Must keep this consistent with anyscale/ci/upload-rayturbo-artifacts.sh
 if [[ "${RAY_RELEASE_BUILD:-}" == "true" ]]; then
-  if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
+  if [[ "${IS_SLIM}" == "1" ]]; then
     ANYSCALE_PRESTART_DATA_PATH="common/ray-opt/${RAY_VERSION}/${FULL_COMMIT}/ray-opt-${PY_VERSION_CODE}-min${ARCH_SUFFIX}.tar.gz"
   else
     ANYSCALE_PRESTART_DATA_PATH="common/ray-opt/${RAY_VERSION}/${FULL_COMMIT}/ray-opt-${PY_VERSION_CODE}${ARCH_SUFFIX}.tar.gz"
@@ -300,7 +303,7 @@ fi
     echo ": \${ANYSCALE_PY_VERSION_CODE:=${PY_VERSION_CODE}}"
     echo ": \${ANYSCALE_RAY_VERSION:=${RAY_VERSION}}"
     echo ": \${ANYSCALE_RAY_COMMIT:=${FULL_COMMIT}}"
-    echo ": \${ANYSCALE_RAY_MINIMIZED:=${USE_MINIMIZED_BASE}}"
+    echo ": \${ANYSCALE_RAY_MINIMIZED:=${IS_SLIM}}"
     echo "export ANYSCALE_PY_VERSION_CODE ANYSCALE_RAY_VERSION ANYSCALE_RAY_COMMIT ANYSCALE_RAY_MINIMIZED"
 } > "${CONTEXT_TMP}/version-envs.sh"
 
@@ -346,8 +349,8 @@ if [[ "${PUSH_COMMIT_TAGS}" == "true" ]]; then
         SHORT_COMMIT="${RAY_VERSION}.${SHORT_COMMIT}"
     fi
 
-    if [[ "${USE_MINIMIZED_BASE}" == "1" ]]; then
-        COMMIT_TAG="${SHORT_COMMIT}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}-min${ARCH_SUFFIX}"
+    if [[ "${IS_SLIM}" == "1" ]]; then
+        COMMIT_TAG="${SHORT_COMMIT}-slim-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${ARCH_SUFFIX}"
     else
         COMMIT_TAG="${SHORT_COMMIT}-${PY_VERSION_CODE}-${IMG_TYPE_CODE}${ARCH_SUFFIX}"
     fi

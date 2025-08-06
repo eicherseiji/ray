@@ -1,7 +1,7 @@
 group: rayturbo images
 steps:
-  - name: min-cpubase
-    label: "wanda: min.py{{matrix}}.cpu.base"
+  - name: slim-cpubase
+    label: "wanda: slim.py{{matrix}}.cpu.base"
     tags:
       - python_dependencies
       - docker
@@ -14,8 +14,8 @@ steps:
     env:
       PYTHON_VERSION: "{{matrix}}"
 
-  - name: min-cudabase
-    label: "wanda: min.py{{matrix.python}}.cuda{{matrix.cuda}}.base"
+  - name: slim-cudabase
+    label: "wanda: slim.py{{matrix.python}}.cuda{{matrix.cuda}}.base"
     tags:
       - python_dependencies
       - docker
@@ -154,8 +154,8 @@ steps:
           - "cu12.5.1-cudnn"
           - "cu12.8.1-cudnn"
 
-  - label: ":tapioca: minimized rayturbo py{{matrix.py}} {{matrix.base}} image"
-    key: rayturbo-min-image
+  - label: ":tapioca: slim rayturbo py{{matrix.py}} {{matrix.base}} image"
+    key: rayturbo-slim-image
     tags: docker
     commands:
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray 1
@@ -163,8 +163,8 @@ steps:
     depends_on:
       - rayturbo-wheels
       - rayturbo-helper
-      - min-cpubase
-      - min-cudabase
+      - slim-cpubase
+      - slim-cudabase
       - check-ray-wheels
     job_env: forge
     mount_buildkite_agent: true
