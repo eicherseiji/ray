@@ -48,8 +48,16 @@ from ray.data.datasource.datasource import Datasource
 from ray.data.datasource.path_util import _unwrap_protocol
 from ray.data.tests.conftest import *  # noqa
 from ray.tests.conftest import *  # noqa
+from ray.data import DataContext
 
+# User-provided ID column name
 ID_COL = "id"
+
+# Generated ID column name
+GENERATED_ID_COL = "row_id"
+
+# Number of rows in the sample data
+SAMPLE_DATA_NUM_ROWS = 5
 
 # Auto-use `restore_data_context` for each test and apply 300-second timeout to all tests.
 pytestmark = [
@@ -61,8 +69,10 @@ pytestmark = [
 @pytest.fixture
 def generate_sample_data_csv(tmp_path):
     def _generate():
-        # Generate a dummy dataset with 5 rows and columns ["id", "col1"]
-        data = [{"id": i, "col1": random.random()} for i in range(5)]
+        # Generate a dummy dataset with SAMPLE_DATA_NUM_ROWS rows and columns [ID_COL, "col1"]
+        data = [
+            {ID_COL: i, "col1": random.random()} for i in range(SAMPLE_DATA_NUM_ROWS)
+        ]
 
         f_path = os.path.join(tmp_path, "sample_data.csv")
         with open(f_path, mode="w", newline="") as file:
@@ -75,12 +85,20 @@ def generate_sample_data_csv(tmp_path):
 
 
 @pytest.fixture
+def checkpoint_path(tmp_path):
+    """Fixture to provide a temporary checkpoint path."""
+    return str(tmp_path / "checkpoint")
+
+
+@pytest.fixture
 def generate_sample_data_parquet(tmp_path):
     def _generate():
         f_dir = os.path.join(tmp_path, "sample_data_parquet")
         os.makedirs(f_dir, exist_ok=True)
-        # Generate a dummy dataset with 5 rows and columns ["id", "col1"]
-        df = pd.DataFrame([{"id": i, "col1": random.random()} for i in range(5)])
+        # Generate a dummy dataset with SAMPLE_DATA_NUM_ROWS rows and columns [ID_COL, "col1"]
+        df = pd.DataFrame(
+            [{ID_COL: i, "col1": random.random()} for i in range(SAMPLE_DATA_NUM_ROWS)]
+        )
 
         f_path = os.path.join(f_dir, "sample_data.parquet")
         df.to_parquet(f_path)
@@ -203,7 +221,7 @@ class TestCheckpointConfig:
     def test_override_backend_emits_deprecation_warning(self):
         with pytest.warns(FutureWarning, match="deprecated"):
             CheckpointConfig(
-                "id",
+                ID_COL,
                 "s3://bucket/path",
                 override_backend=CheckpointBackend.FILE_STORAGE,
             )
@@ -213,14 +231,14 @@ class TestCheckpointConfig:
             InvalidCheckpointingConfig,
             match="CheckpointConfig.checkpoint_path",
         ):
-            CheckpointConfig("id", None)
+            CheckpointConfig(ID_COL, None)
 
         default_bucket = s3_path
         monkeypatch.setenv(
             CheckpointConfig.DEFAULT_CHECKPOINT_PATH_BUCKET_ENV_VAR, default_bucket
         )
 
-        config = CheckpointConfig("id", None)
+        config = CheckpointConfig(ID_COL, None)
         assert (
             config.checkpoint_path
             == f"{default_bucket}/{CheckpointConfig.DEFAULT_CHECKPOINT_PATH_DIR}"
@@ -232,7 +250,7 @@ class TestCheckpointConfig:
             InvalidCheckpointingConfig,
             match="Invalid checkpoint path",
         ):
-            CheckpointConfig("id", checkpoint_path)
+            CheckpointConfig(ID_COL, checkpoint_path)
 
     @pytest.mark.parametrize(
         "checkpoint_path",
@@ -242,7 +260,7 @@ class TestCheckpointConfig:
         ],
     )
     def test_infer_filesystem_and_backend(self, checkpoint_path):
-        config = CheckpointConfig("id", checkpoint_path)
+        config = CheckpointConfig(ID_COL, checkpoint_path)
         if checkpoint_path.startswith("/"):
             assert isinstance(config.filesystem, pyarrow.fs.LocalFileSystem)
             assert config.backend == CheckpointBackend.FILE_STORAGE
@@ -277,7 +295,7 @@ class TestCheckpointConfig:
     )
     def test_override_filesystem_and_backend(self, checkpoint_path, fs, backend):
         config = CheckpointConfig(
-            "id", checkpoint_path, override_filesystem=fs, override_backend=backend
+            ID_COL, checkpoint_path, override_filesystem=fs, override_backend=backend
         )
         assert config.filesystem is fs
         assert config.backend is backend
@@ -288,14 +306,14 @@ class TestCheckpointConfig:
         path = "s3://non-existing-bucket/"
         fs = pyarrow.fs.S3FileSystem()
         config = CheckpointConfig(
-            "id",
+            ID_COL,
             path,
             override_filesystem=fs,
         )
         assert config.filesystem is fs
         assert config.backend is CheckpointBackend.CLOUD_OBJECT_STORAGE
 
-    def test_generate_id_column_default_column(self):
+    def test_generate_id_column_default_column(self, checkpoint_path):
         """Test CheckpointConfig with id_column missing and no generate_id_column provided."""
         # id_column is None, generate_id_column is None - should raise error
         with pytest.raises(
@@ -304,21 +322,21 @@ class TestCheckpointConfig:
         ):
             CheckpointConfig(
                 None,
-                "/tmp/checkpoint",
+                checkpoint_path,
             )
 
-    def test_generate_id_column_custom_column(self):
+    def test_generate_id_column_custom_column(self, checkpoint_path):
         """Test CheckpointConfig with id_column missing, but with user provided generate_id_column."""
         # id_column is None, generate_id_column is "custom_id"
         config = CheckpointConfig(
             None,
-            "/tmp/checkpoint",
+            checkpoint_path,
             generate_id_column="custom_id",
         )
         assert config.id_column == "custom_id"
         assert config.generate_id_column == "custom_id"
 
-    def test_generate_id_column_with_existing_id_column(self):
+    def test_generate_id_column_with_existing_id_column(self, checkpoint_path):
         """Test CheckpointConfig with both id_column and generate_id_column provided."""
         with pytest.raises(
             InvalidCheckpointingConfig,
@@ -326,7 +344,7 @@ class TestCheckpointConfig:
         ):
             CheckpointConfig(
                 "existing_id",
-                "/tmp/checkpoint",
+                checkpoint_path,
                 generate_id_column="generated_id",
             )
 
@@ -421,12 +439,13 @@ def test_checkpoint(
 
     # Ensure that the written data is correct.
     ds_readback = ray.data.read_parquet(data_output_path, filesystem=fs)
-    actual_output = sorted([row["id"] for row in ds_readback.iter_rows()])
-    expected_output = sorted([row["id"] for row in ds.iter_rows()])
+    actual_output = sorted([row[ID_COL] for row in ds_readback.iter_rows()])
+    expected_output = sorted([row[ID_COL] for row in ds.iter_rows()])
     assert actual_output == expected_output
 
     # When execution succeeds, checkpoint data should be automatically deleted.
     # TODO(haochen): Also delete checkpoint for row-based backends.
+    ctx.checkpoint_enabled_override = False
     checkpoint_ids = read_ids_from_checkpoint_files(ctx.checkpoint_config)
     if ctx.checkpoint_config.is_batch_based():
         assert checkpoint_ids == []
@@ -526,12 +545,15 @@ def test_full_dataset_executed_for_non_write(
         ds.write_parquet(data_output_path, filesystem=fs)
 
     # Recreate the same dataset, so that it will skip checkpointed rows.
+    ctx.checkpoint_enabled_override = False
     ds2 = ray.data.read_parquet(parquet_dir)
     ds2 = ds2.map(lambda row: row)
 
     # Check that when re-running a dataset which has already been completely
     # checkpointed, it does not skip any rows during `schema()` and `count()` calls.
     assert ds2.schema() == schema_before_write
+    if generate_id_column is not None:
+        assert generate_id_column in ds2.schema().names
     assert ds2.count() == count_before_write
 
 
@@ -601,6 +623,7 @@ def test_recovery_skips_checkpointed_rows(
             override_filesystem=fs,
             override_backend=backend,
         )
+
     # Catch the custom TestException raised by FailActor.
     ctx.raise_original_map_exception = True
 
@@ -681,8 +704,10 @@ def test_recovery_skips_checkpointed_rows(
     # When executing the same dataset again, this should skip the already
     # checkpointed rows.
     ds.write_parquet(data_output_path, filesystem=fs, concurrency=1)
+
     # When execution succeeds, checkpoint data should be automatically deleted.
     # TODO(haochen): Also delete checkpoint for row-based backends.
+    ctx.checkpoint_enabled_override = False
     if ctx.checkpoint_config.is_batch_based():
         assert read_ids_from_checkpoint_files(ctx.checkpoint_config) == []
     else:
@@ -802,7 +827,7 @@ def test_skip_checkpoint_flag(
     # Check what checkpoint files exist
     checkpoint_files = read_ids_from_checkpoint_files(ctx.checkpoint_config)
 
-    assert len(checkpoint_files) == 5
+    assert len(checkpoint_files) == SAMPLE_DATA_NUM_ROWS
 
 
 def test_checkpoint_with_missing_id_column(
@@ -837,18 +862,17 @@ def test_checkpoint_with_missing_id_column(
         ds.write_parquet(data_output_path)
 
 
-def test_dict_checkpoint_config():
+def test_dict_checkpoint_config(checkpoint_path):
     """Test that a dict checkpoint config can be used to create a CheckpointConfig."""
     context = ray.data.DataContext.get_current()
-    checkpoint_path = "/tmp/checkpoint"
     fs = LocalFileSystem()
     context.checkpoint_config = {
-        "id_column": "id",
+        "id_column": ID_COL,
         "checkpoint_path": checkpoint_path,
         "override_filesystem": fs,
         "override_backend": "CLOUD_OBJECT_STORAGE_ROW",
     }
-    assert context.checkpoint_config.id_column == "id"
+    assert context.checkpoint_config.id_column == ID_COL
     assert context.checkpoint_config.checkpoint_path == checkpoint_path
     assert context.checkpoint_config.filesystem is fs
     assert (
@@ -894,14 +918,14 @@ class TestPlanner:
             physical_op._map_transformer._transform_fns
         )
 
-    def test_plan_write_op_with_checkpoint_writer(self):
+    def test_plan_write_op_with_checkpoint_writer(self, checkpoint_path):
         class FakeDatasink(Datasink):
             def write(self, blocks, ctx):
                 return None
 
         # Configure checkpointing.
         ctx = ray.data.DataContext.get_current()
-        ctx.checkpoint_config = CheckpointConfig("id", "/tmp/checkpoint")
+        ctx.checkpoint_config = CheckpointConfig(ID_COL, checkpoint_path)
 
         # Construct a logical DAG.
         input_data = InputData([])
@@ -932,13 +956,13 @@ def test_write_block_checkpoint_with_pandas_df(
 
     if generate_id_column:
         ctx.checkpoint_config = CheckpointConfig(
-            generate_id_column="row_id",
+            generate_id_column=GENERATED_ID_COL,
             checkpoint_path=str(tmp_path),
         )
         # For struct IDs, we need to create a DataFrame with struct data
         df = pd.DataFrame(
             {
-                "row_id": [
+                GENERATED_ID_COL: [
                     create_string_test_data(0, "/data/file1.parquet"),
                     create_string_test_data(1, "/data/file2.parquet"),
                 ]
@@ -950,10 +974,10 @@ def test_write_block_checkpoint_with_pandas_df(
         ]
     else:
         ctx.checkpoint_config = CheckpointConfig(
-            "id",
+            ID_COL,
             str(tmp_path),
         )
-        df = pd.DataFrame({"id": [0, 1]})
+        df = pd.DataFrame({ID_COL: [0, 1]})
         expected_ids = [0, 1]
 
     checkpoint_writer = BatchBasedCheckpointWriter(ctx.checkpoint_config)
@@ -963,7 +987,7 @@ def test_write_block_checkpoint_with_pandas_df(
     checkpoint_filename = os.listdir(tmp_path)[0]
     checkpoint_path = tmp_path / checkpoint_filename
     written_ids = pd.read_parquet(checkpoint_path)[
-        "row_id" if generate_id_column else "id"
+        GENERATED_ID_COL if generate_id_column else ID_COL
     ].tolist()
     assert written_ids == expected_ids
 
@@ -978,7 +1002,7 @@ def test_filter_rows_for_block(generate_id_column):
     if generate_id_column:
         # Test with struct ID column (generate_id_column)
         config = CheckpointConfig(
-            generate_id_column="row_id",
+            generate_id_column=GENERATED_ID_COL,
             checkpoint_path=checkpoint_path,
         )
 
@@ -995,7 +1019,7 @@ def test_filter_rows_for_block(generate_id_column):
 
         block = pyarrow.table(
             {
-                "row_id": string_data,
+                GENERATED_ID_COL: string_data,
                 "data": [str(i) for i in range(6)],
             }
         )
@@ -1007,10 +1031,10 @@ def test_filter_rows_for_block(generate_id_column):
             create_string_test_data(0, "/data/file2.parquet"),
         ]
 
-        chunk1 = pyarrow.table({"row_id": [checkpointed_string_data[0]]})
-        chunk2 = pyarrow.table({"row_id": [checkpointed_string_data[1]]})
+        chunk1 = pyarrow.table({GENERATED_ID_COL: [checkpointed_string_data[0]]})
+        chunk2 = pyarrow.table({GENERATED_ID_COL: [checkpointed_string_data[1]]})
         checkpointed_ids = pyarrow.concat_tables([chunk1, chunk2])
-        assert len(checkpointed_ids["row_id"].chunks) == 2
+        assert len(checkpointed_ids[GENERATED_ID_COL].chunks) == 2
 
         # Expected: keep row_id=0,2 from file1.parquet and row_id=1,2 from file2.parquet
         expected_string_data = [
@@ -1022,34 +1046,34 @@ def test_filter_rows_for_block(generate_id_column):
 
         expected_block = pyarrow.table(
             {
-                "row_id": expected_string_data,
+                GENERATED_ID_COL: expected_string_data,
                 "data": ["0", "2", "4", "5"],
             }
         )
     else:
         # Test with simple ID column
         config = CheckpointConfig(
-            id_column="id",
+            id_column=ID_COL,
             checkpoint_path=checkpoint_path,
         )
 
         # Create a mock block.
         block = pyarrow.table(
             {
-                "id": list(range(10)),
+                ID_COL: list(range(10)),
                 "data": [str(i) for i in range(10)],
             }
         )
         # Create a mock checkpointed_ids with multiple chunks.
-        chunk1 = pyarrow.table({"id": [1, 2, 4]})
-        chunk2 = pyarrow.table({"id": [6, 8, 9, 11]})
-        chunk3 = pyarrow.table({"id": [12, 13]})
+        chunk1 = pyarrow.table({ID_COL: [1, 2, 4]})
+        chunk2 = pyarrow.table({ID_COL: [6, 8, 9, 11]})
+        chunk3 = pyarrow.table({ID_COL: [12, 13]})
         checkpointed_ids = pyarrow.concat_tables([chunk1, chunk2, chunk3])
-        assert len(checkpointed_ids["id"].chunks) == 3
+        assert len(checkpointed_ids[ID_COL].chunks) == 3
 
         expected_block = pyarrow.table(
             {
-                "id": [0, 3, 5, 7],
+                ID_COL: [0, 3, 5, 7],
                 "data": ["0", "3", "5", "7"],
             }
         )
@@ -1058,6 +1082,63 @@ def test_filter_rows_for_block(generate_id_column):
     filter_instance = BatchBasedCheckpointFilter(config)
     filtered_block = filter_instance.filter_rows_for_block(block, checkpointed_ids)
     assert filtered_block.equals(expected_block)
+
+
+@pytest.mark.parametrize("generate_id_column", [False, True])
+def test_checkpoint_restore_after_full_execution(
+    ray_start_10_cpus_shared,
+    tmp_path,
+    generate_sample_data_parquet,
+    checkpoint_path,
+    generate_id_column,
+):
+    """Test checkpoint restore after full execution of data pipeline. This is
+    done by retaining the checkpoint metadata files with
+    delete_checkpoint_on_success=False.
+    """
+
+    def run_simple_pipeline(
+        checkpoint_config: CheckpointConfig, input_path: str, output_path: str
+    ) -> int:
+        """Run a simple pipeline with checkpointing."""
+        ctx = DataContext.get_current()
+        ctx.checkpoint_config = checkpoint_config
+        ctx.checkpoint_enabled_override = False
+        ds = ray.data.read_parquet(input_path)
+        ds.write_parquet(output_path)
+        return ds.count()
+
+    # Create test paths
+    input_data_path = generate_sample_data_parquet()
+    data_output_path = str(tmp_path / "output")
+
+    # Create checkpoint config
+    checkpoint_config = CheckpointConfig(
+        generate_id_column=GENERATED_ID_COL if generate_id_column else None,
+        id_column=None if generate_id_column else ID_COL,
+        checkpoint_path=checkpoint_path,
+        override_backend=CheckpointBackend.FILE_STORAGE,
+        delete_checkpoint_on_success=False,
+    )
+
+    # First run: create checkpoint
+    num_rows_first = run_simple_pipeline(
+        checkpoint_config, input_data_path, data_output_path
+    )
+    assert (
+        num_rows_first == SAMPLE_DATA_NUM_ROWS
+    ), f"Expected {SAMPLE_DATA_NUM_ROWS} rows, got {num_rows_first}"
+
+    # Check if checkpoint files were created
+    assert os.path.exists(checkpoint_path), "No checkpoint directory created!"
+
+    # Second run: should use checkpoint
+    num_rows_second = run_simple_pipeline(
+        checkpoint_config, input_data_path, data_output_path
+    )
+    assert (
+        num_rows_second == SAMPLE_DATA_NUM_ROWS
+    ), f"Expected {SAMPLE_DATA_NUM_ROWS} rows, got {num_rows_second}"
 
 
 if __name__ == "__main__":

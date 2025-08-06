@@ -12,6 +12,7 @@ from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 from ray.data.block import Block, BlockAccessor, DataBatch
 from ray.data.datasource.path_util import _unwrap_protocol
 from ray.types import ObjectRef
+from ray.data import DataContext
 
 
 logger = logging.getLogger(__name__)
@@ -100,13 +101,17 @@ class BatchBasedCheckpointFilter(CheckpointFilter):
         """Load checkpointed ids as a sorted block."""
         start_t = time.time()
 
+        # Override checkpointing here since we are loading the checkpoint metadata and should not generate ID column.
+        # TODO: Clean way to do this would be to introduce per Op config [https://github.com/ray-project/ray/issues/54520]
+        data_context = DataContext.get_current()
+        if self.generate_id_column:
+            data_context.checkpoint_enabled_override = True
+
         checkpoint_ds = (
             ray.data.read_parquet(self.checkpoint_path, filesystem=self.filesystem)
             .sort(self.id_column)  # Sort the IDs, as filter will use binary search.
             .repartition(1)
         )
-        # Need to reset the checkpoint config from the checkpoint dataset.
-        checkpoint_ds.context.checkpoint_config = None
 
         ref_bundles: List[RefBundle] = list(checkpoint_ds.iter_internal_ref_bundles())
         assert len(ref_bundles) == 1

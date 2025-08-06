@@ -2,6 +2,7 @@ from typing import Union, Iterable
 import urllib.parse
 
 import pyarrow as pa
+import numpy as np
 
 from ray.anyscale.data.checkpoint.checkpoint_filter import (
     BatchBasedCheckpointFilter,
@@ -91,8 +92,9 @@ def get_generated_id_column(
         PyArrow StringArray with row ID strings
     """
     # Create string IDs in format: "/path/to/file/row_id"
-    row_id_strings = [f"{path}/{current_row_offset + i}" for i in range(num_rows)]
-
+    row_ids = np.arange(current_row_offset, current_row_offset + num_rows).astype(str)
+    full_prefix = f"{path}/"
+    row_id_strings = np.char.add(full_prefix, row_ids)
     return pa.array(row_id_strings, type=pa.string())
 
 

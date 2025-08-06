@@ -129,7 +129,11 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
 
         # Check if ID generation is requested via checkpoint config
         self._generate_id_column = None
-        if ctx.checkpoint_config and ctx.checkpoint_config.generate_id_column:
+        if (
+            ctx.checkpoint_config
+            and ctx.checkpoint_config.generate_id_column
+            and not ctx.checkpoint_enabled_override
+        ):
             self._generate_id_column = ctx.checkpoint_config.generate_id_column
 
     def read_files(
