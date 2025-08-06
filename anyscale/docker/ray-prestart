@@ -55,18 +55,20 @@ if [[ ! -f "${ANYSCALE_INLINED_RAY_OPT}" ]]; then
     fi
 fi
 
-readonly SERVICE_SOCK=/tmp/anyscale/anyscaled/sockets/dataplane_service.sock
-
-if [[ ! -S "${SERVICE_SOCK}" ]]; then
-    echo "Dataplane service socket not found: ${SERVICE_SOCK}"
-    exit 1
-fi
-
 # Check if the site package directory owner is root
 if [[ $(stat -c '%U' "${ANYSCALE_RAY_SITE_PKG_DIR}") == "root" ]]; then
     SUDO=("sudo")
 else
     SUDO=()
+fi
+
+readonly SERVICE_SOCK=/tmp/anyscale/anyscaled/sockets/dataplane_service.sock
+
+# Check the injection availability first, before removing existing ray
+# directories in site-packages.
+if [[ ! -S "${SERVICE_SOCK}" && ! -f "${ANYSCALE_INLINED_RAY_OPT}" ]]; then
+    echo "Dataplane service socket not found: ${SERVICE_SOCK}"
+    exit 1
 fi
 
 "${SUDO[@]}" rm -rf \
