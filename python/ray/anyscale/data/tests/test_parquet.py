@@ -23,7 +23,7 @@ def checkpoint_config_fixture():
     """Fixture to set up and clean up checkpoint config.
 
     We set CheckpointConfig here because the include_row_id feature currently can only
-    be enabled with CheckpointConfig.generate_id_column. If we expose a new API for
+    be enabled with CheckpointConfig.generated_id_column. If we expose a new API for
     read_parquet, we should update this fixture.
 
     """
@@ -31,10 +31,10 @@ def checkpoint_config_fixture():
     original_config = ctx.checkpoint_config
 
     def _setup_checkpoint_config(
-        generate_id_column="row_id", checkpoint_path="/tmp/checkpoint"
+        generated_id_column="row_id", checkpoint_path="/tmp/checkpoint"
     ):
         ctx.checkpoint_config = CheckpointConfig(
-            generate_id_column=generate_id_column, checkpoint_path=checkpoint_path
+            generated_id_column=generated_id_column, checkpoint_path=checkpoint_path
         )
         return ctx.checkpoint_config
 
@@ -704,7 +704,7 @@ def test_read_parquet_with_columns_selectivity(
 
 
 @pytest.mark.parametrize(
-    "test_data,generate_id_column,read_kwargs,rename_columns,expected_error_pattern,test_description",
+    "test_data,generated_id_column,read_kwargs,rename_columns,expected_error_pattern,test_description",
     [
         # Collision with existing schema column
         (
@@ -712,7 +712,7 @@ def test_read_parquet_with_columns_selectivity(
             "row_id",
             {},
             None,
-            "generate_id_column='row_id' conflicts with an existing column",
+            "generated_id_column='row_id' conflicts with an existing column",
             "collision with existing Parquet column",
         ),
         # Collision with columns list
@@ -721,7 +721,7 @@ def test_read_parquet_with_columns_selectivity(
             "row_id",
             {"columns": ["one", "two", "row_id"]},
             None,
-            "generate_id_column='row_id' conflicts with a column in the columns list",
+            "generated_id_column='row_id' conflicts with a column in the columns list",
             "collision with explicit columns list",
         ),
         # Collision with renamed column (target name)
@@ -730,7 +730,7 @@ def test_read_parquet_with_columns_selectivity(
             "renamed_col",
             {},
             {"one": "renamed_col"},
-            "generate_id_column='renamed_col' conflicts with a renamed column",
+            "generated_id_column='renamed_col' conflicts with a renamed column",
             "collision with renamed column target name",
         ),
         # Collision with column being renamed (original name)
@@ -739,7 +739,7 @@ def test_read_parquet_with_columns_selectivity(
             "one",
             {},
             {"one": "renamed_col"},
-            "generate_id_column='one' conflicts with a column that will be renamed",
+            "generated_id_column='one' conflicts with a column that will be renamed",
             "collision with column being renamed",
         ),
     ],
@@ -750,19 +750,19 @@ def test_parquet_generated_row_id_collisions(
     checkpoint_config_fixture,
     simple_parquet_file,
     test_data,
-    generate_id_column,
+    generated_id_column,
     read_kwargs,
     rename_columns,
     expected_error_pattern,
     test_description,
 ):
-    """Test that generate_id_column raises appropriate errors when it collides with various column scenarios."""
+    """Test that generated_id_column raises appropriate errors when it collides with various column scenarios."""
 
     # Create Parquet file with test data
     simple_parquet_file(test_data)
 
     # Set up checkpoint config
-    checkpoint_config_fixture(generate_id_column=generate_id_column)
+    checkpoint_config_fixture(generated_id_column=generated_id_column)
 
     # Read Parquet and apply any additional operations
     ds = ray.data.read_parquet(tmp_path, **read_kwargs)
@@ -782,7 +782,7 @@ def test_parquet_generated_row_id_with_filter_pushdown(
     checkpoint_config_fixture,
     multi_file_parquet_dataset,
 ):
-    """Verify row IDs when filter pushdown is applied with generate_id_column."""
+    """Verify row IDs when filter pushdown is applied with generated_id_column."""
     import pyarrow as pa
     import ray
 
@@ -799,8 +799,8 @@ def test_parquet_generated_row_id_with_filter_pushdown(
     expected_filtered_df = all_df[all_df["value"] < 10].reset_index(drop=True)
     expected_count = len(expected_filtered_df)
 
-    # Set up checkpoint config with generate_id_column
-    checkpoint_config_fixture(generate_id_column="row_id")
+    # Set up checkpoint config with generated_id_column
+    checkpoint_config_fixture(generated_id_column="row_id")
 
     # Read with row IDs and apply filter
     ds_filtered = ray.data.read_parquet(data_path).filter(expr=filter_condition)
@@ -849,17 +849,17 @@ def test_parquet_generated_row_id_with_filter_pushdown(
     )
 
 
-def test_parquet_read_with_generate_id_column_checkpoint_config(
+def test_parquet_read_with_generated_id_column_checkpoint_config(
     ray_start_regular_shared, tmp_path, checkpoint_config_fixture, large_parquet_dataset
 ):
-    """Test reading Parquet files with generate_id_column from checkpoint config."""
+    """Test reading Parquet files with generated_id_column from checkpoint config."""
     import pyarrow as pa
 
     # Create large dataset with uneven row distribution
     data_path, file_info, total_rows = large_parquet_dataset()
 
-    # Set up checkpoint config with generate_id_column
-    checkpoint_config_fixture(generate_id_column="row_id")
+    # Set up checkpoint config with generated_id_column
+    checkpoint_config_fixture(generated_id_column="row_id")
 
     # Read all files with row IDs
     ds = ray.data.read_parquet(data_path)

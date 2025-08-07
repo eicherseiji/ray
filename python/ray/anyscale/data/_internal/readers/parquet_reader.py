@@ -128,13 +128,13 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self._sampled_batch_size = None
 
         # Check if ID generation is requested via checkpoint config
-        self._generate_id_column = None
+        self._generated_id_column = None
         if (
             ctx.checkpoint_config
-            and ctx.checkpoint_config.generate_id_column
+            and ctx.checkpoint_config.generated_id_column
             and not ctx.checkpoint_enabled_override
         ):
-            self._generate_id_column = ctx.checkpoint_config.generate_id_column
+            self._generated_id_column = ctx.checkpoint_config.generated_id_column
 
     def read_files(
         self,
@@ -163,32 +163,32 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
 
         fragments = self._create_fragments(paths, filesystem=filesystem)
 
-        # Check for column name collision with generate_id_column
-        if self._generate_id_column:
+        # Check for column name collision with generated_id_column
+        if self._generated_id_column:
             # Check collision with columns_rename mapping
             if columns_rename is not None:
-                if self._generate_id_column in columns_rename:
+                if self._generated_id_column in columns_rename:
                     raise ValueError(
-                        f"generate_id_column='{self._generate_id_column}' conflicts with a column "
+                        f"generated_id_column='{self._generated_id_column}' conflicts with a column "
                         f"that will be renamed (original name)"
                     )
-                if self._generate_id_column in columns_rename.values():
+                if self._generated_id_column in columns_rename.values():
                     raise ValueError(
-                        f"generate_id_column='{self._generate_id_column}' conflicts with a renamed "
+                        f"generated_id_column='{self._generated_id_column}' conflicts with a renamed "
                         f"column (target name)"
                     )
 
             existing_columns = fragments[0].physical_schema.names or columns
 
             # Check collision with existing columns
-            if self._generate_id_column in existing_columns:
-                if columns is not None and self._generate_id_column in columns:
+            if self._generated_id_column in existing_columns:
+                if columns is not None and self._generated_id_column in columns:
                     raise ValueError(
-                        f"generate_id_column='{self._generate_id_column}' conflicts with a column in the columns list"
+                        f"generated_id_column='{self._generated_id_column}' conflicts with a column in the columns list"
                     )
                 else:
                     raise ValueError(
-                        f"generate_id_column='{self._generate_id_column}' conflicts with an existing column"
+                        f"generated_id_column='{self._generated_id_column}' conflicts with an existing column"
                     )
 
         # Users can pass both data columns and partition columns in the 'columns'
@@ -456,9 +456,9 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             table = pa.Table.from_batches([batch])
 
             # Add row IDs if requested
-            if self._generate_id_column:
+            if self._generated_id_column:
                 table = table.append_column(
-                    self._generate_id_column,
+                    self._generated_id_column,
                     get_generated_id_column(path, current_row_offset, table.num_rows),
                 )
                 current_row_offset += table.num_rows
@@ -545,8 +545,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             )
 
         # Add row ID column to schema if requested
-        if self._generate_id_column:
-            row_id_field = pa.field(self._generate_id_column, GENERATED_ID_COLUMN_TYPE)
+        if self._generated_id_column:
+            row_id_field = pa.field(self._generated_id_column, GENERATED_ID_COLUMN_TYPE)
             schema = pa.schema(list(schema) + [row_id_field])
 
         return schema

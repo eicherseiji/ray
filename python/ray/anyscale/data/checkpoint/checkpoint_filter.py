@@ -30,7 +30,7 @@ class CheckpointFilter(abc.ABC):
             self.ckpt_config.checkpoint_path
         )
         self.id_column = self.ckpt_config.id_column
-        self.generate_id_column = self.ckpt_config.generate_id_column
+        self.generated_id_column = self.ckpt_config.generated_id_column
         self.filesystem = self.ckpt_config.filesystem
         self.filter_num_threads = self.ckpt_config.filter_num_threads
 
@@ -104,7 +104,7 @@ class BatchBasedCheckpointFilter(CheckpointFilter):
         # Override checkpointing here since we are loading the checkpoint metadata and should not generate ID column.
         # TODO: Clean way to do this would be to introduce per Op config [https://github.com/ray-project/ray/issues/54520]
         data_context = DataContext.get_current()
-        if self.generate_id_column:
+        if self.generated_id_column:
             data_context.checkpoint_enabled_override = True
 
         checkpoint_ds = (
@@ -172,7 +172,7 @@ class BatchBasedCheckpointFilter(CheckpointFilter):
 
         def filter_with_ckpt_chunk(ckpt_chunk):
             # Convert checkpoint chunk to numpy for fast search.
-            if not self.generate_id_column:
+            if not self.generated_id_column:
                 ckpt_ids = ckpt_chunk.to_numpy(zero_copy_only=True)
             else:
                 # Generated row IDs are GENERATED_ID_COLUMN_TYPE, not ints, so

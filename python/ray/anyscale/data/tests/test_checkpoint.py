@@ -178,7 +178,7 @@ def _read_batch_file_ids(file_paths: List[str], id_column: str, fs) -> List[int]
 
 def read_ids_from_checkpoint_files(config: CheckpointConfig) -> List[Union[int, str]]:
     """Reads the checkpoint files and returns a sorted list of IDs which have been checkpointed."""
-    is_generated_id = config.generate_id_column is not None
+    is_generated_id = config.generated_id_column is not None
 
     # Row-based backends
     if config.backend in (
@@ -313,44 +313,44 @@ class TestCheckpointConfig:
         assert config.filesystem is fs
         assert config.backend is CheckpointBackend.CLOUD_OBJECT_STORAGE
 
-    def test_generate_id_column_default_column(self, checkpoint_path):
-        """Test CheckpointConfig with id_column missing and no generate_id_column provided."""
-        # id_column is None, generate_id_column is None - should raise error
+    def test_generated_id_column_default_column(self, checkpoint_path):
+        """Test CheckpointConfig with id_column missing and no generated_id_column provided."""
+        # id_column is None, generated_id_column is None - should raise error
         with pytest.raises(
             InvalidCheckpointingConfig,
-            match="Either `id_column` or `generate_id_column` must be provided",
+            match="Either `id_column` or `generated_id_column` must be provided",
         ):
             CheckpointConfig(
                 None,
                 checkpoint_path,
             )
 
-    def test_generate_id_column_custom_column(self, checkpoint_path):
-        """Test CheckpointConfig with id_column missing, but with user provided generate_id_column."""
-        # id_column is None, generate_id_column is "custom_id"
+    def test_generated_id_column_custom_column(self, checkpoint_path):
+        """Test CheckpointConfig with id_column missing, but with user provided generated_id_column."""
+        # id_column is None, generated_id_column is "custom_id"
         config = CheckpointConfig(
             None,
             checkpoint_path,
-            generate_id_column="custom_id",
+            generated_id_column="custom_id",
         )
         assert config.id_column == "custom_id"
-        assert config.generate_id_column == "custom_id"
+        assert config.generated_id_column == "custom_id"
 
-    def test_generate_id_column_with_existing_id_column(self, checkpoint_path):
-        """Test CheckpointConfig with both id_column and generate_id_column provided."""
+    def test_generated_id_column_with_existing_id_column(self, checkpoint_path):
+        """Test CheckpointConfig with both id_column and generated_id_column provided."""
         with pytest.raises(
             InvalidCheckpointingConfig,
-            match="Cannot specify both `id_column` and `generate_id_column`",
+            match="Cannot specify both `id_column` and `generated_id_column`",
         ):
             CheckpointConfig(
                 "existing_id",
                 checkpoint_path,
-                generate_id_column="generated_id",
+                generated_id_column="generated_id",
             )
 
 
 @pytest.mark.parametrize("read_code_path", ["runtime", "oss_fallback"])
-@pytest.mark.parametrize("generate_id_column", [None, "row_id"])
+@pytest.mark.parametrize("generated_id_column", [None, "row_id"])
 @pytest.mark.parametrize(
     "backend,fs,data_path",
     [
@@ -385,7 +385,7 @@ def test_checkpoint(
     backend,
     fs,
     data_path,
-    generate_id_column,
+    generated_id_column,
 ):
     class TestActor:
         def __init__(self):
@@ -397,9 +397,9 @@ def test_checkpoint(
     ctx = ray.data.DataContext.get_current()
     ckpt_path = os.path.join(data_path, "test_checkpoint_output_files")
 
-    if generate_id_column is not None:
+    if generated_id_column is not None:
         ctx.checkpoint_config = CheckpointConfig(
-            generate_id_column=generate_id_column,
+            generated_id_column=generated_id_column,
             checkpoint_path=ckpt_path,
             override_filesystem=fs,
             override_backend=backend,
@@ -425,15 +425,15 @@ def test_checkpoint(
     ds = ds.map_batches(TestActor, concurrency=1)
     data_output_path = os.path.join(data_path, "output")
 
-    if generate_id_column is not None:
-        # For CSV datasets with generate_id_column, the read operation fails with an AssertionError
+    if generated_id_column is not None:
+        # For CSV datasets with generated_id_column, the read operation fails with an AssertionError
         # because CSV datasources don't support auto-generated row IDs
         with pytest.raises(
             AssertionError,
-            match="For checkpointing with `generate_id_column`, .* operator must use a ParquetReader",
+            match="For checkpointing with `generated_id_column`, .* operator must use a ParquetReader",
         ):
             ds.write_parquet(data_output_path, filesystem=fs)
-        pytest.skip("`generate_id_column` is not supported for CSV datasets")
+        pytest.skip("`generated_id_column` is not supported for CSV datasets")
     else:
         ds.write_parquet(data_output_path, filesystem=fs)
 
@@ -455,7 +455,7 @@ def test_checkpoint(
 
 
 @pytest.mark.parametrize("read_code_path", ["runtime", "oss_fallback"])
-@pytest.mark.parametrize("generate_id_column", [None, "row_id"])
+@pytest.mark.parametrize("generated_id_column", [None, "row_id"])
 @pytest.mark.parametrize(
     "backend,fs,data_path",
     [
@@ -490,7 +490,7 @@ def test_full_dataset_executed_for_non_write(
     backend,
     fs,
     data_path,
-    generate_id_column,
+    generated_id_column,
 ):
     """Tests that for an already fully checkpointed Dataset,
     calling `schema()` and `count()` should not skip checkpointing
@@ -500,9 +500,9 @@ def test_full_dataset_executed_for_non_write(
     ctx = ray.data.DataContext.get_current()
     ckpt_path = os.path.join(data_path, "test_checkpoint_output_files")
 
-    if generate_id_column is not None:
+    if generated_id_column is not None:
         ctx.checkpoint_config = CheckpointConfig(
-            generate_id_column=generate_id_column,
+            generated_id_column=generated_id_column,
             checkpoint_path=ckpt_path,
             override_filesystem=fs,
             override_backend=backend,
@@ -517,7 +517,9 @@ def test_full_dataset_executed_for_non_write(
 
     parquet_dir = generate_sample_data_parquet()
 
-    error_expected = read_code_path == "oss_fallback" and generate_id_column is not None
+    error_expected = (
+        read_code_path == "oss_fallback" and generated_id_column is not None
+    )
     if read_code_path == "runtime":
         ds = ray.data.read_parquet(parquet_dir)
     elif read_code_path == "oss_fallback":
@@ -531,15 +533,15 @@ def test_full_dataset_executed_for_non_write(
 
     data_output_path = os.path.join(data_path, "output")
     if error_expected:
-        # For generate_id_column with oss_fallback, the read operation fails with an AssertionError
+        # For generated_id_column with oss_fallback, the read operation fails with an AssertionError
         # because the datasource is not a ParquetReader
         with pytest.raises(
             AssertionError,
-            match="For checkpointing with `generate_id_column`, Read operator must use a ParquetReader",
+            match="For checkpointing with `generated_id_column`, Read operator must use a ParquetReader",
         ):
             ds.write_parquet(data_output_path, filesystem=fs)
         pytest.skip(
-            "`generate_id_column` is not supported for Parquet datasets with OSS fallback"
+            "`generated_id_column` is not supported for Parquet datasets with OSS fallback"
         )
     else:
         ds.write_parquet(data_output_path, filesystem=fs)
@@ -552,13 +554,13 @@ def test_full_dataset_executed_for_non_write(
     # Check that when re-running a dataset which has already been completely
     # checkpointed, it does not skip any rows during `schema()` and `count()` calls.
     assert ds2.schema() == schema_before_write
-    if generate_id_column is not None:
-        assert generate_id_column in ds2.schema().names
+    if generated_id_column is not None:
+        assert generated_id_column in ds2.schema().names
     assert ds2.count() == count_before_write
 
 
 @pytest.mark.parametrize(
-    "ds_factory,generate_id_column",
+    "ds_factory,generated_id_column",
     [
         (lazy_fixture("generate_sample_data_parquet"), None),
         (lazy_fixture("generate_sample_data_parquet"), "generated_id"),
@@ -597,7 +599,7 @@ def test_recovery_skips_checkpointed_rows(
     backend,
     fs,
     data_path,
-    generate_id_column,
+    generated_id_column,
 ):
     """Tests that for a Dataset which fails partway and is recovered,
     it skips rows which have already been checkpointed."""
@@ -609,9 +611,9 @@ def test_recovery_skips_checkpointed_rows(
     # Ensure checkpoint directory exists
     os.makedirs(ckpt_path, exist_ok=True)
 
-    if generate_id_column is not None:
+    if generated_id_column is not None:
         ctx.checkpoint_config = CheckpointConfig(
-            generate_id_column=generate_id_column,
+            generated_id_column=generated_id_column,
             checkpoint_path=ckpt_path,
             override_filesystem=fs,
             override_backend=backend,
@@ -713,7 +715,7 @@ def test_recovery_skips_checkpointed_rows(
     else:
         # For row-based backends, check that all rows are checkpointed
         checkpointed_ids = read_ids_from_checkpoint_files(ctx.checkpoint_config)
-        if generate_id_column is not None:
+        if generated_id_column is not None:
             # For generated IDs, we expect string IDs with absolute paths
             # The exact paths depend on the temporary directory, so we just check the count
             assert len(checkpointed_ids) == max_num_items
@@ -733,8 +735,8 @@ def test_recovery_skips_checkpointed_rows(
     actual_output = sorted([row[id_col] for row in ds_readback.iter_rows()])
 
     # Handle both integer and string ID cases
-    if generate_id_column is not None:
-        # For generate_id_column, expect string IDs with absolute path like
+    if generated_id_column is not None:
+        # For generated_id_column, expect string IDs with absolute path like
         # '/tmp/.../sample_data.parquet/0'
         # Get the actual path from the dataset to construct expected IDs
         actual_paths = [row[id_col] for row in ds_readback.iter_rows()]
@@ -948,15 +950,15 @@ def create_string_test_data(row_id: int, path: str) -> str:
     return f"{path}/{row_id}"
 
 
-@pytest.mark.parametrize("generate_id_column", [False, True])
+@pytest.mark.parametrize("generated_id_column", [False, True])
 def test_write_block_checkpoint_with_pandas_df(
-    restore_data_context, tmp_path, generate_id_column
+    restore_data_context, tmp_path, generated_id_column
 ):
     ctx = ray.data.DataContext.get_current()
 
-    if generate_id_column:
+    if generated_id_column:
         ctx.checkpoint_config = CheckpointConfig(
-            generate_id_column=GENERATED_ID_COL,
+            generated_id_column=GENERATED_ID_COL,
             checkpoint_path=str(tmp_path),
         )
         # For struct IDs, we need to create a DataFrame with struct data
@@ -987,22 +989,22 @@ def test_write_block_checkpoint_with_pandas_df(
     checkpoint_filename = os.listdir(tmp_path)[0]
     checkpoint_path = tmp_path / checkpoint_filename
     written_ids = pd.read_parquet(checkpoint_path)[
-        GENERATED_ID_COL if generate_id_column else ID_COL
+        GENERATED_ID_COL if generated_id_column else ID_COL
     ].tolist()
     assert written_ids == expected_ids
 
 
-@pytest.mark.parametrize("generate_id_column", [False, True])
-def test_filter_rows_for_block(generate_id_column):
+@pytest.mark.parametrize("generated_id_column", [False, True])
+def test_filter_rows_for_block(generated_id_column):
     """Test BatchBasedCheckpointFilter.filter_rows_for_block."""
 
     # Common test setup
     checkpoint_path = "/mock/path"
 
-    if generate_id_column:
-        # Test with struct ID column (generate_id_column)
+    if generated_id_column:
+        # Test with struct ID column (generated_id_column)
         config = CheckpointConfig(
-            generate_id_column=GENERATED_ID_COL,
+            generated_id_column=GENERATED_ID_COL,
             checkpoint_path=checkpoint_path,
         )
 
@@ -1084,13 +1086,13 @@ def test_filter_rows_for_block(generate_id_column):
     assert filtered_block.equals(expected_block)
 
 
-@pytest.mark.parametrize("generate_id_column", [False, True])
+@pytest.mark.parametrize("generated_id_column", [False, True])
 def test_checkpoint_restore_after_full_execution(
     ray_start_10_cpus_shared,
     tmp_path,
     generate_sample_data_parquet,
     checkpoint_path,
-    generate_id_column,
+    generated_id_column,
 ):
     """Test checkpoint restore after full execution of data pipeline. This is
     done by retaining the checkpoint metadata files with
@@ -1114,8 +1116,8 @@ def test_checkpoint_restore_after_full_execution(
 
     # Create checkpoint config
     checkpoint_config = CheckpointConfig(
-        generate_id_column=GENERATED_ID_COL if generate_id_column else None,
-        id_column=None if generate_id_column else ID_COL,
+        generated_id_column=GENERATED_ID_COL if generated_id_column else None,
+        id_column=None if generated_id_column else ID_COL,
         checkpoint_path=checkpoint_path,
         override_backend=CheckpointBackend.FILE_STORAGE,
         delete_checkpoint_on_success=False,

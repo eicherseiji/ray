@@ -26,10 +26,10 @@ def plan_read_files_op_with_checkpoint_filter(
 ) -> PhysicalOperator:
     if (
         data_context.checkpoint_config is not None
-        and data_context.checkpoint_config.generate_id_column
+        and data_context.checkpoint_config.generated_id_column
     ):
         assert isinstance(op.reader, ParquetReader), (
-            f"For checkpointing with `generate_id_column`, ReadFiles operator must use a "
+            f"For checkpointing with `generated_id_column`, ReadFiles operator must use a "
             f"ParquetReader, but got {type(op.reader)}"
         )
 

@@ -36,18 +36,18 @@ benchmark = Benchmark()
 
 assert (
     len(sys.argv) == 3
-), "Usage: python run_checkpoint_benchmark.py [small|large] [default_id|generate_id_column]"
+), "Usage: python run_checkpoint_benchmark.py [small|large] [default_id|generated_id_column]"
 scale = sys.argv[1]
 assert scale in ["small", "large"], scale
 id_column = sys.argv[2]
-assert id_column in ["default_id", "generate_id_column"], id_column
-if id_column == "generate_id_column":
+assert id_column in ["default_id", "generated_id_column"], id_column
+if id_column == "generated_id_column":
     id_column = None
-    generate_id_column = "generated_id"
+    generated_id_column = "generated_id"
 else:
     assert id_column == "default_id", id_column
     id_column = "id"
-    generate_id_column = None
+    generated_id_column = None
 
 INPUT_DATA_PREFIX = (
     "s3://ray-benchmark-data-internal-us-west-2/ray-data/checkpoint-benchmark"
@@ -80,13 +80,13 @@ for backend in BACKENDS:
     elif backend == "FILE_STORAGE":
         checkpoint_config = CheckpointConfig(
             id_column=id_column,
-            generate_id_column=generate_id_column,
+            generated_id_column=generated_id_column,
             checkpoint_path=f"{CHECKPOINT_DIR_FILE_STORAGE}/{path_suffix}",
         )
     elif backend == "CLOUD_OBJECT_STORAGE":
         checkpoint_config = CheckpointConfig(
             id_column=id_column,
-            generate_id_column=generate_id_column,
+            generated_id_column=generated_id_column,
             checkpoint_path=f"{CHECKPOINT_DIR_CLOUD_OBJECT_STORAGE}/{path_suffix}",
         )
     else:
