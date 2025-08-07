@@ -2247,7 +2247,7 @@ Status CoreWorker::CreateActor(const RayFunction &function,
       }
     }
     if (actor_restart_warning) {
-      RAY_LOG(ERROR)
+      RAY_LOG_ONCE_PER_PROCESS(ERROR)
           << "Actor " << (actor_name.empty() ? "" : (actor_name + " "))
           << "with class name: '" << function.GetFunctionDescriptor()->ClassName()
           << "' and ID: '" << task_spec.ActorCreationId()
