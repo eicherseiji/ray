@@ -234,7 +234,7 @@ steps:
       - rayturbo-image
       - rayturbo-image-aarch64
       - rayturbo-llm-image
-      - rayturbo-min-image
+      - rayturbo-slim-image
       - rayturbo-ml-image
     key: check-rayturbo-site-pkg
     tags: docker
