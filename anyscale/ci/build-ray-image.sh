@@ -84,6 +84,8 @@ if [[ "${IS_SLIM}" == "1" ]]; then
         IMG_TYPE_CODE="cu124"
     elif [[ "${IMG_TYPE}" == "cu12.5.1" ]]; then
         IMG_TYPE_CODE="cu125"
+    elif [[ "${IMG_TYPE}" == "cu12.6.3" ]]; then
+        IMG_TYPE_CODE="cu126"
     elif [[ "${IMG_TYPE}" == "cu12.8.1" ]]; then
         IMG_TYPE_CODE="cu128"
     else
@@ -105,6 +107,8 @@ else
         IMG_TYPE_CODE="cu124"
     elif [[ "${IMG_TYPE}" == "cu12.5.1-cudnn" ]]; then
         IMG_TYPE_CODE="cu125"
+    elif [[ "${IMG_TYPE}" == "cu12.6.3-cudnn" ]]; then
+        IMG_TYPE_CODE="cu126"
     elif [[ "${IMG_TYPE}" == "cu12.8.1-cudnn" ]]; then
         IMG_TYPE_CODE="cu128"
     else
