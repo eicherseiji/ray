@@ -17,6 +17,9 @@ _JOIN_TYPE_TO_POLARS_JOIN_TYPE_MAP = {
     JoinType.LEFT_OUTER: "left",
     JoinType.RIGHT_OUTER: "right",
     JoinType.FULL_OUTER: "full",
+    # Add semi/anti mappings (Polars semantics are left-semi/left-anti)
+    JoinType.LEFT_SEMI: "semi",
+    JoinType.LEFT_ANTI: "anti",
 }
 
 logger = logging.getLogger(__name__)
@@ -62,9 +65,10 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
             left_columns_suffix=left_columns_suffix,
             right_columns_suffix=right_columns_suffix,
         )
-        assert join_type in _JOIN_TYPE_TO_POLARS_JOIN_TYPE_MAP, (
+        join_types = list(JoinType)
+        assert join_type in join_types, (
             f"Join type is not currently supported (got: {join_type}; "  # noqa: C416
-            f"supported: {[jt for jt in JoinType]})"  # noqa: C416
+            f"supported: {join_types})"  # noqa: C416
         )
 
     def finalize(self, partition_id: int) -> Block:
@@ -86,7 +90,22 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
         left_df: pl.LazyFrame = pl.from_arrow(left_seq_partition).lazy()
         right_df: pl.LazyFrame = pl.from_arrow(right_seq_partition).lazy()
 
-        polars_join_type = _JOIN_TYPE_TO_POLARS_JOIN_TYPE_MAP[self._join_type]
+        target_join_type = self._join_type
+        left_cols_suffix = self._left_columns_suffix
+        right_cols_suffix = self._right_columns_suffix
+
+        # NOTE: Polars doesn't support Right Semi/Anti joins so we have to
+        #       rotate our sides to perform corresponding Left ones
+        if target_join_type in (JoinType.RIGHT_SEMI, JoinType.RIGHT_ANTI):
+            left_df, right_df = right_df, left_df
+            left_cols_suffix, right_cols_suffix = left_cols_suffix, right_cols_suffix
+
+            if target_join_type is JoinType.RIGHT_SEMI:
+                target_join_type = JoinType.LEFT_SEMI
+            elif target_join_type is JoinType.RIGHT_ANTI:
+                target_join_type = JoinType.LEFT_ANTI
+
+        polars_join_type = _JOIN_TYPE_TO_POLARS_JOIN_TYPE_MAP[target_join_type]
 
         # https://github.com/pola-rs/polars/issues/12418 (Polars doesn't have support for left/right suffixes)
 
@@ -94,27 +113,23 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
         right_cols = set(right_df.collect_schema().names())
         collisions = (left_cols & right_cols) - set(left_on) - set(right_on)
 
-        if (
-            self._left_columns_suffix is None
-            and self._right_columns_suffix is None
-            and collisions
-        ):
+        if left_cols_suffix is None and right_cols_suffix is None and collisions:
             raise ValueError(
                 "Left and right columns suffixes cannot be both None "
                 f"(overlapping columns: {sorted(collisions)})"
             )
 
-        if self._left_columns_suffix or self._right_columns_suffix:
-            if self._left_columns_suffix:
+        if left_cols_suffix or right_cols_suffix:
+            if left_cols_suffix:
                 left_df = left_df.rename(
-                    {c: f"{c}{self._left_columns_suffix}" for c in collisions}
+                    {c: f"{c}{left_cols_suffix}" for c in collisions}
                 )
-            if self._right_columns_suffix:
+            if right_cols_suffix:
                 right_df = right_df.rename(
-                    {c: f"{c}{self._right_columns_suffix}" for c in collisions}
+                    {c: f"{c}{right_cols_suffix}" for c in collisions}
                 )
 
-        right_suffix = self._right_columns_suffix or "_right"
+        right_suffix = right_cols_suffix or "_right"
         joined = left_df.join(
             right_df,
             how=polars_join_type,
@@ -161,9 +176,9 @@ class JoinOperatorWithPolars(JoinOperator):
             right_key_columns=right_key_columns,
             join_type=join_type,
             num_partitions=num_partitions,
-            partition_size_hint=partition_size_hint,
             left_columns_suffix=left_columns_suffix,
             right_columns_suffix=right_columns_suffix,
+            partition_size_hint=partition_size_hint,
             aggregator_ray_remote_args_override=aggregator_ray_remote_args_override,
             shuffle_aggregation_type=JoiningShuffleAggregationWithPolars,
         )
