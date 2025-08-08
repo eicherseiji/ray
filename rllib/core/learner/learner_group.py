@@ -161,7 +161,18 @@ class LearnerGroup(Checkpointable):
                 if self.config.num_gpus_per_learner == 0
                 else 0
             )
-            num_gpus_per_learner = max(0, self.config.num_gpus_per_learner)
+            num_gpus_per_learner = max(
+                0,
+                self.config.num_gpus_per_learner
+                - (
+                    0.01
+                    * getattr(
+                        self.config,
+                        "num_aggregator_actors_per_inf_appo_learner",
+                        0,
+                    )
+                ),
+            )
             resources_per_learner = {
                 "CPU": num_cpus_per_learner,
                 "GPU": num_gpus_per_learner,
@@ -188,11 +199,11 @@ class LearnerGroup(Checkpointable):
 
             ray.get(
                 [
-                    worker._set_learner_index_and_placement_group.remote(
-                        learner_index=idx,
+                    w._set_learner_index_and_placement_group.remote(
+                        learner_index=i,
                         placement_group=placement_group,
                     )
-                    for idx, worker in enumerate(self._workers)
+                    for i, w in enumerate(self._workers)
                 ]
             )
 
