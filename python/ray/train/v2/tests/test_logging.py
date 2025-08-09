@@ -15,20 +15,20 @@ from ray.train.v2.tests.util import create_dummy_run_context, create_dummy_train
 def worker_logging_fixture():
     # Save the current root logger settings
     root_logger = logging.getLogger()
-    original_handlers = root_logger.handlers[:]
+    root_original_handlers = root_logger.handlers[:]
     original_level = root_logger.level
     # Save the current train logger settings
     train_logger = logging.getLogger("ray.train")
-    original_handlers = train_logger.handlers[:]
+    train_original_handlers = train_logger.handlers[:]
     original_level = train_logger.level
     # Save the original print function
     original_print = builtins.print
     yield
     # Rest the root logger back to its original state
-    root_logger.handlers = original_handlers
+    root_logger.handlers = root_original_handlers
     root_logger.setLevel(original_level)
     # Rest the train logger back to its original state
-    train_logger.handlers = original_handlers
+    train_logger.handlers = train_original_handlers
     train_logger.setLevel(original_level)
     # Rest the print function back to its original state
     builtins.print = original_print

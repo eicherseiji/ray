@@ -76,6 +76,7 @@ class RayConfig {
  public:                                                            \
   inline type &name() { return name##_; }
 
+#include "ray/anyscale/common/ray_turbo_config_def.h"
 #include "ray/common/ray_config_def.h"
 
 /// -----------Include ray_internal_flag_def.h to define internal flags-------

@@ -942,7 +942,7 @@
         cluster_compute: tpl_gce_1x16.yaml
     - __suffix__: kuberay
       env: kuberay
-      frequency: nightly
+      frequency: manual # TODO(khluu): make kuberay tests work on rayturbo.
       cluster:
         cluster_compute: kuberay.yaml
 
