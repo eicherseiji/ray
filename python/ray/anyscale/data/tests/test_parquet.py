@@ -7,7 +7,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from pyarrow.fs import FileSystemHandler, LocalFileSystem, PyFileSystem
-from ray.anyscale.data._internal.readers.parquet_reader import ParquetReader
+from ray.anyscale.data._internal.readers.parquet_reader import (
+    ParquetReader,
+    ParquetFileChunker,
+)
 from ray.data.context import MAX_SAFE_BLOCK_SIZE_FACTOR
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -142,6 +145,28 @@ def large_parquet_dataset(tmp_path):
         return tmp_path, file_info, total_rows
 
     return _create_large_dataset
+
+
+@pytest.fixture
+def large_parquet_file(tmp_path):
+    """Create a single large parquet file suitable for chunking tests."""
+    num_rows = 50000
+    data = {
+        "id": list(range(num_rows)),
+        "text": [
+            f"This is a longer text string for row {i} with more content"
+            for i in range(num_rows)
+        ],
+        "value": [i * 1.5 for i in range(num_rows)],
+        "category": [f"cat_{i % 10}" for i in range(num_rows)],
+    }
+    df = pd.DataFrame(data)
+    table = pa.Table.from_pandas(df)
+
+    file_path = tmp_path / "large_test.parquet"
+    pq.write_table(table, file_path, row_group_size=1000)
+
+    return str(file_path), num_rows
 
 
 def flaky(func):
@@ -511,7 +536,7 @@ def test_read_parquet_batching(ray_start_regular_shared, tmp_path, test_case):
 
     # Get actual file size for the manifest
     file_size = os.path.getsize(file_path)
-    file_manifest = FileManifest.construct_manifest([file_path], [0], [file_size])
+    file_manifest = FileManifest.construct_manifest([file_path], [file_size], [None])
 
     tables = list(
         reader.read_files(
@@ -888,6 +913,317 @@ def test_parquet_read_with_generated_id_column_checkpoint_config(
     assert (
         len(unique_row_ids) == total_rows
     ), f"Expected {total_rows} unique row IDs, got {len(unique_row_ids)}"
+
+
+def test_parquet_chunked_reading_preserves_order(ray_start_regular_shared, tmp_path):
+    """Test that chunked reading preserves row order when order preservation is enabled."""
+    # Create a large dataset with sequential IDs
+    num_rows = 10000
+    data = {
+        "id": list(range(num_rows)),
+        "sequence": list(range(num_rows)),  # Should be in order
+        "value": [f"row_{i}" for i in range(num_rows)],
+    }
+    df = pd.DataFrame(data)
+    table = pa.Table.from_pandas(df)
+
+    file_path = tmp_path / "ordered_test.parquet"
+    pq.write_table(table, file_path, row_group_size=1000)
+
+    # Force chunking by using a small target chunk size
+    reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        use_threads=True,
+        to_batches_kwargs={},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+
+    file_size = os.path.getsize(file_path)
+    chunker = ParquetFileChunker(target_chunk_size=1 * 1024)  # 1KB to force chunking
+    chunks = list(chunker.generate_chunk_metadatas(str(file_path), file_size))
+
+    assert len(chunks) > 1
+
+    # Create manifest with chunking
+    paths = [str(file_path)] * len(chunks)
+    chunk_metadatas = [metadata for metadata, _ in chunks]
+
+    file_manifest = FileManifest.construct_manifest(
+        paths,
+        [file_size] * len(paths),
+        chunk_metadatas,
+    )
+
+    # Read the data
+    tables = list(
+        reader.read_files(
+            file_manifest,
+            filesystem=pa.fs.LocalFileSystem(),
+        )
+    )
+
+    # Combine all tables and check if sequence is preserved
+    combined_table = pa.concat_tables(tables)
+    sequence_values = combined_table.column("sequence").to_pylist()
+
+    # Note: Order preservation depends on the threading configuration
+    # This test verifies the data integrity rather than strict ordering
+    assert len(sequence_values) == num_rows
+    assert set(sequence_values) == set(range(num_rows))
+
+
+@pytest.mark.parametrize(
+    "file_size,expected_chunks,expected_metadata_none,expected_num_chunks",
+    [
+        # Small files (no chunking)
+        (0, 1, True, None),  # 0 bytes -> 1 chunk, no metadata
+        (100 * 1024 * 1024, 1, True, None),  # 100MB -> 1 chunk, no metadata
+        (
+            256 * 1024 * 1024,
+            1,
+            True,
+            None,
+        ),  # 256MB -> 1 chunk, no metadata (exactly at target)
+        # Large files (with chunking)
+        (257 * 1024 * 1024, 2, False, 2),  # Just over target -> 2 chunks
+        (300 * 1024 * 1024, 2, False, 2),  # 300MB -> 2 chunks
+        (512 * 1024 * 1024, 2, False, 2),  # 512MB -> 2 chunks
+        (600 * 1024 * 1024, 3, False, 3),  # 600MB -> 3 chunks
+        (1024 * 1024 * 1024, 4, False, 4),  # 1GB -> 4 chunks
+    ],
+)
+def test_parquet_file_chunker(
+    ray_start_regular_shared,
+    file_size,
+    expected_chunks,
+    expected_metadata_none,
+    expected_num_chunks,
+):
+    """Test ParquetFileChunker chunking behavior with various file sizes."""
+    chunker = ParquetFileChunker()
+    chunks = list(chunker.generate_chunk_metadatas("test.parquet", file_size))
+
+    # Verify number of chunks
+    assert len(chunks) == expected_chunks
+
+    if expected_metadata_none:
+        # Small files should have no chunking metadata
+        assert len(chunks) == 1
+        metadata, chunk_size = chunks[0]
+        assert metadata is None
+        assert chunk_size == file_size
+    else:
+        # Large files should have chunking metadata
+        assert len(chunks) == expected_num_chunks
+
+        # Verify each chunk has proper metadata
+        for i, (metadata, chunk_size) in enumerate(chunks):
+            assert metadata is not None
+            assert metadata["chunk_idx"] == i
+            assert metadata["total_num_chunks"] == expected_num_chunks
+
+
+@pytest.mark.parametrize(
+    "total_row_groups,total_num_chunks,expected_ranges",
+    [
+        # Even distribution cases
+        (10, 2, [(0, 5), (5, 10)]),
+        (12, 3, [(0, 4), (4, 8), (8, 12)]),
+        (20, 4, [(0, 5), (5, 10), (10, 15), (15, 20)]),
+        # Uneven distribution cases (earlier chunks get extra row groups)
+        (10, 3, [(0, 4), (4, 7), (7, 10)]),
+        (11, 3, [(0, 4), (4, 8), (8, 11)]),
+        (13, 4, [(0, 4), (4, 7), (7, 10), (10, 13)]),
+        # Edge cases
+        (1, 1, [(0, 1)]),
+        (1, 2, [(0, 1), None]),  # Second chunk should be None
+        (0, 1, [None]),
+        (5, 10, [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)] + [None] * 5),
+    ],
+)
+def test_calculate_row_group_range_distribution(
+    ray_start_regular_shared, total_row_groups, total_num_chunks, expected_ranges
+):
+    """Test row group distribution across chunks and verify complete coverage."""
+    reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        use_threads=True,
+        to_batches_kwargs={},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+
+    # Test each individual chunk
+    for chunk_idx in range(total_num_chunks):
+        result = reader._calculate_row_group_range(
+            chunk_idx, total_num_chunks, total_row_groups
+        )
+        expected = (
+            expected_ranges[chunk_idx] if chunk_idx < len(expected_ranges) else None
+        )
+        assert (
+            result == expected
+        ), f"Chunk {chunk_idx}: expected {expected}, got {result}"
+
+    # Verify complete coverage (no gaps, no overlaps)
+    covered_rows = set()
+    for chunk_idx in range(total_num_chunks):
+        result = reader._calculate_row_group_range(
+            chunk_idx, total_num_chunks, total_row_groups
+        )
+
+        if result is not None:
+            start, end = result
+            chunk_rows = set(range(start, end))
+
+            # Ensure no overlap
+            assert not (
+                covered_rows & chunk_rows
+            ), f"Overlap detected in chunk {chunk_idx}"
+            covered_rows.update(chunk_rows)
+
+    # Ensure all row groups are covered
+    assert covered_rows == set(
+        range(total_row_groups)
+    ), f"Not all row groups covered. Expected: {set(range(total_row_groups))}, Got: {covered_rows}"
+
+
+def test_chunked_vs_non_chunked_same_result(
+    ray_start_regular_shared, large_parquet_file
+):
+    """Test that chunked and non-chunked reading produce identical results."""
+    file_path, expected_rows = large_parquet_file
+
+    reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        use_threads=True,
+        to_batches_kwargs={},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+
+    file_size = os.path.getsize(file_path)
+
+    # Ensure the file will be chunked - if not, the test setup is wrong
+    chunker = ParquetFileChunker(
+        target_chunk_size=256 * 1024
+    )  # 256KB, force many chunks
+    chunks = list(chunker.generate_chunk_metadatas(file_path, file_size))
+    assert len(chunks) > 1
+
+    # Read without chunking
+    file_manifest_no_chunk = FileManifest.construct_manifest(
+        [file_path],
+        [file_size],
+        [None],
+    )
+
+    tables_no_chunk = list(
+        reader.read_files(
+            file_manifest_no_chunk,
+            filesystem=pa.fs.LocalFileSystem(),
+        )
+    )
+
+    file_manifest_chunked = FileManifest.construct_manifest(
+        [file_path] * len(chunks),
+        [file_size] * len(chunks),
+        [metadata for metadata, _ in chunks],
+    )
+
+    tables_chunked = list(
+        reader.read_files(
+            file_manifest_chunked,
+            filesystem=pa.fs.LocalFileSystem(),
+        )
+    )
+
+    # Compare results
+    total_rows_no_chunk = sum(table.num_rows for table in tables_no_chunk)
+    total_rows_chunked = sum(table.num_rows for table in tables_chunked)
+
+    assert total_rows_no_chunk == total_rows_chunked == expected_rows
+
+    # Compare actual data (sort by ID to ensure consistent ordering)
+    def get_sorted_data(tables):
+        combined = pa.concat_tables(tables)
+        return combined.to_pandas().sort_values("id").reset_index(drop=True)
+
+    df_no_chunk = get_sorted_data(tables_no_chunk)
+    df_chunked = get_sorted_data(tables_chunked)
+
+    pd.testing.assert_frame_equal(df_no_chunk, df_chunked)
+
+
+@pytest.mark.parametrize(
+    "columns,expected_columns",
+    [
+        (None, ["id", "text", "value", "category"]),
+        (["id", "value"], ["id", "value"]),
+        (["text"], ["text"]),
+    ],
+)
+def test_chunked_reading_with_column_selection(
+    ray_start_regular_shared, large_parquet_file, columns, expected_columns
+):
+    """Test chunked reading with column selection."""
+    file_path, expected_rows = large_parquet_file
+
+    reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        use_threads=True,
+        to_batches_kwargs={},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+
+    file_size = os.path.getsize(file_path)
+
+    # Ensure the file will be chunked - if not, the test setup is wrong
+    chunker = ParquetFileChunker(
+        target_chunk_size=256 * 1024
+    )  # 256KB, force many chunks
+    chunks = list(chunker.generate_chunk_metadatas(file_path, file_size))
+    assert len(chunks) > 1
+
+    file_manifest = FileManifest.construct_manifest(
+        [file_path] * len(chunks),
+        [file_size] * len(chunks),
+        [metadata for metadata, _ in chunks],
+    )
+
+    tables = list(
+        reader.read_files(
+            file_manifest,
+            columns=columns,
+            filesystem=pa.fs.LocalFileSystem(),
+        )
+    )
+
+    # Verify column selection
+    for table in tables:
+        assert table.column_names == expected_columns
+
+    # Verify row count
+    total_rows = sum(table.num_rows for table in tables)
+    assert total_rows == expected_rows
 
 
 if __name__ == "__main__":

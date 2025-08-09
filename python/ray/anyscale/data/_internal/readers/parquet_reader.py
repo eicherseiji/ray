@@ -1,17 +1,9 @@
 import functools
 import logging
 import os
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterator,
-    Iterable,
-    List,
-    Optional,
-    Set,
-)
+from typing import Any, Callable, Dict, Iterator, Iterable, List, Optional, Set, Tuple
 
 import numpy as np
 import pyarrow
@@ -20,6 +12,10 @@ import pyarrow.dataset
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
+)
+from ray.anyscale.data._internal.file_indexer import (
+    ChunkMetadata,
+    create_chunk_metadata,
 )
 from ray.data._internal.datasource.parquet_datasource import (
     PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT,
@@ -52,6 +48,74 @@ from .supports_metadata import MetadataType, SupportsMetadata, SupportsSchema
 
 
 logger = logging.getLogger(__name__)
+
+
+class ParquetFileChunkMetadata(ChunkMetadata):
+    """Metadata for Parquet file chunks.
+
+    For a parquet file, the chunks are based on the total size of the file, not on the
+    underlying row groups. We will split a file into potentially many chunks of the
+    target chunk size. This may correspond to  0, 1, or more row groups per chunk.
+    """
+
+    chunk_idx: int
+    total_num_chunks: int
+
+
+class ParquetFileChunker:
+    """File chunker for Parquet files.
+
+    This chunker splits Parquet files into estimated number of chunks. We will not fetch the metadata for the
+    file so we might overestimate the number of chunks to be more than the actual number of underlying row
+    groups. The partitioner will create groupings based on the assumptions we make here, and the reader will
+    fetch the metadata and ensure that all row groups are read / any overestimated row groups are ignored.
+    """
+
+    # This was chosen so that we can effectively chunk files but will also not result in
+    # OOMs if the compression ratio is high.
+    #
+    # If the compression ratio is high and this chunk size is large, we will end up with
+    # larger chunks than we need and when we go to read we might get an OOM. By reducing
+    # the chunk size we can get better memory performance by reading a smaller fraction
+    # of row groups at a time.
+    #
+    # We also want to keep this large enough such that we don't end up reading too much
+    # data if we underestimate the number of chunks. If the row groups are larger than
+    # the chunk size and we place many of them in the same read task, the total amount
+    # of data read by the read task might be larger than expected. By increasing the size
+    # of the chunks, we will be less likely to put many such row groups in the same task.
+    _DEFAULT_TARGET_CHUNK_SIZE = 256 * 1024 * 1024  # 256MB
+
+    def __init__(self, target_chunk_size: Optional[int] = None):
+        # Initialize the chunker with a target chunk size, use this order of precedence:
+        # 1. Target chunk size passed in to the constructor
+        # 2. Environment variable RAY_TURBO_PARQUET_CHUNKER_TARGET_CHUNK_SIZE
+        # 3. Default target chunk size
+        if target_chunk_size is not None:
+            self._target_chunk_size = target_chunk_size
+        elif os.environ.get("RAY_TURBO_PARQUET_CHUNKER_TARGET_CHUNK_SIZE"):
+            self._target_chunk_size = int(
+                os.environ.get("RAY_TURBO_PARQUET_CHUNKER_TARGET_CHUNK_SIZE")
+            )
+        else:
+            self._target_chunk_size = self._DEFAULT_TARGET_CHUNK_SIZE
+
+    def generate_chunk_metadatas(
+        self, path: str, file_size: int
+    ) -> Iterable[Tuple[Optional[ChunkMetadata], int]]:
+        if file_size <= self._target_chunk_size:
+            # do not chunk if the file is smaller than the target chunk size, when we read the file this
+            # will prevent us from additional metadata fetching since we want to read the entire file.
+            yield None, file_size
+            return
+
+        num_chunks = math.ceil(file_size / self._target_chunk_size)
+        for i in range(num_chunks):
+            yield create_chunk_metadata(
+                ParquetFileChunkMetadata,
+                chunk_idx=i,
+                total_num_chunks=num_chunks,
+            ), self._target_chunk_size
 
 
 class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
@@ -160,8 +224,11 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                     ParquetDatasource._FUTURE_FILE_EXTENSIONS
                 )
                 break
+        chunk_metadatas = list(file_manifest.file_chunk_metadatas)
 
-        fragments = self._create_fragments(paths, filesystem=filesystem)
+        fragments = self._create_fragments(
+            paths, chunk_metadatas, filesystem=filesystem
+        )
 
         # Check for column name collision with generated_id_column
         if self._generated_id_column:
@@ -211,7 +278,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                     column for column in columns if column in partitions
                 ]
 
-        num_threads = self._get_num_threads(paths)
+        num_threads = self._get_num_threads(fragments)
         if num_threads > 0:
             yield from make_async_gen(
                 iter(fragments),
@@ -239,24 +306,128 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 columns_rename=columns_rename,
             )
 
+    def _calculate_row_group_range(
+        self, chunk_idx: int, total_num_chunks: int, total_row_groups: int
+    ) -> Optional[Tuple[int, int]]:
+        """Calculate the range of row groups for a given chunk.
+
+        Distributes row groups as evenly as possible across chunks. If row groups
+        don't divide evenly, earlier chunks get the extra row groups.
+
+        Example:
+            - 10 row groups, 3 chunks -> [0:4), [4:7), [7:10)
+            - 11 row groups, 3 chunks -> [0:4), [4:8), [8:11)
+
+        Args:
+            chunk_idx: Index of the current chunk (0-based)
+            total_num_chunks: Total number of chunks
+            total_row_groups: Total number of row groups to distribute
+
+        Returns:
+            Tuple of (start_row_group, end_row_group) where end is exclusive,
+            or None if chunk_idx is out of range (indicating no work for this chunk)
+        """
+        assert (
+            total_row_groups >= 0
+        ), f"total_row_groups must be non-negative, got {total_row_groups}"
+        assert (
+            total_num_chunks > 0
+        ), f"total_num_chunks must be positive, got {total_num_chunks}"
+        assert (
+            chunk_idx < total_num_chunks
+        ), f"chunk_idx must be less than total_num_chunks, got {chunk_idx} and {total_num_chunks}"
+        assert chunk_idx >= 0, f"chunk_idx must be non-negative, got {chunk_idx}"
+
+        # Handle case where chunk_idx is beyond the actual number of chunks needed
+        # This can happen when we overestimate the number of chunks during planning
+        if chunk_idx >= total_row_groups:
+            return None
+
+        base_row_groups_per_chunk = total_row_groups // total_num_chunks
+        remainder = total_row_groups % total_num_chunks
+
+        # Chunks 0 through (remainder-1) get one extra row group
+        if chunk_idx < remainder:
+            row_groups_in_this_chunk = base_row_groups_per_chunk + 1
+            start = chunk_idx * row_groups_in_this_chunk
+        else:
+            row_groups_in_this_chunk = base_row_groups_per_chunk
+            start = (
+                remainder * (base_row_groups_per_chunk + 1)
+                + (chunk_idx - remainder) * base_row_groups_per_chunk
+            )
+
+        end = start + row_groups_in_this_chunk
+
+        # Verify our calculation doesn't go out of bounds
+        assert (
+            0 <= start <= end <= total_row_groups
+        ), f"Invalid range [{start}, {end}) for {total_row_groups} row groups"
+
+        return start, end
+
+    def _fragments_from_chunk_metadata(
+        self,
+        fragment: pyarrow.dataset.ParquetFileFragment,
+        chunk_metadata: ParquetFileChunkMetadata,
+    ) -> List[pyarrow.dataset.ParquetFileFragment]:
+        chunk_idx = chunk_metadata["chunk_idx"]
+        total_num_chunks = chunk_metadata["total_num_chunks"]
+        fragment_metadata = fragment.metadata
+        total_row_groups = fragment_metadata.num_row_groups
+
+        row_group_range = self._calculate_row_group_range(
+            chunk_idx, total_num_chunks, total_row_groups
+        )
+
+        # Skip this chunk if it's out of range (can happen with overestimated chunk counts)
+        # This gracefully handles cases where we estimated more chunks than actually needed
+        if row_group_range is None:
+            return []
+
+        start, end = row_group_range
+
+        # create a new fragment for each row group, this will allow us to read the row groups in parallel with threading
+        fragments = []
+        for row_group_index in range(start, end):
+            fragments.append(fragment.subset(row_group_ids=[row_group_index]))
+        return fragments
+
     def _create_fragments(
         self,
         paths: List[str],
+        chunk_metadatas: List[ParquetFileChunkMetadata],
         *,
         filesystem: pa.fs.FileSystem,
     ) -> List[pyarrow.dataset.ParquetFileFragment]:
+        deduped_paths = list(set(paths))
         parquet_dataset = call_with_retry(
-            lambda: get_parquet_dataset(paths, filesystem, self._dataset_kwargs),
+            lambda: get_parquet_dataset(
+                deduped_paths, filesystem, self._dataset_kwargs
+            ),
             "create ParquetDataset",
             match=self._retried_io_errors,
         )
+        path_to_fragment = {}
+        for fragment in parquet_dataset.fragments:
+            path_to_fragment[fragment.path] = fragment
+        fragments = []
+        for path, chunk_metadata in zip(paths, chunk_metadatas):
+            fragment = path_to_fragment[path]
+            if chunk_metadata is None:
+                fragments.append(fragment)
+            else:
+                fragments.extend(
+                    self._fragments_from_chunk_metadata(fragment, chunk_metadata)
+                )
         check_for_legacy_tensor_type(parquet_dataset.schema)
-        return parquet_dataset.fragments
+        return fragments
 
-    def _get_num_threads(self, paths: List[str]) -> int:
+    def _get_num_threads(
+        self, fragments: List[pyarrow.dataset.ParquetFileFragment]
+    ) -> int:
         num_threads = self._NUM_THREADS_PER_TASK
-        if len(paths) < num_threads:
-            num_threads = len(paths)
+        num_threads = min(num_threads, len(fragments))
 
         # TODO: We should refactor the code so that we can get the results in order even
         # when using multiple threads.

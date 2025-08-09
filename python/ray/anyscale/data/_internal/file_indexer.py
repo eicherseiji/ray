@@ -4,7 +4,6 @@ from typing import Callable, Iterable, List, Optional, Tuple
 from typing import TypedDict, Type, get_type_hints
 
 import math
-
 import pyarrow as pa
 from pyarrow.fs import FileSelector, FileSystem, FileType
 

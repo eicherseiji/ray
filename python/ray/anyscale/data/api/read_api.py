@@ -15,8 +15,10 @@ from ray._private.ray_constants import env_bool
 from ray._private.utils import INT32_MAX
 from ray.anyscale.data._internal.file_indexer import (
     FileChunker,
+    LineDelimitedFileChunker,
     NonSamplingFileIndexer,
 )
+from ray.anyscale.data._internal.readers.parquet_reader import ParquetFileChunker
 from ray.anyscale.data._internal.logical.operators.list_files_operator import ListFiles
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
 from ray.anyscale.data._internal.partitioners import (
@@ -210,6 +212,9 @@ def read_parquet(
         partitioning=partitioning,
         target_block_size=target_block_size,
     )
+
+    file_chunker = ParquetFileChunker()
+
     if PARQUET_SAMPLING_ENABLED:
         in_memory_size_estimator = None
     else:
@@ -227,6 +232,7 @@ def read_parquet(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        file_chunker=file_chunker,
     )
 
 
@@ -552,10 +558,6 @@ def read_json(
                 arrow_open_stream_args is None
                 or "compression" not in arrow_open_stream_args
             ):
-                from ray.anyscale.data._internal.file_indexer import (
-                    LineDelimitedFileChunker,
-                )
-
                 file_chunker = LineDelimitedFileChunker()
         else:
             warnings.warn(

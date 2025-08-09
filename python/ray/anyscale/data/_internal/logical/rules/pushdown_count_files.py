@@ -10,6 +10,7 @@ from ray.data._internal.logical.interfaces import LogicalPlan, Rule
 from ray.data._internal.logical.operators.count_operator import Count
 from ray.data._internal.logical.operators.map_operator import MapBatches
 from ray.data.block import DataBatch
+from ray.anyscale.data._internal.file_indexer import WholeFileChunker
 
 
 class PushdownCountFiles(Rule):
@@ -53,6 +54,12 @@ class PushdownCountFiles(Rule):
         # Disable file partitioning.
         # TODO: Replace with copy to avoid modifying the original operator in-place.
         list_files.file_partitioner = None
+
+        # Also disable file chunking so that each file is listed exactly once.
+        # Otherwise, the same file may appear multiple times (once per chunk)
+        # and be processed in different batches/tasks, leading to overcounting.
+        # NOTE: We mutate the indexer in-place for this optimized count path only.
+        list_files.file_indexer._file_chunker = WholeFileChunker()
 
         def count_rows(batch: DataBatch) -> DataBatch:
             assert PATH_COLUMN_NAME in batch.column_names, batch.column_names
