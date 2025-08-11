@@ -34,6 +34,8 @@ class ElasticScalingPolicy(ScalingPolicy):
     AUTOSCALING_REQUESTS_INTERVAL_S = 20
     # Timeout in seconds for getting the result of a call to the AutoscalingCoordinator.
     AUTOSCALING_REQUESTS_GET_TIMEOUT_S = 5
+    # Minimum interval in seconds between querying the AutoscalingCoordinator for allocated resources.
+    GET_ALLOCATED_RESOURCES_INTERVAL_S = 1
     # Minimum interval in seconds between logging warnings about insufficient workers.
     INSUFFICIENT_WORKERS_WARNING_INTERVAL_S = 30
 
@@ -46,6 +48,8 @@ class ElasticScalingPolicy(ScalingPolicy):
         self._requester_id = "train-" + uuid.uuid4().hex
         self._latest_autoscaling_request_time = float("-inf")
         self._latest_insufficient_workers_warning_time = float("-inf")
+        self._latest_allocated_resources_query_time = float("-inf")
+        self._latest_allocated_resources: Optional[List[ResourceDict]] = None
 
     def _count_possible_workers(
         self, allocated_resources: List[Dict[str, float]]
@@ -214,8 +218,15 @@ class ElasticScalingPolicy(ScalingPolicy):
     def _get_allocated_resources(self) -> Optional[List[ResourceDict]]:
         """Get allocated resources from AutoscalingCoordinator.
         Return None if there is an error."""
+        now = time_monotonic()
+        time_since_last_call = now - self._latest_allocated_resources_query_time
+
+        if time_since_last_call < self.GET_ALLOCATED_RESOURCES_INTERVAL_S:
+            return self._latest_allocated_resources
+
+        allocated_resources = None
         try:
-            return ray.get(
+            allocated_resources = ray.get(
                 self._autoscaling_coordinator.get_allocated_resources.remote(
                     self._requester_id
                 ),
@@ -230,7 +241,10 @@ class ElasticScalingPolicy(ScalingPolicy):
                 " If this error persists, file a GitHub issue."
             )
             logger.warning(msg, exc_info=True)
-            return None
+        finally:
+            self._latest_allocated_resources_query_time = time_monotonic()
+            self._latest_allocated_resources = allocated_resources
+            return self._latest_allocated_resources
 
     def _cancel_resource_request(self):
         """Cancel the resource request to AutoscalingCoordinator."""

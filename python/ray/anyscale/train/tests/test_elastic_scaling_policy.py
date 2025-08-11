@@ -60,6 +60,7 @@ def _get_mock_worker_group_state(
     )
 
 
+@patch.object(ElasticScalingPolicy, "GET_ALLOCATED_RESOURCES_INTERVAL_S", 0.0)
 def test_non_running_worker_group_decision():
     """Test decisions being made when the worker group is initializing/restarting.
     Ensures that the policy will resize the worker group as soon as resources are available.
@@ -75,7 +76,7 @@ def test_non_running_worker_group_decision():
     policy = ElasticScalingPolicy(scaling_config)
     mock_coordinator = policy._autoscaling_coordinator
 
-    # No resources are available
+    # No resources are available at the start
     decision = policy.make_decision_for_non_running_worker_group()
     assert isinstance(decision, NoopDecision)
 
@@ -90,13 +91,69 @@ def test_non_running_worker_group_decision():
     assert isinstance(decision, ResizeDecision)
     assert decision.num_workers == min_workers
 
+    # Resources for >= max workers are available
     mock_coordinator._allocated_resources = [resources_per_worker] * max_workers
-
     decision = policy.make_decision_for_non_running_worker_group()
     assert isinstance(decision, ResizeDecision)
     assert decision.num_workers == max_workers
 
 
+def test_get_allocated_resources_interval():
+    """Tests that remote calls to the AutoscalingCoordinator are spaced out by a minimum time interval."""
+    min_workers, max_workers = 4, 64
+    resources_per_worker = {"CPU": 8, "GPU": 1}
+    get_allocated_resources_interval_s = (
+        ElasticScalingPolicy.GET_ALLOCATED_RESOURCES_INTERVAL_S
+    )
+
+    scaling_config = ScalingConfig(
+        num_workers=(min_workers, max_workers),
+        resources_per_worker=resources_per_worker,
+        use_gpu=True,
+    )
+    policy = ElasticScalingPolicy(scaling_config)
+    mock_coordinator = policy._autoscaling_coordinator
+
+    with freeze_time() as frozen_time:
+        # No resources are available at the start
+        allocated_resources = policy._get_allocated_resources()
+        assert allocated_resources is None
+
+        # Resources for < min workers are available
+        frozen_time.tick(get_allocated_resources_interval_s)
+        mock_coordinator._allocated_resources = [resources_per_worker] * (
+            min_workers - 1
+        )
+        allocated_resources = policy._get_allocated_resources()
+        assert allocated_resources == [resources_per_worker] * (min_workers - 1)
+
+        # Resources for >= min workers are available, but get_allocated_resources interval
+        # has not yet passed.
+        mock_coordinator._allocated_resources = [resources_per_worker] * min_workers
+        allocated_resources = policy._get_allocated_resources()
+        assert allocated_resources == [resources_per_worker] * (min_workers - 1)
+
+        # Resources for >= min workers are available and the get_allocated_resources
+        # interval has passed.
+        frozen_time.tick(get_allocated_resources_interval_s)
+        mock_coordinator._allocated_resources = [resources_per_worker] * min_workers
+        allocated_resources = policy._get_allocated_resources()
+        assert allocated_resources == [resources_per_worker] * min_workers
+
+        # Resources for >= max workers are available but the get_allocated_resources
+        # interval has not yet passed.
+        mock_coordinator._allocated_resources = [resources_per_worker] * max_workers
+        allocated_resources = policy._get_allocated_resources()
+        assert allocated_resources == [resources_per_worker] * min_workers
+
+        # Resources for >= max workers are available and the get_allocated_resources
+        # interval has passed.
+        frozen_time.tick(get_allocated_resources_interval_s)
+        allocated_resources = policy._get_allocated_resources()
+        assert allocated_resources == [resources_per_worker] * max_workers
+
+
+@patch.object(ElasticScalingPolicy, "GET_ALLOCATED_RESOURCES_INTERVAL_S", 0.0)
 def test_running_worker_group_decision():
     """Test decisions being made when the worker group is running.
     Ensures that the policy will resize the worker group when there is a change
@@ -115,6 +172,7 @@ def test_running_worker_group_decision():
     policy = ElasticScalingPolicy(scaling_config)
     mock_coordinator = policy._autoscaling_coordinator
 
+    # The worker group just started
     worker_group_state = _get_mock_worker_group_state(min_workers, time_monotonic())
     worker_group_status = _get_mock_worker_group_status(min_workers)
 
@@ -134,7 +192,7 @@ def test_running_worker_group_decision():
     )
     assert isinstance(decision, NoopDecision)
 
-    # More resources are available
+    # More resources are available.
     mock_coordinator._allocated_resources = [resources_per_worker] * max_workers
     decision = policy.make_decision_for_running_worker_group(
         worker_group_state=worker_group_state,
