@@ -230,6 +230,9 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             paths, chunk_metadatas, filesystem=filesystem
         )
 
+        if len(fragments) == 0:
+            return
+
         # Check for column name collision with generated_id_column
         if self._generated_id_column:
             # Check collision with columns_rename mapping

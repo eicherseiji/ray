@@ -1226,6 +1226,67 @@ def test_chunked_reading_with_column_selection(
     assert total_rows == expected_rows
 
 
+@pytest.mark.parametrize("use_generated_id", [False, True])
+def test_chunked_out_of_range_returns_empty(
+    ray_start_regular_shared, tmp_path, restore_data_context, use_generated_id
+):
+    """Out-of-range chunks produce no fragments, with/without generated IDs.
+
+    Create a single-row-group parquet file, generate multiple chunk metadatas with
+    a 1KB target chunk size, then drop the first chunk so remaining chunks are
+    out-of-range. Assert no tables are produced in both configurations.
+    """
+    # Create a simple table and write it as a single-row-group parquet file
+    num_rows = 1500
+    table = pa.table({"id": list(range(num_rows))})
+    file_path = os.path.join(tmp_path, "single_row_group.parquet")
+    pq.write_table(table, file_path, row_group_size=num_rows)
+
+    file_size = os.path.getsize(file_path)
+
+    # Optionally enable generated ID column via DataContext checkpoint config
+    if use_generated_id:
+        ctx = ray.data.DataContext.get_current()
+        from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
+
+        ctx.checkpoint_config = CheckpointConfig(
+            generated_id_column="__row_id__", checkpoint_path=f"file://{tmp_path}"
+        )
+
+    reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        use_threads=True,
+        to_batches_kwargs={},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+
+    # Use small target chunk size to generate multiple chunk indices (1KB)
+    chunker = ParquetFileChunker(target_chunk_size=1024)
+    chunks = list(chunker.generate_chunk_metadatas(file_path, file_size))
+    assert len(chunks) > 1
+
+    # Keep only out-of-range chunk metadatas (drop chunk_idx == 0)
+    out_of_range_chunk_mds = [md for md, _ in chunks][1:]
+    file_manifest = FileManifest.construct_manifest(
+        [file_path] * len(out_of_range_chunk_mds),
+        [file_size] * len(out_of_range_chunk_mds),
+        out_of_range_chunk_mds,
+    )
+
+    tables = list(
+        reader.read_files(
+            file_manifest,
+            filesystem=pa.fs.LocalFileSystem(),
+        )
+    )
+    assert len(tables) == 0
+
+
 if __name__ == "__main__":
     import sys
 
