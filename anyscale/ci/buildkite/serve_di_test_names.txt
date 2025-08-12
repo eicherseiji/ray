@@ -19,6 +19,8 @@
 //python/ray/serve/tests:test_target_capacity
 //python/ray/serve/tests:test_http_cancellation
 //python/ray/serve/tests:test_http_headers
+//python/ray/serve/tests:test_backpressure
+//python/ray/serve/tests:test_batching
 //python/ray/anyscale/serve:tests/test_direct_ingress
 //python/ray/anyscale/serve:tests/test_direct_ingress_with_grpc
 //python/ray/anyscale/serve:tests/test_tracing_utils
