@@ -39,13 +39,13 @@ assert (
 ), "Usage: python run_checkpoint_benchmark.py [small|large] [default_id|generated_id_column]"
 scale = sys.argv[1]
 assert scale in ["small", "large"], scale
-id_column = sys.argv[2]
-assert id_column in ["default_id", "generated_id_column"], id_column
-if id_column == "generated_id_column":
+id_column_option = sys.argv[2]
+assert id_column_option in ["default_id", "generated_id_column"], id_column_option
+if id_column_option == "generated_id_column":
     id_column = None
     generated_id_column = "generated_id"
 else:
-    assert id_column == "default_id", id_column
+    assert id_column_option == "default_id", id_column_option
     id_column = "id"
     generated_id_column = None
 
@@ -71,7 +71,11 @@ else:
     NUM_OUTPUT_FILES = 1500
 
 for backend in BACKENDS:
-    benchmark_name = f"checkpoint_benchmark:scale={scale}," f"backend={backend}"
+    benchmark_name = (
+        f"checkpoint_benchmark:scale={scale},"
+        f"backend={backend},"
+        f"id_column={id_column_option}"
+    )
     path_suffix = f"{scale}-{backend}"
     data_dir = f"{DATA_DIR}/{path_suffix}"
 
