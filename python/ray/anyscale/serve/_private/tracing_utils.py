@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional
 
+
 from ray._common.utils import import_attr
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_TRACING_EXPORTER_IMPORT_PATH,
@@ -16,12 +17,12 @@ try:
     from opentelemetry.context import attach, get_current
     from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
     from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
-    from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
     from opentelemetry.trace import SpanKind
     from opentelemetry.trace.propagation import set_span_in_context
     from opentelemetry.trace.propagation.tracecontext import (
         TraceContextTextMapPropagator,
     )
+    from opentelemetry.sdk.trace.sampling import ParentBasedTraceIdRatio
     from opentelemetry.trace.status import Status, StatusCode
     from opentelemetry.semconv.trace import SpanAttributes
 
@@ -40,6 +41,7 @@ except ImportError:
     get_current = None
     attach = None
     SpanAttributes = None
+    ParentBasedTraceIdRatio = None
 
 
 TRACE_STACK: ContextVar[List[Any]] = ContextVar("trace_stack")
@@ -81,6 +83,8 @@ class TraceContextManager:
                 kind=self.span_kind,
                 context=ctx,
             )
+            if not self.span.get_span_context().trace_flags.sampled:
+                return self
             new_ctx = set_span_in_context(self.span)
             set_trace_context(new_ctx)
             _append_trace_stack(self.span)
@@ -127,6 +131,11 @@ def tracing_decorator_factory(trace_name, span_kind=None):
     """
 
     def tracing_decorator(func):
+        if not is_tracing_enabled():
+            # if tracing is not enabled, we don't want to wrap the function
+            # with the tracing decorator.
+            return func
+
         @wraps(func)
         def synchronous_wrapper(*args, **kwargs):
             with TraceContextManager(trace_name, span_kind):
@@ -212,7 +221,9 @@ def setup_tracing(
     # Intialize tracing
     # Sets the tracer_provider. This is only allowed once~ per execution
     # context and will log a warning if attempted multiple times.
-    sampler = TraceIdRatioBased(tracing_sampling_ratio)
+    # use ParentBasedTraceIdRatio to respect the parent span's sampling decision
+    # and sample probabilistically based on the tracing_sampling_ratio
+    sampler = ParentBasedTraceIdRatio(tracing_sampling_ratio)
 
     trace.set_tracer_provider(TracerProvider(sampler=sampler))
 
@@ -356,6 +367,14 @@ def set_span_exception(exc: Exception, escaped: bool = False):
 
 def is_tracing_enabled() -> bool:
     return ANYSCALE_TRACING_EXPORTER_IMPORT_PATH != "" and trace is not None
+
+
+def is_span_recording() -> bool:
+    if TRACE_STACK:
+        trace_stack = TRACE_STACK.get([])
+        if trace_stack:
+            return True
+    return False
 
 
 def _append_trace_stack(span):

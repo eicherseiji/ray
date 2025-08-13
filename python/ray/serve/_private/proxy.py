@@ -18,6 +18,7 @@ import ray
 from ray._common.utils import get_or_create_event_loop
 from ray._private.ray_logging.filters import CoreContextFilter
 from ray.anyscale.serve._private.tracing_utils import (
+    is_span_recording,
     set_http_span_attributes,
     set_rpc_span_attributes,
     set_span_attributes,
@@ -940,18 +941,19 @@ class HTTPProxy(GenericProxy):
         The yielded values will be ASGI messages until the final one, which will be
         the status code.
         """
-        trace_attributes = {
-            "request_id": request_id,
-            "deployment": handle.deployment_name,
-            "app": handle.app_name,
-            "request_type": proxy_request.request_type,
-            "request_method": proxy_request.method,
-            "request_route_path": proxy_request.route_path,
-        }
-        set_span_attributes(trace_attributes)
-        set_span_name(
-            f"proxy_{proxy_request.request_type}_request {handle.deployment_name} {proxy_request.method} {proxy_request.route_path}"
-        )
+        if is_span_recording():
+            trace_attributes = {
+                "request_id": request_id,
+                "deployment": handle.deployment_name,
+                "app": handle.app_name,
+                "request_type": proxy_request.request_type,
+                "request_method": proxy_request.method,
+                "request_route_path": proxy_request.route_path,
+            }
+            set_span_attributes(trace_attributes)
+            set_span_name(
+                f"proxy_{proxy_request.request_type}_request {handle.deployment_name} {proxy_request.method} {proxy_request.route_path}"
+            )
 
         if app_is_cross_language:
             handle_arg_bytes = await self._format_handle_arg_for_java(proxy_request)
@@ -1076,17 +1078,18 @@ class HTTPProxy(GenericProxy):
 
             del self.asgi_receive_queues[internal_request_id]
 
-            set_http_span_attributes(
-                method=proxy_request.method,
-                status_code=int(status_code),
-                route=proxy_request.route_path,
-            )
+            if is_span_recording():
+                set_http_span_attributes(
+                    method=proxy_request.method,
+                    status_code=int(status_code),
+                    route=proxy_request.route_path,
+                )
 
-            if exc:
-                set_span_exception(exc, escaped=True)
-                set_trace_status(status.is_error, str(exc))
-            else:
-                set_trace_status(status.is_error)
+                if exc:
+                    set_span_exception(exc, escaped=True)
+                    set_trace_status(status.is_error, str(exc))
+                else:
+                    set_trace_status(status.is_error)
 
         # The status code should always be set.
         assert status is not None

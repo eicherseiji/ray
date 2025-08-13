@@ -35,6 +35,7 @@ from ray.anyscale.serve._private.constants import (
 from ray.anyscale.serve._private.tracing_utils import (
     TraceContextManager,
     extract_propagated_context,
+    is_span_recording,
     is_tracing_enabled,
     set_http_span_attributes,
     set_rpc_span_attributes,
@@ -683,6 +684,10 @@ class AnyscaleReplica(ReplicaBase):
     def _tracing_context(self, request_metadata: RequestMetadata):
         # TODO (abrar): for http requests on ASGI, request_metadata.call_method is __call__
         #   this is not nice, figure out a better way to map this to method name.
+        if not is_tracing_enabled():
+            yield
+            return
+
         call_method = request_metadata.call_method
         trace_context = extract_propagated_context(request_metadata.tracing_context)
         trace_manager = TraceContextManager(
@@ -690,17 +695,18 @@ class AnyscaleReplica(ReplicaBase):
             trace_context=trace_context,
         )
         with trace_manager:
-            trace_attributes = {
-                "request_id": request_metadata.request_id,
-                "replica_id": self._replica_id.unique_id,
-                "deployment": self._deployment_id.name,
-                "app": self._deployment_id.app_name,
-                "call_method": request_metadata.call_method,
-                "route": request_metadata.route,
-                "multiplexed_model_id": request_metadata.multiplexed_model_id,
-                "is_streaming": request_metadata.is_streaming,
-            }
-            set_span_attributes(trace_attributes)
+            if is_span_recording():
+                trace_attributes = {
+                    "request_id": request_metadata.request_id,
+                    "replica_id": self._replica_id.unique_id,
+                    "deployment": self._deployment_id.name,
+                    "app": self._deployment_id.app_name,
+                    "call_method": request_metadata.call_method,
+                    "route": request_metadata.route,
+                    "multiplexed_model_id": request_metadata.multiplexed_model_id,
+                    "is_streaming": request_metadata.is_streaming,
+                }
+                set_span_attributes(trace_attributes)
             yield
 
     @contextmanager
@@ -753,28 +759,27 @@ class AnyscaleReplica(ReplicaBase):
                 status_code=status_code,
             )
 
-        http_route = request_metadata.route
-        call_method = request_metadata.call_method
-
-        if request_metadata.is_http_request:
-            set_http_span_attributes(
-                method=request_metadata._http_method,
-                status_code=status_code,
-                route=http_route,
-            )
-        else:
-            # in this case we are either in grpc or undefined. I think
-            # undefined is the case where we call the user method as ray
-            # tasks. Treating it as grpc for now from POV of tracing.
-            set_rpc_span_attributes(
-                system=request_metadata._request_protocol,
-                method=call_method,
-                status_code=status_code,
-                service=self._deployment_id.name,
-            )
-
-        if user_exception is not None:
-            set_span_exception(user_exception, escaped=False)
+        if is_span_recording():
+            http_route = request_metadata.route
+            call_method = request_metadata.call_method
+            if request_metadata.is_http_request:
+                set_http_span_attributes(
+                    method=request_metadata._http_method,
+                    status_code=status_code,
+                    route=http_route,
+                )
+            else:
+                # in this case we are either in grpc or undefined. I think
+                # undefined is the case where we call the user method as ray
+                # tasks. Treating it as grpc for now from POV of tracing.
+                set_rpc_span_attributes(
+                    system=request_metadata._request_protocol,
+                    method=call_method,
+                    status_code=status_code,
+                    service=self._deployment_id.name,
+                )
+            if user_exception is not None:
+                set_span_exception(user_exception, escaped=False)
 
     @_wrap_grpc_call
     async def HandleRequest(
