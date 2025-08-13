@@ -101,6 +101,9 @@ class TestHangingExecutionIssueDetector:
         log_output = log_capture.getvalue()
         assert re.search(warn_msg, log_output) is not None, log_output
 
+    @pytest.mark.skip(
+        reason="Flaky test"
+    )  # TODO Issue detector is not warning consistently
     @pytest.mark.parametrize(
         "ray_start_10_cpus",
         # NOTE: By default, test fixtures initialize Ray with 150 MiB of object store

@@ -6,6 +6,7 @@ from ray.anyscale.data._internal.logical.graph_utils import make_copy_of_dag
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
 from ray.data._internal.logical.interfaces import LogicalOperator, LogicalPlan, Rule
 from ray.data._internal.logical.operators.map_operator import Project
+from ray.data.expressions import Expr
 
 
 logger = logging.getLogger(__file__)
@@ -15,6 +16,7 @@ logger = logging.getLogger(__file__)
 class _ProjectSpec:
     cols: Optional[List[str]]
     cols_remap: Optional[Dict[str, str]]
+    exprs: Optional[Dict[str, Expr]]
 
 
 class ProjectionPushdown(Rule):
@@ -61,25 +63,52 @@ class ProjectionPushdown(Rule):
 
     @staticmethod
     def _fuse(inner_op: Project, outer_op: Project) -> Project:
-        inner_op_spec = _get_projection_spec(inner_op)
-        outer_op_spec = _get_projection_spec(outer_op)
+        # Combine expressions from both operators
+        combined_exprs = _combine_expressions(inner_op.exprs, outer_op.exprs)
 
-        new_spec = _combine_projection_specs(
-            prev_spec=inner_op_spec, new_spec=outer_op_spec
-        )
+        # Only combine projection specs if there are no expressions
+        # When expressions are present, they take precedence
+        if combined_exprs:
+            # If we have expressions, create a simplified Project operator
+            return Project(
+                inner_op.input_dependency,
+                cols=None,  # Let expressions determine the columns
+                cols_rename=None,  # Expressions handle column creation
+                exprs=combined_exprs,
+                # Give precedence to outer operator's ray_remote_args
+                ray_remote_args={
+                    **inner_op._ray_remote_args,
+                    **outer_op._ray_remote_args,
+                },
+            )
+        else:
+            # Fall back to original behavior for column-only projections
+            inner_op_spec = _get_projection_spec(inner_op)
+            outer_op_spec = _get_projection_spec(outer_op)
 
-        return Project(
-            inner_op.input_dependency,
-            cols=new_spec.cols,
-            cols_rename=new_spec.cols_remap,
-            ray_remote_args={
-                **inner_op._ray_remote_args,
-                **outer_op._ray_remote_args,
-            },
-        )
+            new_spec = _combine_projection_specs(
+                prev_spec=inner_op_spec, new_spec=outer_op_spec
+            )
+
+            return Project(
+                inner_op.input_dependency,
+                cols=new_spec.cols,
+                cols_rename=new_spec.cols_remap,
+                exprs=None,
+                ray_remote_args={
+                    **inner_op._ray_remote_args,
+                    **outer_op._ray_remote_args,
+                },
+            )
 
     @staticmethod
     def _combine(read_op: ReadFiles, project_op: Project) -> ReadFiles:
+        # For now, don't push down expressions into ReadFiles operators
+        # Only handle traditional column projections
+        if project_op.exprs:
+            # Cannot push expressions into ReadFiles, return unchanged
+            return read_op
+
         read_op_spec = _get_projection_spec(read_op)
         project_op_spec = _get_projection_spec(project_op)
 
@@ -99,6 +128,34 @@ class ProjectionPushdown(Rule):
         return read_op
 
 
+def _combine_expressions(
+    inner_exprs: Optional[Dict[str, Expr]], outer_exprs: Optional[Dict[str, Expr]]
+) -> Optional[Dict[str, Expr]]:
+    """Combine expressions from two Project operators.
+
+    Args:
+        inner_exprs: Expressions from the inner (upstream) Project operator
+        outer_exprs: Expressions from the outer (downstream) Project operator
+
+    Returns:
+        Combined dictionary of expressions, or None if no expressions
+    """
+    if not inner_exprs and not outer_exprs:
+        return None
+
+    combined = {}
+
+    # Add expressions from inner operator
+    if inner_exprs:
+        combined.update(inner_exprs)
+
+    # Add expressions from outer operator
+    if outer_exprs:
+        combined.update(outer_exprs)
+
+    return combined if combined else None
+
+
 def _get_projection_spec(op: Union[Project, ReadFiles]) -> _ProjectSpec:
     assert op is not None
 
@@ -106,11 +163,13 @@ def _get_projection_spec(op: Union[Project, ReadFiles]) -> _ProjectSpec:
         return _ProjectSpec(
             cols=op.cols,
             cols_remap=op.cols_rename,
+            exprs=op.exprs,
         )
     elif isinstance(op, ReadFiles):
         return _ProjectSpec(
             cols=op.columns,
             cols_remap=op.columns_rename,
+            exprs=None,  # ReadFiles operators don't have expressions
         )
     else:
         raise ValueError(
@@ -174,7 +233,12 @@ def _combine_projection_specs(
     else:
         projected_cols_remap = combined_cols_remap
 
-    return _ProjectSpec(cols=new_projection_cols, cols_remap=projected_cols_remap)
+    # Combine expressions from both specs
+    combined_exprs = _combine_expressions(prev_spec.exprs, new_spec.exprs)
+
+    return _ProjectSpec(
+        cols=new_projection_cols, cols_remap=projected_cols_remap, exprs=combined_exprs
+    )
 
 
 def _combine_columns_remap(
