@@ -405,12 +405,32 @@ def test_port_retry_logic(_skip_if_ff_not_enabled, serve_instance):
     import socket
 
     # Create a function to occupy a port
-    def occupy_port(port):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("localhost", port))
-        sock.listen(1)
-        return sock
+    def occupy_port(port: int, max_attempts: int = 10):
+        import errno
+
+        attempts = 0
+        while attempts < max_attempts:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+            try:
+                sock.bind(("localhost", port))
+                sock.listen(1)
+                return sock
+            except OSError as exc:
+                sock.close()
+                # If the port is already in use, try the next one; otherwise
+                # re-raise unexpected errors.
+                if exc.errno != errno.EADDRINUSE:
+                    raise
+
+                attempts += 1
+                # backoff to wait for the port to be released
+                time.sleep(0.5)
+
+        raise RuntimeError(
+            f"Unable to bind a socket after {max_attempts} attempts at port {port}."
+        )
 
     # Start occupying the min HTTP and gRPC ports
     http_sock = occupy_port(RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT)
