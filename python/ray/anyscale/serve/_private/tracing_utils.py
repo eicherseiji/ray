@@ -2,6 +2,7 @@ import inspect
 import os
 from contextvars import ContextVar
 from functools import wraps
+import threading
 from typing import Any, Callable, Dict, List, Optional
 
 
@@ -44,7 +45,21 @@ except ImportError:
     ParentBasedTraceIdRatio = None
 
 
-TRACE_STACK: ContextVar[List[Any]] = ContextVar("trace_stack")
+TRACE_STACK: ContextVar[List[Any]] = ContextVar(
+    "trace_stack"
+)  # Create tracer once at module level
+
+_tracer = None
+_tracer_lock = threading.Lock()
+
+
+def get_tracer():
+    global _tracer
+    if _tracer is None:
+        with _tracer_lock:
+            if _tracer is None:
+                _tracer = trace.get_tracer(__name__)
+    return _tracer
 
 
 # Default tracing exporter needs to map to DEFAULT_TRACING_EXPORTER_IMPORT_PATH
@@ -75,7 +90,7 @@ class TraceContextManager:
         if self.is_tracing_enabled:
             self.span_kind = self.span_kind or SpanKind.SERVER
 
-            tracer = trace.get_tracer(__name__)
+            tracer = get_tracer()
             ctx = self.trace_context if self.trace_context else get_trace_context()
 
             self.span = tracer.start_span(
