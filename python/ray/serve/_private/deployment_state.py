@@ -195,19 +195,34 @@ SLOW_STARTUP_WARNING_PERIOD_S = int(
 ALL_REPLICA_STATES = list(ReplicaState)
 _SCALING_LOG_ENABLED = os.environ.get("SERVE_ENABLE_SCALING_LOG", "0") != "0"
 # Feature flag to disable forcibly shutting down replicas.
-RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = (
-    os.environ.get("RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY", "0")
-    == "1"
+# Check if the environment variable is explicitly set
+_ray_serve_disable_force_kill_env = os.environ.get(
+    "RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY"
 )
-if (
-    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
-    and not RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY
-):
-    logger.info(
-        "Setting RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY to True "
-        "because ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS is set to True."
+
+if _ray_serve_disable_force_kill_env is not None:
+    # If explicitly set, respect the environment variable.
+    RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = (
+        _ray_serve_disable_force_kill_env == "1"
     )
-    RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = True
+    if (
+        ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
+        and not RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY
+    ):
+        logger.warning(
+            "RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY is explicitly set to 0 "
+            "in direct ingress mode."
+        )
+else:
+    # If not explicitly set, default based on direct ingress mode
+    if ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+        RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = True
+        logger.info(
+            "Setting RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY to True "
+            "because ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS is set to True."
+        )
+    else:
+        RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = False
 
 
 def print_verbose_scaling_log():

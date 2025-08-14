@@ -34,6 +34,7 @@ steps:
         --workers "$${BUILDKITE_PARALLEL_JOB_COUNT}" --worker-id "$${BUILDKITE_PARALLEL_JOB}" --parallelism-per-worker 3
         --build-name servebuild --test-env=ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS=1
         --test-env=ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S=0.01
+        --test-env=RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY=0
     depends_on: servebuild
     job_env: forge
     tags:
@@ -47,6 +48,7 @@ steps:
         --build-name servebuild --test-env=ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS=1
         --test-env=ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S=0.01
         --test-env=RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD=0
+        --test-env=RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY=0
     depends_on: servebuild
     job_env: forge
     tags:
