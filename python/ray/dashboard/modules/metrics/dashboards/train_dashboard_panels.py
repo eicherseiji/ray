@@ -341,6 +341,21 @@ TURBO_TRAIN_GRAFANA_PANELS = [
         fill=0,
         stack=False,
     ),
+    # DCGM Profiling Metrics (GPU Power Draw)
+    Panel(
+        id=PanelId.next(),
+        title="GPU Power Draw",
+        description="GPU power draw from DCGM metrics. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
+        unit="watts",
+        targets=[
+            Target(
+                expr='sum(DCGM_FI_DEV_POWER_USAGE{{instance=~"$Instance", gpu=~"$GpuIndex", modelName=~"$GpuDeviceName", {global_filters}}}) by (instance, gpu, modelName)',
+                legend="Node IP: {{instance}}, GPU: {{gpu}}, Model: {{modelName}}",
+            ),
+        ],
+        fill=0,
+        stack=False,
+    ),
 ]
 
 # Currently just adding to "Resource Utilization" row and the worker panels.
