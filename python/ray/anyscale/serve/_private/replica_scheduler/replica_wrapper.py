@@ -1,6 +1,5 @@
 import asyncio
 import pickle
-from typing import Tuple
 
 import grpc
 
@@ -9,8 +8,7 @@ from ray.anyscale.serve._private.constants import (
 )
 from ray.anyscale.serve._private.replica_result import gRPCReplicaResult
 from ray.anyscale.serve._private.serialization import RPCSerializer
-from ray.exceptions import ActorUnavailableError
-from ray.serve._private.common import ReplicaQueueLengthInfo, RunningReplicaInfo
+from ray.serve._private.common import RunningReplicaInfo
 from ray.serve._private.request_router.common import PendingRequest
 from ray.serve._private.request_router.replica_wrapper import (
     ActorReplicaWrapper,
@@ -29,9 +27,9 @@ class gRPCReplicaWrapper(ReplicaWrapper):
     def send_request_java(self, pr: PendingRequest):
         raise RuntimeError("gRPC requests not supported for Java.")
 
-    def _send_request_python(
+    def send_request_python(
         self, pr: PendingRequest, *, with_rejection: bool
-    ) -> grpc.aio.Call:
+    ) -> gRPCReplicaResult:
         """Send the request to a Python replica."""
 
         # Get serialization options from request metadata
@@ -52,70 +50,19 @@ class gRPCReplicaWrapper(ReplicaWrapper):
             # Call a separate handler that may reject the request.
             # This handler is *always* a streaming call and the first message will
             # be a system message that accepts or rejects.
-            return self._stub.HandleRequestWithRejection(asgi_request)
+            call = self._stub.HandleRequestWithRejection(asgi_request)
         elif pr.metadata.is_streaming:
-            return self._stub.HandleRequestStreaming(asgi_request)
+            call = self._stub.HandleRequestStreaming(asgi_request)
         else:
-            return self._stub.HandleRequest(asgi_request)
+            call = self._stub.HandleRequest(asgi_request)
 
-    async def _parse_initial_metadata(
-        self, call: grpc.aio.Call
-    ) -> ReplicaQueueLengthInfo:
-        # NOTE(edoakes): this is required for gRPC to raise an AioRpcError if something
-        # goes wrong establishing the connection (for example, a bug in our code).
-        await call.wait_for_connection()
-        metadata = await call.initial_metadata()
-
-        accepted = metadata.get("accepted", None)
-        num_ongoing_requests = metadata.get("num_ongoing_requests", None)
-        if accepted is None or num_ongoing_requests is None:
-            code = await call.code()
-            details = await call.details()
-            raise RuntimeError(f"Unexpected error ({code}): {details}.")
-
-        return ReplicaQueueLengthInfo(
-            accepted=bool(int(accepted)),
-            num_ongoing_requests=int(num_ongoing_requests),
+        return gRPCReplicaResult(
+            call,
+            pr.metadata,
+            self._actor_id,
+            loop=self._loop,
+            with_rejection=with_rejection,
         )
-
-    async def send_request_python(
-        self, pr: PendingRequest, with_rejection: bool
-    ) -> Tuple[grpc.aio.Call, ReplicaQueueLengthInfo]:
-        call = self._send_request_python(pr, with_rejection=with_rejection)
-
-        if not with_rejection:
-            return (
-                gRPCReplicaResult(call, pr.metadata, self._actor_id, loop=self._loop),
-                None,
-            )
-
-        try:
-            queue_len_info = await self._parse_initial_metadata(call)
-            return (
-                gRPCReplicaResult(call, pr.metadata, self._actor_id, loop=self._loop),
-                queue_len_info,
-            )
-        except asyncio.CancelledError as e:
-            # HTTP client disconnected or request was explicitly canceled.
-            call.cancel()
-            raise e from None
-        except grpc.aio.AioRpcError as e:
-            # If we received an `UNAVAILABLE` grpc error, that is
-            # equivalent to `RayActorError`, although we don't know
-            # whether it's `ActorDiedError` or `ActorUnavailableError`.
-            # Conservatively, we assume it is `ActorUnavailableError`,
-            # and we raise it here so that it goes through the unified
-            # code path for handling RayActorErrors.
-            # The router will retry scheduling the request with the
-            # cache invalidated, at which point if the actor is actually
-            # dead, the router will realize through active probing.
-            if e.code() == grpc.StatusCode.UNAVAILABLE:
-                raise ActorUnavailableError(
-                    "Actor is unavailable.",
-                    self._actor_id.binary(),
-                )
-
-            raise e from None
 
 
 class AnyscaleRunningReplica(RunningReplica):

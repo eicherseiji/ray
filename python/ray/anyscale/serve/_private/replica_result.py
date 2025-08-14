@@ -11,7 +11,11 @@ import grpc
 import ray
 from ray.anyscale.serve._private.serialization import RPCSerializer
 from ray.exceptions import ActorUnavailableError, RayTaskError
-from ray.serve._private.common import RequestMetadata
+from ray.serve._private.common import (
+    OBJ_REF_NOT_SUPPORTED_ERROR,
+    ReplicaQueueLengthInfo,
+    RequestMetadata,
+)
 from ray.serve._private.constants import SERVE_LOGGER_NAME
 from ray.serve._private.http_util import MessageQueue
 from ray.serve._private.replica_result import ReplicaResult
@@ -31,17 +35,14 @@ def is_running_in_asyncio_loop() -> bool:
 
 
 class gRPCReplicaResult(ReplicaResult):
-    OBJ_REF_NOT_SUPPORTED_ERROR = RuntimeError(
-        "Converting by-value DeploymentResponses to ObjectRefs is not supported. "
-        "Use handle.options(_by_reference=True) to enable it."
-    )
-
     def __init__(
         self,
         call: grpc.aio.Call,
         metadata: RequestMetadata,
         actor_id: ray.ActorID,
         loop: asyncio.AbstractEventLoop = None,
+        *,
+        with_rejection: bool = False,
     ):
         self._call: grpc.aio.Call = call
         self._actor_id: ray.ActorID = actor_id
@@ -50,6 +51,8 @@ class gRPCReplicaResult(ReplicaResult):
         # This is the asyncio event loop that the gRPC Call object is attached to
         self._grpc_call_loop = loop or asyncio._get_running_loop()
         self._is_streaming = metadata.is_streaming
+        self._with_rejection = with_rejection
+        self._rejection_response = None
 
         self._gen = None
         self._fut = None
@@ -185,6 +188,57 @@ class gRPCReplicaResult(ReplicaResult):
         else:
             return await self._gen.__anext__()
 
+    async def get_rejection_response(self) -> Optional[ReplicaQueueLengthInfo]:
+        """Get the queue length info from the replica to handle rejection."""
+        assert (
+            self._with_rejection
+        ), "get_rejection_response() can only be called when request rejection is enabled."
+
+        try:
+            if self._rejection_response is None:
+                # NOTE(edoakes): this is required for gRPC to raise an AioRpcError if something
+                # goes wrong establishing the connection (for example, a bug in our code).
+                await self._call.wait_for_connection()
+                metadata = await self._call.initial_metadata()
+
+                accepted = metadata.get("accepted", None)
+                num_ongoing_requests = metadata.get("num_ongoing_requests", None)
+                if accepted is None or num_ongoing_requests is None:
+                    code = await self._call.code()
+                    details = await self._call.details()
+                    raise RuntimeError(f"Unexpected error ({code}): {details}.")
+
+                self._rejection_response = ReplicaQueueLengthInfo(
+                    accepted=bool(int(accepted)),
+                    num_ongoing_requests=int(num_ongoing_requests),
+                )
+
+            return self._rejection_response
+        except asyncio.CancelledError as e:
+            # HTTP client disconnected or request was explicitly canceled.
+            logger.info(
+                "Cancelling request that has already been assigned to a replica."
+            )
+            self.cancel()
+            raise e from None
+        except grpc.aio.AioRpcError as e:
+            # If we received an `UNAVAILABLE` grpc error, that is
+            # equivalent to `RayActorError`, although we don't know
+            # whether it's `ActorDiedError` or `ActorUnavailableError`.
+            # Conservatively, we assume it is `ActorUnavailableError`,
+            # and we raise it here so that it goes through the unified
+            # code path for handling RayActorErrors.
+            # The router will retry scheduling the request with the
+            # cache invalidated, at which point if the actor is actually
+            # dead, the router will realize through active probing.
+            if e.code() == grpc.StatusCode.UNAVAILABLE:
+                raise ActorUnavailableError(
+                    "Actor is unavailable.",
+                    self._actor_id.binary(),
+                )
+
+            raise e from None
+
     @_process_grpc_response
     def get(self, timeout_s: Optional[float]):
         if is_running_in_asyncio_loop():
@@ -247,10 +301,10 @@ class gRPCReplicaResult(ReplicaResult):
         self._call.cancel()
 
     def to_object_ref(self, timeout_s: Optional[float]) -> ray.ObjectRef:
-        raise self.OBJ_REF_NOT_SUPPORTED_ERROR
+        raise OBJ_REF_NOT_SUPPORTED_ERROR
 
     async def to_object_ref_async(self) -> ray.ObjectRef:
-        raise self.OBJ_REF_NOT_SUPPORTED_ERROR
+        raise OBJ_REF_NOT_SUPPORTED_ERROR
 
     def to_object_ref_gen(self) -> ray.ObjectRefGenerator:
-        raise self.OBJ_REF_NOT_SUPPORTED_ERROR
+        raise OBJ_REF_NOT_SUPPORTED_ERROR

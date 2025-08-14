@@ -101,7 +101,7 @@ class FakeReplicaActor:
             # by the server will be delivered for a stream with no messages. Therefore,
             # we send a dummy message here to ensure it is populated in every case.
             # The same is done in the actual gRPC replica implementation.
-            yield b""
+            yield serve_proprietary_pb2.ASGIResponse(serialized_message=b"")
             return
 
         message = args[0]
@@ -162,7 +162,7 @@ async def test_to_object_ref_not_supported(
         ),
     )
     err_msg = "Converting by-value DeploymentResponses to ObjectRefs is not supported."
-    replica_result, _ = await replica.send_request(pr, with_rejection=False)
+    replica_result = replica.try_send_request(pr, with_rejection=False)
     if is_streaming:
         with pytest.raises(RuntimeError, match=err_msg):
             replica_result.to_object_ref_gen()
@@ -192,7 +192,7 @@ async def test_send_request(
             _on_separate_loop=on_separate_loop,
         ),
     )
-    replica_result, _ = await replica.send_request(pr, with_rejection=False)
+    replica_result = replica.try_send_request(pr, with_rejection=False)
     if is_streaming:
         for i in range(5):
             assert await replica_result.__anext__() == f"Hello-{i}"
@@ -229,11 +229,12 @@ async def test_send_request_with_rejection(
             _on_separate_loop=on_separate_loop,
         ),
     )
-    replica_result, info = await replica.send_request(pr, with_rejection=True)
+    replica_result = replica.try_send_request(pr, with_rejection=True)
+    info = await replica_result.get_rejection_response()
     assert info.accepted == accepted
     assert info.num_ongoing_requests == 10
     if not accepted:
-        assert replica_result is None
+        pass
     elif is_streaming:
         for i in range(5):
             assert await replica_result.__anext__() == f"Hello-{i}"
@@ -270,21 +271,22 @@ async def test_send_request_with_rejection_cancellation(
 
     # Send request should hang because the downstream actor method call blocks
     # before sending the system message.
-    send_request_task = get_or_create_event_loop().create_task(
-        replica.send_request(pr, with_rejection=True)
+    replica_result = replica.try_send_request(pr, with_rejection=True)
+    request_task = get_or_create_event_loop().create_task(
+        replica_result.get_rejection_response()
     )
 
     # Check that the downstream actor method call has started.
     await executing_signal_actor.wait.remote()
 
-    _, pending = await asyncio.wait([send_request_task], timeout=0.001)
+    _, pending = await asyncio.wait([request_task], timeout=0.001)
     assert len(pending) == 1
 
     # Cancel the task. This should cause the downstream actor method call to
     # be cancelled (verified via signal actor).
-    send_request_task.cancel()
+    request_task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await send_request_task
+        await request_task
 
     await cancelled_signal_actor.wait.remote()
 
