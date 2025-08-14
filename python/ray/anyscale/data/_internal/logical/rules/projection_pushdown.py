@@ -69,11 +69,20 @@ class ProjectionPushdown(Rule):
         # Only combine projection specs if there are no expressions
         # When expressions are present, they take precedence
         if combined_exprs:
-            # If we have expressions, create a simplified Project operator
+            # When expressions are present, preserve column operations from outer operation
+            # The logical order is: expressions first, then column operations
+            outer_cols = outer_op.cols
+            outer_cols_rename = outer_op.cols_rename
+
+            # If outer operation has no column operations, fall back to inner operation
+            if outer_cols is None and outer_cols_rename is None:
+                outer_cols = inner_op.cols
+                outer_cols_rename = inner_op.cols_rename
+
             return Project(
                 inner_op.input_dependency,
-                cols=None,  # Let expressions determine the columns
-                cols_rename=None,  # Expressions handle column creation
+                cols=outer_cols,
+                cols_rename=outer_cols_rename,
                 exprs=combined_exprs,
                 # Give precedence to outer operator's ray_remote_args
                 ray_remote_args={
@@ -107,7 +116,8 @@ class ProjectionPushdown(Rule):
         # Only handle traditional column projections
         if project_op.exprs:
             # Cannot push expressions into ReadFiles, return unchanged
-            return read_op
+            # TODO: DATA-1334 Add support for pushing expressions into ReadFiles
+            return project_op
 
         read_op_spec = _get_projection_spec(read_op)
         project_op_spec = _get_projection_spec(project_op)

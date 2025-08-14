@@ -21,6 +21,7 @@ from ray.data._internal.execution.operators.map_transformer import (
     MapTransformFn,
     RowMapTransformFn,
 )
+from ray.data.expressions import col
 from ray.data._internal.logical.operators.map_operator import Project
 from ray.data._internal.logical.optimizers import LogicalOptimizer, get_execution_plan
 from ray.data.tests.conftest import *  # noqa
@@ -948,6 +949,117 @@ def test_map_batches_to_map_rows_fusion(ray_start_regular_shared):
     ]
     assert match_transform_fns(expected_fns, fns)
     assert match_ds_result(ds, list(range(5)))
+
+
+@pytest.mark.parametrize(
+    "first_op,second_op,expected_columns,unexpected_columns",
+    [
+        # with_column -> select_columns
+        (
+            lambda ds: ds.with_column("length_plus_one", col("sepal.length") + 1),
+            lambda ds: ds.select_columns(["sepal.length", "length_plus_one"]),
+            ["sepal.length", "length_plus_one"],
+            ["sepal.width", "petal.length", "petal.width", "variety"],
+        ),
+        # with_column -> rename_columns
+        (
+            lambda ds: ds.with_column("length_plus_one", col("sepal.length") + 1),
+            lambda ds: ds.rename_columns({"sepal.length": "renamed_length"}),
+            [
+                "renamed_length",
+                "length_plus_one",
+                "sepal.width",
+                "petal.length",
+                "petal.width",
+                "variety",
+            ],
+            ["sepal.length"],
+        ),
+        # select_columns -> with_column
+        (
+            lambda ds: ds.select_columns(["sepal.length", "sepal.width"]),
+            lambda ds: ds.with_column("length_plus_one", col("sepal.length") + 1),
+            ["sepal.length", "sepal.width", "length_plus_one"],
+            ["petal.length", "petal.width", "variety"],
+        ),
+        # rename_columns -> with_column
+        (
+            lambda ds: ds.rename_columns({"sepal.length": "renamed_length"}),
+            lambda ds: ds.with_column("length_doubled", col("renamed_length") * 2),
+            [
+                "renamed_length",
+                "length_doubled",
+                "sepal.width",
+                "petal.length",
+                "petal.width",
+                "variety",
+            ],
+            ["sepal.length"],
+        ),
+    ],
+)
+def test_projection_pushdown_exprs_and_cols_combinations(
+    ray_start_regular_shared, first_op, second_op, expected_columns, unexpected_columns
+):
+    """Test ProjectionPushdown correctly handles combinations of expressions and column operations.
+
+    This test ensures that when Project operations with expressions (from with_column)
+    are combined with column operations (from select_columns/rename_columns), both
+    types of operations are preserved and executed correctly.
+    """
+    path = "example://iris.parquet"
+    ds = ray.data.read_parquet(path)
+
+    # Apply the two operations
+    ds = first_op(ds)
+    ds = second_op(ds)
+
+    # Execute to trigger optimization
+    result = ds.take(1)[0]
+    result_keys = list(result.keys())
+
+    # Verify expected columns are present
+    for col_name in expected_columns:
+        assert (
+            col_name in result_keys
+        ), f"Expected '{col_name}' in result keys: {result_keys}"
+
+    # Verify unexpected columns are not present
+    for col_name in unexpected_columns:
+        assert (
+            col_name not in result_keys
+        ), f"Unexpected '{col_name}' in result keys: {result_keys}"
+
+
+def test_projection_pushdown_multiple_exprs_with_select(ray_start_regular_shared):
+    """Test that multiple expressions combined with column selection work correctly."""
+
+    path = "example://iris.parquet"
+    ds = ray.data.read_parquet(path)
+
+    # Add multiple columns with expressions
+    ds = ds.with_column("length_plus_one", col("sepal.length") + 1)
+    ds = ds.with_column("width_times_two", col("sepal.width") * 2)
+
+    # Select specific columns including both new ones
+    ds = ds.select_columns(["sepal.length", "length_plus_one", "width_times_two"])
+
+    result = ds.take(1)[0]
+    result_keys = list(result.keys())
+
+    # Should have exactly the selected columns
+    expected = ["sepal.length", "length_plus_one", "width_times_two"]
+    unexpected = ["sepal.width", "petal.length", "petal.width", "variety"]
+
+    for col_name in expected:
+        assert (
+            col_name in result_keys
+        ), f"Expected '{col_name}' in result keys: {result_keys}"
+
+    for col_name in unexpected:
+        assert (
+            col_name not in result_keys
+        ), f"Unexpected '{col_name}' in result keys: {result_keys}"
 
 
 if __name__ == "__main__":
