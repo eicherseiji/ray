@@ -10,6 +10,7 @@
 //python/ray/serve/tests:test_handle_2
 //python/ray/serve/tests:test_handle_cancellation
 //python/ray/serve/tests:test_handle_streaming
+//python/ray/serve/tests:test_healthcheck
 //python/ray/serve/tests:test_logging
 //python/ray/serve/tests:test_metrics
 //python/ray/serve/tests:test_model_composition
