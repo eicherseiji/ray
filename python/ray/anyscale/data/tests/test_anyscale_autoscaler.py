@@ -1,23 +1,28 @@
 import math
-from typing import OrderedDict, Optional
+import time
 import unittest
 from contextlib import contextmanager
+from typing import Optional, OrderedDict
 from unittest.mock import MagicMock, patch
 
-import time
 import pytest
 
-from ray.anyscale.data.autoscaler.anyscale_autoscaler import (
-    AnyscaleAutoscaler,
-    _NodeResourceSpec,
-    _TimeWindowAverageCalculator,
+from ray.anyscale.data._internal.actor_autoscaler.rayturbo_actor_autoscaler import (
     DefaultActorPoolResizingPolicy,
-    _normalize_scaling_up_factor,
+    RayTurboActorAutoscaler,
     _get_scaling_up_factor,
+    _normalize_scaling_up_factor,
 )
-from ray.data._internal.execution.autoscaler.autoscaling_actor_pool import (
-    AutoscalingActorPool,
+from ray.anyscale.data._internal.cluster_autoscaler.rayturbo_cluster_autoscaler import (
+    RayTurboClusterAutoscaler,
+    _NodeResourceSpec,
+)
+from ray.anyscale.data._internal.util.average_calculator import (
+    TimeWindowAverageCalculator,
+)
+from ray.data._internal.actor_autoscaler import (
     ActorPoolScalingRequest,
+    AutoscalingActorPool,
 )
 from ray.data._internal.execution.interfaces import ExecutionResources
 from ray.data._internal.execution.interfaces.physical_operator import PhysicalOperator
@@ -57,11 +62,11 @@ def current_time():
 
 
 def test_calcuate_time_window_average(current_time):
-    """Test _TimeWindowAverageCalculator."""
+    """Test TimeWindowAverageCalculator."""
     window_s = 10
     values_to_report = [i + 1 for i in range(20)]
 
-    calculator = _TimeWindowAverageCalculator(window_s)
+    calculator = TimeWindowAverageCalculator(window_s)
     assert calculator.get_average() is None
 
     for value in values_to_report:
@@ -146,7 +151,7 @@ def test_invalid_scaling_up_factors(invalid_factor):
 
 
 class TestClusterAutoscaling(unittest.TestCase):
-    """Tests for cluster autoscaling functions in AnyscaleAutoscaler."""
+    """Tests for cluster autoscaling functions in RayTurboClusterAutoscaler."""
 
     def setup_class(self):
         self._node_type1 = {
@@ -174,7 +179,7 @@ class TestClusterAutoscaling(unittest.TestCase):
 
     def test_get_node_resource_spec_and_count(self):
         # Test _get_node_resource_spec_and_count
-        autoscaler = AnyscaleAutoscaler(
+        autoscaler = RayTurboClusterAutoscaler(
             topology=MagicMock(),
             resource_manager=MagicMock(),
             execution_id="test_execution_id",
@@ -220,12 +225,12 @@ class TestClusterAutoscaling(unittest.TestCase):
             assert autoscaler._get_node_resource_spec_and_count() == expected
 
     @patch(
-        "ray.anyscale.data.autoscaler.anyscale_autoscaler.AnyscaleAutoscaler._send_resource_request",  # noqa: E501
+        "ray.anyscale.data._internal.cluster_autoscaler.rayturbo_cluster_autoscaler.RayTurboClusterAutoscaler._send_resource_request",  # noqa: E501
     )
     def test_try_scale_up_cluster(self, _send_resource_request):
         # Test _try_scale_up_cluster
         scaling_up_factor = 1.5
-        autoscaler = AnyscaleAutoscaler(
+        autoscaler = RayTurboClusterAutoscaler(
             topology=MagicMock(),
             resource_manager=MagicMock(),
             execution_id="test_execution_id",
@@ -248,7 +253,7 @@ class TestClusterAutoscaling(unittest.TestCase):
 
         # Test different CPU/memory utilization combinations.
         scale_up_threshold = (
-            AnyscaleAutoscaler.DEFAULT_CLUSTER_SCALING_UP_UTIL_THRESHOLD
+            RayTurboClusterAutoscaler.DEFAULT_CLUSTER_SCALING_UP_UTIL_THRESHOLD
         )
         for cpu_util in [scale_up_threshold / 2, scale_up_threshold]:
             for mem_util in [scale_up_threshold / 2, scale_up_threshold]:
@@ -260,7 +265,7 @@ class TestClusterAutoscaling(unittest.TestCase):
                 autoscaler._get_cluster_cpu_and_mem_util = MagicMock(
                     return_value=(cpu_util, mem_util),
                 )
-                autoscaler._try_scale_up_cluster()
+                autoscaler.try_trigger_scaling()
                 if not should_scale_up:
                     _send_resource_request.assert_called_with([])
                 else:
@@ -367,10 +372,10 @@ class MockAutoscalingActorPool(AutoscalingActorPool):
 
 
 class TestActorPoolAutoscaling:
-    """Tests for actor pool autoscaling functions in AnyscaleAutoscaler."""
+    """Tests for actor pool autoscaling functions in RayTurboActorAutoscaler."""
 
     def test_actor_pool_autoscaling(self, current_time):
-        """Test `_try_scale_up_or_down_actor_pool`,
+        """Test `try_trigger_scaling`,
         including actor pool utilization check and number of actors to scale up/down,
         not including other scaling up/down conditions.
         """
@@ -404,10 +409,9 @@ class TestActorPoolAutoscaling:
         resource_manager._op_resource_allocator.get_budget = MagicMock(
             return_value=ExecutionResources.for_limits()
         )
-        autoscaler = AnyscaleAutoscaler(
+        autoscaler = RayTurboActorAutoscaler(
             topology={op: op_state},
             resource_manager=resource_manager,
-            execution_id="test_execution_id",
             actor_pool_scaling_up_threshold=scaling_up_threadhold,
             actor_pool_scaling_down_threshold=scaling_down_threadhold,
             actor_pool_util_check_interval_s=0,
@@ -437,7 +441,7 @@ class TestActorPoolAutoscaling:
         # 7 / (2 * 4) = 0.875 > 0.8
         assert util == pytest.approx(7 / (min_size * max_tasks_in_flight_per_actor))
         # Scale-up should be triggered.
-        autoscaler._try_scale_up_or_down_actor_pool()
+        autoscaler.try_trigger_scaling()
         assert actor_pool.current_size() == math.ceil(
             min_size * scaling_up_factor
         )  # current_size = 2 * 3 = 6
@@ -455,7 +459,7 @@ class TestActorPoolAutoscaling:
         )  # 24 / (6 * 4) = 1.0 > 0.8
         # Scale-up should be triggered.
         # The size should be capped by max_size.
-        autoscaler._try_scale_up_or_down_actor_pool()
+        autoscaler.try_trigger_scaling()
         assert actor_pool.current_size() == max_size  # current_size = 8
         current_time.increment()
 
@@ -470,7 +474,7 @@ class TestActorPoolAutoscaling:
             15 / (actor_pool.current_size() * max_tasks_in_flight_per_actor),
         )  # 15 / (8 * 4) = 0.46875 < 0.5
         # Scale-down should be triggered.
-        autoscaler._try_scale_up_or_down_actor_pool()
+        autoscaler.try_trigger_scaling()
         assert actor_pool.current_size() == max_size - 1  # current_size = 8 - 1 = 7
         current_time.increment()
 
@@ -482,7 +486,7 @@ class TestActorPoolAutoscaling:
             15 / (actor_pool.current_size() * max_tasks_in_flight_per_actor),
         )  # 15 / (7 * 4) = 0.5357 > 0.5
         # Neither scale-up nor scale-down should be triggered.
-        autoscaler._try_scale_up_or_down_actor_pool()
+        autoscaler.try_trigger_scaling()
         assert actor_pool.current_size() == max_size - 1
         current_time.increment()
 
@@ -520,10 +524,9 @@ class TestActorPoolAutoscaling:
             return_value=ExecutionResources.for_limits()
         )
 
-        autoscaler = AnyscaleAutoscaler(
+        autoscaler = RayTurboActorAutoscaler(
             topology={op: op_state},
             resource_manager=resource_manager,
-            execution_id="test_execution_id",
             actor_pool_scaling_up_threshold=0.8,  # High utilization threshold to ensure scaling
             actor_pool_util_check_interval_s=0,
             actor_pool_util_avg_window_s=0.1,
@@ -545,7 +548,7 @@ class TestActorPoolAutoscaling:
 
         # First scale (very low capacity ratio - should use 4.0 scaling factor)
         # Current capacity ratio: 2/20 = 0.1 < 0.25, so factor = 4.0
-        autoscaler._try_scale_up_or_down_actor_pool()
+        autoscaler.try_trigger_scaling()
         expected_sizes.append(
             min(max_size, math.ceil(min_size * 4.0))
         )  # min_size * 4.0 = 8
@@ -561,7 +564,7 @@ class TestActorPoolAutoscaling:
         actor_pool._current_in_flight_tasks = (
             actor_pool.current_size() * max_tasks_in_flight_per_actor
         )
-        autoscaler._try_scale_up_or_down_actor_pool()
+        autoscaler.try_trigger_scaling()
         expected_sizes.append(
             min(max_size, math.ceil(expected_sizes[-1] * 2.0))
         )  # 8 * 2.0 = 16
@@ -577,7 +580,7 @@ class TestActorPoolAutoscaling:
         actor_pool._current_in_flight_tasks = (
             actor_pool.current_size() * max_tasks_in_flight_per_actor
         )
-        autoscaler._try_scale_up_or_down_actor_pool()
+        autoscaler.try_trigger_scaling()
         # Should hit max_size limit (16 * 1.5 = 24, but max is 20)
         assert actor_pool.current_size() == max_size
 
@@ -642,10 +645,9 @@ class TestActorPoolAutoscaling:
         scaling_up_threadhold = 0.8
         scaling_down_threadhold = 0.5
         scaling_up_factor = 3
-        autoscaler = AnyscaleAutoscaler(
+        autoscaler = RayTurboActorAutoscaler(
             topology={op: op_state},
             resource_manager=resource_manager,
-            execution_id="test_execution_id",
             actor_pool_scaling_up_threshold=scaling_up_threadhold,
             actor_pool_scaling_down_threshold=scaling_down_threadhold,
             actor_pool_util_check_interval_s=0,
@@ -665,7 +667,7 @@ class TestActorPoolAutoscaling:
 
         # Set the utilization to 100% and try to scale up.
         actor_pool._current_in_flight_tasks = min_size * max_tasks_in_flight_per_actor
-        autoscaler._try_scale_up_or_down_actor_pool()
+        autoscaler.try_trigger_scaling()
         actual_scale_up = actor_pool.current_size() - min_size
         assert actual_scale_up == expected_scale_up
 
@@ -696,10 +698,9 @@ class TestActorPoolAutoscaling:
 
         scaling_up_threadhold = 0.8
         scaling_down_threadhold = 0.5
-        autoscaler = AnyscaleAutoscaler(
+        autoscaler = RayTurboActorAutoscaler(
             topology={op: op_state},
             resource_manager=MagicMock(),
-            execution_id="test_execution_id",
             actor_pool_scaling_up_threshold=scaling_up_threadhold,
             actor_pool_scaling_down_threshold=scaling_down_threadhold,
             actor_pool_util_check_interval_s=0,
