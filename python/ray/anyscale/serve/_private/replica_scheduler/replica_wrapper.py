@@ -46,9 +46,14 @@ class gRPCReplicaWrapper(ReplicaWrapper):
             request_args=serializer.dumps_request(pr.args),
             request_kwargs=serializer.dumps_request(pr.kwargs),
         )
-        if with_rejection:
+        if with_rejection and pr.metadata.is_streaming:
             # Call a separate handler that may reject the request.
             # This handler is *always* a streaming call and the first message will
+            # be a system message that accepts or rejects.
+            call = self._stub.HandleRequestWithRejectionStreaming(asgi_request)
+        elif with_rejection and not pr.metadata.is_streaming:
+            # Call a separate handler that may reject the request.
+            # This handler is *always* a unary call and the first message will
             # be a system message that accepts or rejects.
             call = self._stub.HandleRequestWithRejection(asgi_request)
         elif pr.metadata.is_streaming:

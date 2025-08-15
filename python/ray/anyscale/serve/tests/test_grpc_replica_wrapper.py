@@ -75,6 +75,43 @@ class FakeReplicaActor:
         request: serve_proprietary_pb2.ASGIRequest,
         context: grpc.aio.ServicerContext,
     ):
+        args = cloudpickle.loads(request.request_args)
+        kwargs = cloudpickle.loads(request.request_kwargs)
+
+        cancelled_signal_actor = kwargs.pop("cancelled_signal_actor", None)
+        if cancelled_signal_actor is not None:
+            executing_signal_actor = kwargs.pop("executing_signal_actor")
+            async with send_signal_on_cancellation(cancelled_signal_actor):
+                await executing_signal_actor.send.remote()
+
+            return
+
+        await context.send_initial_metadata(
+            [
+                ("accepted", str(int(self._replica_queue_length_info.accepted))),
+                (
+                    "num_ongoing_requests",
+                    str(self._replica_queue_length_info.num_ongoing_requests),
+                ),
+            ]
+        )
+        if not self._replica_queue_length_info.accepted:
+            # NOTE(edoakes): in gRPC, it's not guaranteed that the initial metadata sent
+            # by the server will be delivered for a stream with no messages. Therefore,
+            # we send a dummy message here to ensure it is populated in every case.
+            # The same is done in the actual gRPC replica implementation.
+            return serve_proprietary_pb2.ASGIResponse(serialized_message=b"")
+
+        message = args[0]
+        return serve_proprietary_pb2.ASGIResponse(
+            serialized_message=cloudpickle.dumps(message)
+        )
+
+    async def HandleRequestWithRejectionStreaming(
+        self,
+        request: serve_proprietary_pb2.ASGIRequest,
+        context: grpc.aio.ServicerContext,
+    ):
         request_metadata = pickle.loads(request.pickled_request_metadata)
         args = cloudpickle.loads(request.request_args)
         kwargs = cloudpickle.loads(request.request_kwargs)
@@ -105,20 +142,15 @@ class FakeReplicaActor:
             return
 
         message = args[0]
-        if request_metadata.is_streaming:
-            for i in range(5):
-                if request_metadata.is_http_request:
-                    yield serve_proprietary_pb2.ASGIResponse(
-                        serialized_message=pickle.dumps(f"{message}-{i}")
-                    )
-                else:
-                    yield serve_proprietary_pb2.ASGIResponse(
-                        serialized_message=cloudpickle.dumps(f"{message}-{i}")
-                    )
-        else:
-            yield serve_proprietary_pb2.ASGIResponse(
-                serialized_message=cloudpickle.dumps(message)
-            )
+        for i in range(5):
+            if request_metadata.is_http_request:
+                yield serve_proprietary_pb2.ASGIResponse(
+                    serialized_message=pickle.dumps(f"{message}-{i}")
+                )
+            else:
+                yield serve_proprietary_pb2.ASGIResponse(
+                    serialized_message=cloudpickle.dumps(f"{message}-{i}")
+                )
 
 
 @pytest.fixture

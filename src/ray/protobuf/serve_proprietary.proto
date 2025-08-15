@@ -33,5 +33,6 @@ message ASGIResponse {
 service ASGIService {
   rpc HandleRequest(ASGIRequest) returns (ASGIResponse);
   rpc HandleRequestStreaming(ASGIRequest) returns (stream ASGIResponse);
-  rpc HandleRequestWithRejection(ASGIRequest) returns (stream ASGIResponse);
+  rpc HandleRequestWithRejection(ASGIRequest) returns (ASGIResponse);
+  rpc HandleRequestWithRejectionStreaming(ASGIRequest) returns (stream ASGIResponse);
 }

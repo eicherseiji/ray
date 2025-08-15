@@ -820,8 +820,51 @@ class AnyscaleReplica(ReplicaBase):
         request_metadata: RequestMetadata,
         *request_args,
         **request_kwargs,
+    ):
+        """gRPC entrypoint for all unary requests with strict max_ongoing_requests enforcement
+
+        This generator yields a system message indicating if the request was accepted,
+        then the actual response.
+
+        If an exception occurred while processing the request, whether it's a user
+        exception or an error intentionally raised by Serve, it will be returned as
+        a gRPC response instead of raised directly.
+        """
+        result_gen = self.handle_request_with_rejection(
+            request_metadata, *request_args, **request_kwargs
+        )
+        queue_len_info: ReplicaQueueLengthInfo = await result_gen.__anext__()
+        await context.send_initial_metadata(
+            [
+                ("accepted", str(int(queue_len_info.accepted))),
+                ("num_ongoing_requests", str(queue_len_info.num_ongoing_requests)),
+            ]
+        )
+        if not queue_len_info.accepted:
+            # NOTE(edoakes): in gRPC, it's not guaranteed that the initial metadata sent
+            # by the server will be delivered for a stream with no messages. Therefore,
+            # we send a dummy message here to ensure it is populated in every case.
+            return b""
+
+        result = await result_gen.__anext__()
+        # Consume the result generator to ensure all request operations are completed.
+        async for _ in result_gen:
+            pass
+
+        if request_metadata.is_grpc_request:
+            result = (request_metadata.grpc_context, result.SerializeToString())
+
+        return result
+
+    @_wrap_grpc_call
+    async def HandleRequestWithRejectionStreaming(
+        self,
+        context: grpc.aio.ServicerContext,
+        request_metadata: RequestMetadata,
+        *request_args,
+        **request_kwargs,
     ) -> AsyncGenerator[Any, None]:
-        """gRPC entrypoint for all requests with strict max_ongoing_requests enforcement
+        """gRPC entrypoint for all streaming requests with strict max_ongoing_requests enforcement
 
         This generator yields a system message indicating if the request was accepted,
         then the actual response(s).

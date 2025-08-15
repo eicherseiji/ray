@@ -231,6 +231,30 @@ class gRPCReplicaResult(ReplicaResult):
             # The router will retry scheduling the request with the
             # cache invalidated, at which point if the actor is actually
             # dead, the router will realize through active probing.
+            if not self._is_streaming:
+                # In UnaryUnary calls, initial metadata is sent back with the request
+                # response, so we can't determine if the request was accepted until
+                # after the request is handled. If the replica crashed while handling
+                # the request, we can still get initial metadata via the AioRpcError,
+                # since the server sets the metadata before handling the request.
+                # If there is no metadata, we know the replica was already unavailable
+                # prior to the request being sent. We only raise an ActorUnavailableError
+                # (and thus retry the request) if the request was rejected or if the
+                # replica was already unavailable.
+                metadata = e.initial_metadata()
+                accepted = metadata.get("accepted", None)
+                if accepted is not None and bool(int(accepted)):
+                    num_ongoing_requests = metadata.get("num_ongoing_requests", None)
+                    if num_ongoing_requests is None:
+                        raise RuntimeError(
+                            f"Unexpected error ({e.code()}): {e.details()}."
+                        )
+
+                    return ReplicaQueueLengthInfo(
+                        accepted=True,
+                        num_ongoing_requests=int(num_ongoing_requests),
+                    )
+
             if e.code() == grpc.StatusCode.UNAVAILABLE:
                 raise ActorUnavailableError(
                     "Actor is unavailable.",
