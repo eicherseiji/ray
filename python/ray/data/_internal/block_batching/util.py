@@ -151,7 +151,7 @@ def format_batches(
     """Given an iterator of blocks, returns an iterator of formatted batches.
 
     Args:
-        block_iter: An iterator over blocks.
+        batch_iter: An iterator over batches.
         batch_format: The batch format to use.
         stats: An optional stats object to record formatting times.
 
