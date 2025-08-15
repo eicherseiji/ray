@@ -282,3 +282,7 @@ class ElasticScalingPolicy(ScalingPolicy):
         So that cluster can scale down more quickly before the request timeout.
         """
         self._cancel_resource_request()
+
+    def before_controller_abort(self):
+        """Cancel the autoscaling request when the controller is aborted."""
+        self._cancel_resource_request()

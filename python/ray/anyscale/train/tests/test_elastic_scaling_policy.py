@@ -98,6 +98,24 @@ def test_non_running_worker_group_decision():
     assert decision.num_workers == max_workers
 
 
+def test_before_controller_abort():
+    """Test that before_controller_abort sends a cancel request to the AutoscalingCoordinator."""
+    resources_per_worker = {"CPU": 4, "GPU": 1}
+    scaling_config = ScalingConfig(
+        num_workers=(2, 4),
+        resources_per_worker=resources_per_worker,
+        use_gpu=True,
+    )
+    policy = ElasticScalingPolicy(scaling_config)
+    mock_coordinator = policy._autoscaling_coordinator
+
+    # Call before_controller_abort and check that cancel_request is called with the requester_id
+    policy.before_controller_abort()
+    mock_coordinator.cancel_request.remote.assert_called_once_with(
+        requester_id=policy._requester_id
+    )
+
+
 def test_get_allocated_resources_interval():
     """Tests that remote calls to the AutoscalingCoordinator are spaced out by a minimum time interval."""
     min_workers, max_workers = 4, 64

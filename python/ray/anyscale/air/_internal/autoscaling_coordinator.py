@@ -181,7 +181,7 @@ class AutoscalingCoordinator:
             return []
         return self._ongoing_reqs[requester_id].allocated_resources
 
-    def _maybe_sutract_resources(self, res1: ResourceDict, res2: ResourceDict) -> bool:
+    def _maybe_subtract_resources(self, res1: ResourceDict, res2: ResourceDict) -> bool:
         """If res2<=res1, subtract res2 from res1 in-place, and return True.
         Otherwise return False."""
         if any(res1.get(key, 0) < res2[key] for key in res2):
@@ -229,7 +229,7 @@ class AutoscalingCoordinator:
             ongoing_req.allocated_resources = []
             for req in ongoing_req.requested_resources:
                 for node_resource in cluster_node_resources:
-                    if self._maybe_sutract_resources(node_resource, req):
+                    if self._maybe_subtract_resources(node_resource, req):
                         ongoing_req.allocated_resources.append(req)
                         break
         # Allocate remaining resources.
