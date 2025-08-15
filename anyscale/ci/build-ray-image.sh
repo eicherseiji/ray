@@ -290,8 +290,17 @@ cp LICENSE.runtime "${CONTEXT_TMP}/LICENSE"
 aws s3 cp "${S3_TEMP}/download_anyscale_data${ARCH_SUFFIX}" "${CONTEXT_TMP}/download_anyscale_data"
 chmod +x "${CONTEXT_TMP}/download_anyscale_data"
 
+# If RAY_INLINE_SITE_PKG is not set, then inline the site package if it is a dev build.
+if [[ "${RAY_INLINE_SITE_PKG:-}" == "" ]]; then
+    if [[ "${RAY_RELEASE_BUILD:-}" != "true" ]]; then
+        RAY_INLINE_SITE_PKG="true"
+    else
+        RAY_INLINE_SITE_PKG="false"
+    fi
+fi
+
 # Must keep this consistent with anyscale/ci/upload-rayturbo-artifacts.sh
-if [[ "${RAY_RELEASE_BUILD:-}" == "true" ]]; then
+if [[ "${RAY_INLINE_SITE_PKG}" != "true" ]]; then
   if [[ "${IS_SLIM}" == "1" ]]; then
     ANYSCALE_PRESTART_DATA_PATH="common/ray-opt/${RAY_VERSION}/${FULL_COMMIT}/ray-opt-${PY_VERSION_CODE}-min${ARCH_SUFFIX}.tar.gz"
   else
@@ -314,7 +323,7 @@ fi
 # We place in the oss site package.
 cp "${BUILD_TMP}/ray-oss.tgz" "${CONTEXT_TMP}/ray-oss.tgz"
 
-if [[ "${RAY_RELEASE_BUILD:-}" != "true" ]]; then
+if [[ "${RAY_INLINE_SITE_PKG}" == "true" ]]; then
     # In dev builds, we copy in the runtime site package, so that we do not
     # need to upload a dev version of site package to org data S3.
     cp "${BUILD_TMP}/ray-opt.tgz" "${CONTEXT_TMP}/ray-opt.tgz"
