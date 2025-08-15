@@ -17,6 +17,7 @@
 //python/ray/serve/tests:test_request_timeout
 //python/ray/serve/tests:test_streaming_response
 //python/ray/serve/tests:test_target_capacity
+//python/ray/serve/tests:test_deployment_version
 //python/ray/serve/tests:test_http_cancellation
 //python/ray/serve/tests:test_http_headers
 //python/ray/serve/tests:test_backpressure
