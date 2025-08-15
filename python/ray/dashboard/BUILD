@@ -67,7 +67,7 @@ py_test(
     srcs = ["modules/job/tests/test_job_manager.py"],
     tags = [
         "exclusive",
-        "team:serve",
+        "team:core",
     ],
     deps = [":conftest"],
 )
