@@ -52,7 +52,7 @@ def test_actor_pool_scaling():
         num_free_task_slots=MagicMock(return_value=5),
         num_tasks_in_flight=MagicMock(return_value=15),
         per_actor_resource_usage=MagicMock(return_value=ExecutionResources(cpu=1)),
-        _max_actor_concurrency=1,
+        max_actor_concurrency=MagicMock(return_value=1),
         get_pool_util=MagicMock(
             # NOTE: Unittest mocking library doesn't support proxying to actual
             #       non-mocked methods so we have emulate it by directly binding existing

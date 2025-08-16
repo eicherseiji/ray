@@ -384,7 +384,7 @@ RAY_SERVE_ENABLE_TASK_EVENTS = get_env_bool("RAY_SERVE_ENABLE_TASK_EVENTS", "0")
 
 # Use compact instead of spread scheduling strategy
 RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY = get_env_bool(
-    "RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "0"
+    "RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "1"
 )
 
 # Comma-separated list of custom resources prioritized in scheduling. Sorted from highest to lowest priority.
@@ -464,3 +464,11 @@ RAY_SERVE_REQUEST_PATH_LOG_BUFFER_SIZE = get_env_int(
 
 # The message to return when the replica is healthy.
 HEALTHY_MESSAGE = "success"
+
+# If throughput optimized Ray Serve is enabled, set the following constants.
+# This should be at the end.
+if get_env_bool("ANYSCALE_RAY_SERVE_THROUGHPUT_OPT", "0"):
+    RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD = False
+    RAY_SERVE_REQUEST_PATH_LOG_BUFFER_SIZE = 1000
+    RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP = False
+    RAY_SERVE_LOG_TO_STDERR = False

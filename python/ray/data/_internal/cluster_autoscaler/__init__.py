@@ -11,9 +11,20 @@ if TYPE_CHECKING:
 def create_cluster_autoscaler(
     topology: "Topology", resource_manager: "ResourceManager", *, execution_id: str
 ) -> ClusterAutoscaler:
-    return DefaultClusterAutoscaler(
-        topology, resource_manager, execution_id=execution_id
-    )
+    from ray._private.ray_constants import env_bool
+
+    if env_bool("RAY_DATA_ENABLE_RAYTURBO_CLUSTER_AUTOSCALER", True):
+        from ray.anyscale.data._internal.cluster_autoscaler import (
+            RayTurboClusterAutoscaler,
+        )
+
+        return RayTurboClusterAutoscaler(topology, resource_manager, execution_id)
+    else:
+        return DefaultClusterAutoscaler(
+            topology,
+            resource_manager,
+            execution_id=execution_id,
+        )
 
 
 __all__ = ["ClusterAutoscaler"]

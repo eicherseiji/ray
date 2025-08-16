@@ -244,6 +244,7 @@ ray_cc_library(
         "ray_internal_flag_def.h",
     ],
     deps = [
+        "//src/ray/anyscale/common:ray_turbo_config_def",
         "//src/ray/util",
         "@com_google_absl//absl/algorithm",
         "@com_google_absl//absl/strings",
