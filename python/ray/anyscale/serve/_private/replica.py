@@ -1082,11 +1082,15 @@ class AnyscaleReplica(ReplicaBase):
         return tracing_ctx
 
     def _determine_http_route(self, scope: Scope) -> str:
-        route = scope.get("path", "")
+        # Default to route prefix for consistency with non-DI mode
+        route = self._route_prefix
         if self._user_callable_asgi_app is not None:
             try:
-                route = get_asgi_route_name(self._user_callable_asgi_app, scope)
+                matched_route = get_asgi_route_name(self._user_callable_asgi_app, scope)
+                if matched_route is not None:
+                    route = matched_route
             except Exception:
+                # If route matching fails, keep the route prefix
                 pass
 
         return route
@@ -1162,7 +1166,6 @@ class AnyscaleReplica(ReplicaBase):
             request_id=request_id,
             internal_request_id=generate_request_id(),
             call_method="__call__",
-            # TODO(edoakes): populate this.
             route=self._determine_http_route(scope),
             app_name=self._deployment_id.app_name,
             # TODO(edoakes): populate the multiplexed model ID.

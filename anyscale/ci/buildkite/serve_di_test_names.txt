@@ -24,6 +24,7 @@
 //python/ray/serve/tests:test_http_routes
 //python/ray/serve/tests:test_backpressure
 //python/ray/serve/tests:test_batching
+//python/ray/serve/tests:test_replica_request_context
 //python/ray/anyscale/serve:tests/test_direct_ingress
 //python/ray/anyscale/serve:tests/test_direct_ingress_with_grpc
 //python/ray/anyscale/serve:tests/test_tracing_utils
