@@ -27,6 +27,7 @@ from ray.anyscale.data._internal.logical.rules.map_fusion import (
 )
 from ray.anyscale.data.api.context_mixin import DataContextMixin
 from ray.anyscale.data.api.dataset_mixin import DatasetMixin
+from ray.anyscale.data.checkpoint.iterator_mixin import DataIteratorMixin
 from ray.data._internal.execution.execution_callback import add_execution_callback
 from ray.data._internal.execution.interfaces.op_runtime_metrics import (
     MetricsGroup,
@@ -134,6 +135,7 @@ def apply_anyscale_patches():
     # Patch ray.data.Dataset
     _patch_class_with_mixin(ray.data.Dataset, DatasetMixin)
     _patch_class_with_dataclass_mixin(ray.data.DataContext, DataContextMixin)
+    _patch_class_with_mixin(ray.data.DataIterator, DataIteratorMixin)
 
     # Patch default aggregation implementations with more performant
     # vectorized versions
