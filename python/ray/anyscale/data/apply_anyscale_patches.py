@@ -1,6 +1,6 @@
 from dataclasses import fields
-
 import ray
+
 from ray._private.arrow_utils import get_pyarrow_version
 from ray._private.ray_constants import env_bool
 from ray.anyscale.data._internal.execution.callbacks.insert_issue_detectors import (
@@ -94,6 +94,20 @@ def _patch_aggregations():
         aggregate.Unique = aggregate_vectorized.UniqueVectorized
 
 
+def _patch_arrow_ops():
+    """Patch arrow operations with optimized implementations."""
+    try:
+        from ray.anyscale.data._internal.arrow_ops.transform_pyarrow import (
+            hash_partition_optimized,
+        )
+        from ray.data._internal.arrow_ops import transform_pyarrow
+
+        # Replace the hash_partition function with the optimized version
+        transform_pyarrow.hash_partition = hash_partition_optimized
+    except Exception:
+        pass
+
+
 def _patch_observability_metrics():
     """
     This function patches the OpRuntimeMetrics class to add custom metrics on the
@@ -132,6 +146,7 @@ def _patch_observability_metrics():
 
 def apply_anyscale_patches():
     """Apply Anyscale-specific patches for Ray Data."""
+
     # Patch ray.data.Dataset
     _patch_class_with_mixin(ray.data.Dataset, DatasetMixin)
     _patch_class_with_dataclass_mixin(ray.data.DataContext, DataContextMixin)
@@ -140,6 +155,9 @@ def apply_anyscale_patches():
     # Patch default aggregation implementations with more performant
     # vectorized versions
     _patch_aggregations()
+
+    # Patch arrow operations with optimized implementations
+    _patch_arrow_ops()
 
     # Patch observability metrics
     _patch_observability_metrics()

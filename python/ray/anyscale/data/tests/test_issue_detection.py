@@ -67,8 +67,8 @@ class TestHangingExecutionIssueDetector:
         logger.addHandler(handler)
 
         # Set up mock stats to return values that will trigger adaptive threshold
-        mocked_mean = 0.5
-        mocked_stddev = 0.05
+        mocked_mean = 2.0  # Increase from 0.5 to 2.0 seconds
+        mocked_stddev = 0.2  # Increase from 0.05 to 0.2 seconds
         mock_stats = mock_stats_cls.return_value
         mock_stats.count.return_value = 20  # Enough samples
         mock_stats.mean.return_value = mocked_mean
@@ -93,7 +93,7 @@ class TestHangingExecutionIssueDetector:
 
         # # test hanging does log hanging warning
         def f2(x):
-            time.sleep(1.1)
+            time.sleep(5.0)  # Increase from 1.1 to 5.0 seconds to exceed new threshold
             return x
 
         _ = ray.data.range(1).map(f2).materialize()
