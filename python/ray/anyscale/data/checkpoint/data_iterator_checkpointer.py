@@ -134,37 +134,48 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
     outstanding row IDs to a checkpoint file.
 
     Checkpoint files are stored in a hive-style partitioning format:
-    {checkpoint_path}/epoch={x}/checkpoint={y}/rank_{r}_chunk_{z}.parquet
+    {checkpoint_path}/rank={r}/epoch={x}/checkpoint={y}/chunk_{z}.parquet
 
     The epoch tracks the number of times iterator has reset (and called `start_epoch`).
     The checkpoint index tracks the number of committed data checkpoints so far,
     where each committed checkpoint corresponds to a call to `state_dict`.
     The chunk index tracks the number of chunks written to the current checkpoint directory.
-    The rank index tracks the world rank of the current worker, which is used to avoid
-    file name collisions.
+
+    The rank index tracks the world rank of the current worker to avoid directory collisions.
+    Setting the top-level directory to the rank allows each worker to manage a separate
+    set of checkpoint files, which simplifies directory management.
 
     Here's an example of the checkpoint directory structure:
 
     /tmp/iterator_checkpoint_test/
-    ├── epoch=0
-    │   ├── checkpoint=0
-    │   │   └── rank_0_chunk_0.parquet
-    │   ├── checkpoint=1
-    │   │   └── rank_0_chunk_0.parquet
-    │   ├── checkpoint=2
-    │   │   └── rank_0_chunk_0.parquet
-    │   ├── checkpoint=3
-    │   │   └── rank_0_chunk_0.parquet
-    │   └── checkpoint=4
-    │       ├── rank_0_chunk_0.parquet
-    │       └── rank_0_chunk_1.parquet
-    └── epoch=1
-        ├── checkpoint=0
-        │   └── rank_0_chunk_0.parquet
-        ├── checkpoint=1
-        │   └── rank_0_chunk_0.parquet
-        └── checkpoint=2
-            └── rank_0_chunk_0.parquet
+    └── rank=0
+        ├── epoch=0
+        │   ├── checkpoint=0
+        │   │   ├── chunk_0.parquet
+        │   │   └── chunk_1.parquet
+        │   ├── checkpoint=1
+        │   │   └── chunk_0.parquet
+        │   └── checkpoint=2
+        │       └── chunk_0.parquet
+        └── epoch=1
+            ├── checkpoint=0
+            │   └── chunk_0.parquet
+            └── checkpoint=1
+                └── chunk_0.parquet
+    └── rank=1
+        ├── epoch=0
+        │   ├── checkpoint=0
+        │   │   ├── chunk_0.parquet
+        │   │   └── chunk_1.parquet
+        │   ├── checkpoint=1
+        │   │   └── chunk_0.parquet
+        │   └── checkpoint=2
+        │       └── chunk_0.parquet
+        └── epoch=1
+            ├── checkpoint=0
+            │   └── chunk_0.parquet
+            └── checkpoint=1
+                └── chunk_0.parquet
 
     Calling `state_dict` triggers an on-demand snapshot of the data iterator state.
     For example: {"epoch": 1, "checkpoint_idx": 2, "epoch_running": True}.
@@ -226,11 +237,12 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
     def _get_current_checkpoint_directory(self) -> str:
         """Get the current checkpoint directory where files are written.
 
-        Example: {checkpoint_path}/epoch={x}/checkpoint={y}
+        Example: {checkpoint_path}/rank={r}/epoch={x}/checkpoint={y}
         """
         # TODO: handle multiple datasets (add the dataset name to the path)
         return os.path.join(
             self._checkpoint_path_unwrapped,
+            f"rank={self.world_rank}",
             f"epoch={self._epoch_idx}",
             f"checkpoint={self._current_checkpoint_idx}",
         )
@@ -247,11 +259,11 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
     def _get_current_checkpoint_path(self) -> str:
         """Get the current checkpoint file to store row IDs.
 
-        Example: {checkpoint_path}/epoch={x}/checkpoint={y}/rank_{r}_chunk_{z}.parquet
+        Example: {checkpoint_path}/rank={r}/epoch={x}/checkpoint={y}/chunk_{z}.parquet
         """
         return os.path.join(
             self._get_current_checkpoint_directory(),
-            f"rank_{self.world_rank}_chunk_{self._chunk_idx}.parquet",
+            f"chunk_{self._chunk_idx}.parquet",
         )
 
     def _flush_row_ids(self, row_ids_batches: List[pa.Array]):
@@ -407,11 +419,6 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
 
         Deletes a partially written checkpoint directory from a previous run.
         """
-        # TODO: make this async, and enforce a barrier before all workers
-        # start writing to the new checkpoint directory.
-        if self.world_rank != 0:
-            return
-
         from ray.train.v2._internal.execution.storage import (
             _exists_at_fs_path,
             _create_directory,

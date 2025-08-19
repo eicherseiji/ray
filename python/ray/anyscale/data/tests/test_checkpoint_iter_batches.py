@@ -20,11 +20,12 @@ def _read_checkpoint_files_for_state_dict(state_dict: dict, root_path: Path) -> 
     # Get all checkpoints up to and including checkpoint_idx
     checkpointed_row_ids = []
     for i in range(checkpoint_idx + 1):
-        checkpoint_path = root_path / f"epoch={epoch}" / f"checkpoint={i}"
-        for checkpoint_file in checkpoint_path.glob("*.parquet"):
-            checkpointed_row_ids.extend(
-                pq.read_table(checkpoint_file).column("id").to_pylist()
-            )
+        for rank_dir in root_path.glob("rank=*"):
+            checkpoint_path = rank_dir / f"epoch={epoch}" / f"checkpoint={i}"
+            for checkpoint_file in checkpoint_path.glob("*.parquet"):
+                checkpointed_row_ids.extend(
+                    pq.read_table(checkpoint_file).column("id").to_pylist()
+                )
     return sorted(checkpointed_row_ids)
 
 
@@ -132,20 +133,14 @@ def test_streaming_split_iterator_checkpointing(ray_start_regular_shared, tmp_pa
 
     state_dicts_per_worker = collections.defaultdict(list)
 
-    # TODO: This is flaky without this barrier due to the directory setup race condition.
-    # `state_dict` should be a barrier across workers.
-    barrier = threading.Barrier(world_size)
-
     def run_epoch(ds_iter, rank):
         consumed_batches = 0
         for _ in ds_iter.iter_batches(batch_size=batch_size):
             consumed_batches += 1
             if consumed_batches in checkpoint_at_batches:
                 state_dict = ds_iter.state_dict()
-                barrier.wait()
                 state_dicts_per_worker[rank].append(state_dict)
         state_dict = ds_iter.state_dict()
-        barrier.wait()
         state_dicts_per_worker[rank].append(state_dict)
 
     for epoch in range(num_epochs):

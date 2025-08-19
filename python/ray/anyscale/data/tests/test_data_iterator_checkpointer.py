@@ -43,7 +43,7 @@ def test_basic(tmp_path):
 
     assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
     checkpoint_path = tmp_path.joinpath(
-        "epoch=0", "checkpoint=0", "rank_0_chunk_0.parquet"
+        "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
     )
     assert checkpoint_path.is_file()
     assert pq.read_table(checkpoint_path).column("id").to_pylist() == [1, 2, 3, 4, 5, 6]
@@ -62,7 +62,7 @@ def test_periodic_flush_on_file_size_threshold(tmp_path):
     checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
 
     checkpoint_path = tmp_path.joinpath(
-        "epoch=0", "checkpoint=0", "rank_0_chunk_0.parquet"
+        "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
     )
     assert not checkpoint_path.is_file()
 
@@ -86,7 +86,7 @@ def test_force_flush(tmp_path):
     checkpointer.record_yielded_batch(_create_batch([4, 5, 6]))
 
     checkpoint_path = tmp_path.joinpath(
-        "epoch=0", "checkpoint=0", "rank_0_chunk_0.parquet"
+        "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
     )
     assert not checkpoint_path.is_file()
 
@@ -125,13 +125,13 @@ def test_multi_worker_checkpoint_commit(tmp_path):
     for i, checkpointer in enumerate(checkpointers):
         assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
 
-    for i in range(world_size):
+    for rank in range(world_size):
         checkpoint_path = tmp_path.joinpath(
-            "epoch=0", "checkpoint=0", f"rank_{i}_chunk_0.parquet"
+            f"rank={rank}", "epoch=0", "checkpoint=0", "chunk_0.parquet"
         )
         assert checkpoint_path.is_file()
         assert pq.read_table(checkpoint_path).column("id").to_pylist() == list(
-            range(i * 3, (i + 1) * 3)
+            range(rank * 3, (rank + 1) * 3)
         )
 
 
@@ -161,8 +161,10 @@ def test_state_dict_across_epoch_lifecycle(tmp_path):
     checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
     for _ in range(2):
         assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
-    assert tmp_path.joinpath("epoch=0", "checkpoint=0").is_dir()
-    assert _read_checkpoint_files(tmp_path.joinpath("epoch=0")) == list(range(1, 4))
+    assert tmp_path.joinpath("rank=0", "epoch=0", "checkpoint=0").is_dir()
+    assert _read_checkpoint_files(tmp_path.joinpath("rank=0", "epoch=0")) == list(
+        range(1, 4)
+    )
 
     # Second checkpoint.
     checkpointer.record_yielded_batch(_create_batch([4, 5, 6]))
@@ -170,8 +172,10 @@ def test_state_dict_across_epoch_lifecycle(tmp_path):
     checkpointer.record_yielded_batch(_create_batch([10, 11, 12]))
     for _ in range(2):
         assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 1}
-    assert tmp_path.joinpath("epoch=0", "checkpoint=1").is_dir()
-    assert _read_checkpoint_files(tmp_path.joinpath("epoch=0")) == list(range(1, 13))
+    assert tmp_path.joinpath("rank=0", "epoch=0", "checkpoint=1").is_dir()
+    assert _read_checkpoint_files(tmp_path.joinpath("rank=0", "epoch=0")) == list(
+        range(1, 13)
+    )
 
     # End of epoch.
     checkpointer.end_epoch()
@@ -181,7 +185,7 @@ def test_state_dict_across_epoch_lifecycle(tmp_path):
     checkpointer.start_epoch()
     assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
     # No directory should be created at this epoch boundary.
-    assert not tmp_path.joinpath("epoch=1", "checkpoint=-1").is_dir()
+    assert not tmp_path.joinpath("rank=0", "epoch=1", "checkpoint=-1").is_dir()
 
 
 def test_end_epoch(tmp_path):
@@ -197,7 +201,7 @@ def test_end_epoch(tmp_path):
     checkpointer.end_epoch()
 
     checkpoint_path = tmp_path.joinpath(
-        "epoch=0", "checkpoint=0", "rank_0_chunk_0.parquet"
+        "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
     )
     assert checkpoint_path.is_file()
     assert pq.read_table(checkpoint_path).column("id").to_pylist() == [1, 2, 3]
@@ -252,9 +256,7 @@ def test_checkpoint_path(tmp_path):
     checkpointer._chunk_idx = 15
 
     assert checkpointer._get_current_checkpoint_path() == str(
-        tmp_path.joinpath(
-            "epoch=3", "checkpoint=14", f"rank_{world_rank}_chunk_15.parquet"
-        )
+        tmp_path.joinpath("rank=1", "epoch=3", "checkpoint=14", "chunk_15.parquet")
     )
 
 
@@ -265,7 +267,7 @@ def test_setup_new_checkpoint_directory(tmp_path):
     checkpointer = RowIDBasedDataIteratorCheckpointer(
         checkpoint_path=str(tmp_path), id_column="id"
     )
-    checkpoint_path = tmp_path.joinpath("epoch=0", "checkpoint=0")
+    checkpoint_path = tmp_path.joinpath("rank=0", "epoch=0", "checkpoint=0")
     checkpoint_path.mkdir(parents=True, exist_ok=True)
     checkpoint_path.joinpath("dummy").touch()
 
