@@ -1,4 +1,6 @@
+import abc
 import copy
+import functools
 import logging
 import math
 import threading
@@ -25,6 +27,86 @@ class ResourceRequestPriority(Enum):
     HIGH = 10
 
 
+class AutoscalingCoordinator(abc.ABC):
+    @abc.abstractmethod
+    def request_resources(
+        self,
+        requester_id: str,
+        resources: List[ResourceDict],
+        expire_after_s: float,
+        request_remaining: bool = False,
+        priority: ResourceRequestPriority = ResourceRequestPriority.MEDIUM,
+    ) -> None:
+        """Request cluster resources.
+
+        The requested resources should represent the full set of resources needed,
+        not just the incremental amount.
+
+        A request with the same `requester_id` overwrites the previous one.
+
+        Args:
+            requester_id: A unique identifier for the component making the request.
+            resources: The requested resources. This should match the format accepted
+                by `ray.autoscaler.sdk.request_resources`.
+            expire_after_s: Time in seconds after which this request will expire.
+                The requester is responsible for periodically sending new requests
+                to avoid the request being purged.
+            request_remaining: If true, after allocating requested resources to each
+                requester, remaining resources will also be allocated to this requester.
+            priority: The priority of the request. Higher value means higher priority.
+        """
+        ...
+
+    @abc.abstractmethod
+    def cancel_request(self, requester_id: str):
+        """Cancel the resource request from the given requester.
+
+        Args:
+            requester_id: The unique identifier of the requester.
+        """
+        ...
+
+    @abc.abstractmethod
+    def get_allocated_resources(self, requester_id: str) -> List[ResourceDict]:
+        """Get the allocated resources for the given requester.
+
+        Args:
+            requester_id: The unique identifier of the requester.
+
+        Returns:
+            A list of dictionaries representing the allocated resources bundles.
+        """
+        ...
+
+
+class FakeAutoscalingCoordinator(AutoscalingCoordinator):
+    """A lightweight implementation for testing.
+
+    This implementation always allocates the requested resources to the requester.
+    It ignores the `expire_after_s`, `request_remaining`, and `priority` parameters.
+    """
+
+    def __init__(self):
+        self._allocated_resources: Dict[str, List[ResourceDict]] = {}
+
+    def request_resources(
+        self,
+        requester_id: str,
+        resources: List[ResourceDict],
+        expire_after_s: float,
+        request_remaining: bool = False,
+        priority: ResourceRequestPriority = ResourceRequestPriority.MEDIUM,
+    ) -> None:
+        self._allocated_resources[requester_id] = resources
+
+    def cancel_request(self, requester_id: str):
+        if requester_id in self._allocated_resources:
+            del self._allocated_resources[requester_id]
+
+    def get_allocated_resources(self, requester_id: str) -> List[ResourceDict]:
+        return self._allocated_resources.get(requester_id, [])
+
+
 @dataclass
 class OngoingRequest:
     """Represents an ongoing resource request from a requester."""
@@ -45,6 +127,7 @@ class OngoingRequest:
 
     def __lt__(self, other):
         """Used to sort requests when allocating resources.
+
         Higher priority first, then earlier first_request_time first.
         """
         if self.priority != other.priority:
@@ -52,9 +135,61 @@ class OngoingRequest:
         return self.first_request_time < other.first_request_time
 
 
-class AutoscalingCoordinator:
-    """An actor to coordinate autoscaling resource requests
-    from different components.
+class DefaultAutoscalingCoordinator(AutoscalingCoordinator):
+    AUTOSCALING_REQUEST_GET_TIMEOUT_S = 5
+
+    @functools.cached_property
+    def _autoscaling_coordinator(self):
+        # Create the coordinator actor lazily rather than eagerly in the constructor.
+        return get_or_create_autoscaling_coordinator()
+
+    def request_resources(
+        self,
+        requester_id: str,
+        resources: List[ResourceDict],
+        expire_after_s: float,
+        request_remaining: bool = False,
+        priority: ResourceRequestPriority = ResourceRequestPriority.MEDIUM,
+    ) -> None:
+        try:
+            ray.get(
+                self._autoscaling_coordinator.request_resources.remote(
+                    requester_id=requester_id,
+                    resources=resources,
+                    expire_after_s=expire_after_s,
+                    request_remaining=request_remaining,
+                    priority=priority,
+                ),
+                timeout=self.AUTOSCALING_REQUEST_GET_TIMEOUT_S,
+            )
+        except Exception:
+            msg = (
+                f"Failed to send resource request for {requester_id}."
+                " If this only happens transiently during network partition or"
+                " CPU being overloaded, it's safe to ignore this error."
+                " If this error persists, file a GitHub issue."
+            )
+            logger.warning(msg, exc_info=True)
+
+    def cancel_request(self, requester_id: str):
+        ray.get(
+            self._autoscaling_coordinator.cancel_request.remote(
+                requester_id,
+            ),
+            timeout=self.AUTOSCALING_REQUEST_GET_TIMEOUT_S,
+        )
+
+    def get_allocated_resources(self, requester_id: str) -> List[ResourceDict]:
+        return ray.get(
+            self._autoscaling_coordinator.get_allocated_resources.remote(
+                requester_id,
+            ),
+            timeout=self.AUTOSCALING_REQUEST_GET_TIMEOUT_S,
+        )
+
+
+class _AutoscalingCoordinatorActor:
+    """An actor to coordinate autoscaling resource requests from different components.
 
     This actor is responsible for:
     * Merging received requests and dispatching them to Ray Autoscaler.
@@ -99,18 +234,6 @@ class AutoscalingCoordinator:
         request_remaining: bool = False,
         priority: ResourceRequestPriority = ResourceRequestPriority.MEDIUM,
     ) -> None:
-        """Request resources from the AutoscalingCoordinator. A request with
-        the same requester_id will overwrite the previous one.
-
-        Args:
-            requester_id: The unique identifier of the requester.
-            resources: The requested resources.
-            expire_after_s: Time in seconds after which this request will expire.
-                The requester is responsible for periodically sending new requests
-                to avoid the request being purged.
-            request_remaining: If true, after allocating requested resources to each
-                requester, remaining resources will also be allocated to this requester.
-        """
         logger.debug("Received request from %s: %s.", requester_id, resources)
         # Round up the resource values to integers,
         # because the Autoscaler SDK only accepts integer values.
@@ -151,7 +274,6 @@ class AutoscalingCoordinator:
         self,
         requester_id: str,
     ):
-        """Cancel the resource request from the given requester."""
         logger.debug("Canceling request for %s.", requester_id)
         if requester_id not in self._ongoing_reqs:
             return
@@ -262,7 +384,7 @@ def get_or_create_autoscaling_coordinator():
         soft=False,
     )
     actor_cls = ray.remote(num_cpus=0, max_restarts=-1, max_task_retries=-1)(
-        AutoscalingCoordinator
+        _AutoscalingCoordinatorActor
     ).options(
         name="AutoscalingCoordinator",
         namespace="AutoscalingCoordinator",

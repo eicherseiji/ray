@@ -3,13 +3,12 @@ import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from functools import cached_property
 from logging import getLogger
 from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import ray
 from ray.anyscale.air._internal.autoscaling_coordinator import (
-    get_or_create_autoscaling_coordinator,
+    DefaultAutoscalingCoordinator,
 )
 from ray.anyscale.data._internal.util.average_calculator import (
     TimeWindowAverageCalculator,
@@ -116,6 +115,7 @@ class RayTurboClusterAutoscaler(ClusterAutoscaler):
         # Last time when a request was sent to Ray's autoscaler.
         self._last_request_time = 0
         self._requester_id = f"data-{execution_id}"
+        self._autoscaling_coordinator = DefaultAutoscalingCoordinator()
         # Send an empty request to register ourselves as soon as possible,
         # so the first `get_total_resources` call can get the allocated resources.
         self._send_resource_request([])
@@ -233,41 +233,20 @@ class RayTurboClusterAutoscaler(ClusterAutoscaler):
         logger.debug(debug_msg)
         self._send_resource_request(resource_request)
 
-    @cached_property
-    def _autoscaling_coordinator(self):
-        return get_or_create_autoscaling_coordinator()
-
     def _send_resource_request(self, resource_request):
         # Make autoscaler resource request.
-        try:
-            ray.get(
-                self._autoscaling_coordinator.request_resources.remote(
-                    requester_id=self._requester_id,
-                    resources=resource_request,
-                    expire_after_s=self.AUTOSCALING_REQUEST_EXPIRE_TIME_S,
-                    request_remaining=True,
-                ),
-                timeout=self.AUTOSCALING_REQUEST_GET_TIMEOUT_S,
-            )
-        except Exception:
-            msg = (
-                f"Failed to send resource request for {self._requester_id}."
-                " If this only happens transiently during network partition or"
-                " CPU being overloaded, it's safe to ignore this error."
-                " If this error persists, file a GitHub issue."
-            )
-            logger.warning(msg, exc_info=True)
+        self._autoscaling_coordinator.request_resources(
+            requester_id=self._requester_id,
+            resources=resource_request,
+            expire_after_s=self.AUTOSCALING_REQUEST_EXPIRE_TIME_S,
+            request_remaining=True,
+        )
         self._last_request_time = time.time()
 
     def on_executor_shutdown(self):
         # Cancel the resource request when the executor is shutting down.
         try:
-            ray.get(
-                self._autoscaling_coordinator.cancel_request.remote(
-                    self._requester_id,
-                ),
-                timeout=self.AUTOSCALING_REQUEST_GET_TIMEOUT_S,
-            )
+            self._autoscaling_coordinator.cancel_request(self._requester_id)
         except Exception:
             msg = (
                 f"Failed to cancel resource request for {self._requester_id}."
@@ -277,10 +256,8 @@ class RayTurboClusterAutoscaler(ClusterAutoscaler):
             logger.warning(msg, exc_info=True)
 
     def get_total_resources(self) -> ExecutionResources:
-        resources = ray.get(
-            self._autoscaling_coordinator.get_allocated_resources.remote(
-                requester_id=self._requester_id,
-            )
+        resources = self._autoscaling_coordinator.get_allocated_resources(
+            requester_id=self._requester_id
         )
         total = ExecutionResources.zero()
         for res in resources:
