@@ -1,9 +1,11 @@
 import ray
-from ray._private.ray_constants import DEFAULT_MAX_DIRECT_CALL_OBJECT_SIZE
 from typing import Dict, Optional, List, Union, Set
 
 from ray.anyscale.data._internal.util.cached_ray_internals import get_drained_nodes
 from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
+
+# TODO: Ray Core should provide whether an object is in plasma or not.
+DEFAULT_MAX_DIRECT_CALL_OBJECT_SIZE = 100 * 1024
 
 
 def object_does_exist(

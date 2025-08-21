@@ -3,7 +3,6 @@ import time
 from typing import TYPE_CHECKING, Dict, Optional
 
 import ray
-from ray._private.ray_constants import DEFAULT_MAX_DIRECT_CALL_OBJECT_SIZE
 from ray.anyscale.data._internal.util.object_utils import all_objects_exist_for_bundle
 from ray.data._internal.execution.bundle_queue import BundleQueue, FIFOBundleQueue
 
@@ -128,10 +127,6 @@ class LocationAwareBundleQueue(BundleQueue):
             for object_info in object_locs.values():
                 if object_info["object_size"] is None:
                     nbytes = 0
-                elif object_info["object_size"] < DEFAULT_MAX_DIRECT_CALL_OBJECT_SIZE:
-                    # If the object is smaller than the threshold, then 'node_ids'
-                    # is an empty list.
-                    nbytes += object_info["object_size"]
                 else:
                     # There can be copies of the object on multiple nodes. So, to
                     # calculate the total size of the object in shared object store
