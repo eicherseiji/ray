@@ -5,8 +5,10 @@ import numpy as np
 import pyarrow as pa
 
 from ray.data._internal.arrow_ops.transform_pyarrow import _hash_partition
+from ray.util.debug import log_once
 
 logger = logging.getLogger(__name__)
+
 
 # Try to import numba, fallback to non-JIT implementation if not available
 try:
@@ -16,10 +18,11 @@ try:
     _NUMBA_AVAILABLE = True
 except ImportError:
     _NUMBA_AVAILABLE = False
-    logger.warning(
-        "Numba is not available. Falling back to slower Python implementation "
-        "for hash partitioning operations."
-    )
+    if log_once("numba_not_available"):
+        logger.warning(
+            "Numba is not available. Falling back to slower Python implementation "
+            "for hash partitioning operations."
+        )
 
 
 def _hash_partition_vectorized(
