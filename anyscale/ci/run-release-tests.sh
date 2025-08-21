@@ -58,6 +58,9 @@ echo "Making Bazel executable"
 chmod +x /tmp/bazel
 echo "Generating test steps"
 
+# For temporarily bridging v1 and v2 release test infra.
+export RAYCI_BUILD_ID="${RAYCI_BUILD_ID:-${BUILDKITE_COMMIT:0:6}}"
+
 /tmp/bazel run //release:build_pipeline -- \
     --test-collection-file release/release_runtime_tests.yaml \
     --test-collection-file release/release_data_tests.yaml \
