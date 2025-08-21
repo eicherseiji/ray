@@ -1,9 +1,12 @@
+"""
+Benchmark a text embeddings job
+"""
+
 import argparse
-import io
 import uuid
-from pathlib import Path
 import time
 from typing import Dict, List
+from numpy import ndarray
 
 import ray
 import torch
@@ -12,12 +15,13 @@ from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
     CharacterTextSplitter,
 )
-from unstructured.partition.auto import partition
 
 from benchmark import Benchmark, BenchmarkMetric
 
-
-SOURCE_DIRECTORY_S3 = "s3://anyscale-rag-application/1000-docs/"
+# Subset of the data so that benchmark completes in ~20 minutes.
+DEFAULT_SOURCE_DIRECTORY_S3 = "s3://air-example-data/common-pile-mirror/arxiv_papers/arxiv_papers-train-00001-of-00042.parquet"
+# Add a random prefix to avoid conflicts between different runs.
+WRITE_PATH = f"s3://ray-data-write-benchmark/{uuid.uuid4().hex}/"
 
 
 def parse_args():
@@ -27,23 +31,17 @@ def parse_args():
     parser.add_argument(
         "--source-directory",
         type=str,
-        default="s3://anyscale-rag-application/1000-docs/",
+        default=DEFAULT_SOURCE_DIRECTORY_S3,
         help="S3 URI of source documents",
     )
     parser.add_argument(
-        "--read-concurrency",
+        "--chunk-concurrency",
         type=int,
-        default=None,
-        help="Number of concurrent readers for binary files",
+        default=20,
+        help="Concurrency for Chunker stage",
     )
     parser.add_argument(
-        "--process-concurrency",
-        type=int,
-        default=None,
-        help="Concurrency for process_file stage",
-    )
-    parser.add_argument(
-        "--process-cpus", type=int, default=None, help="CPUs for process_file stage"
+        "--chunk-cpus", type=int, default=None, help="Number of CPUs per Chunker"
     )
     parser.add_argument(
         "--chunk-method",
@@ -52,42 +50,39 @@ def parse_args():
         help="Chunking method",
     )
     parser.add_argument(
-        "--chunk-size", type=int, default=2048, help="Chunk size for text splitting"
+        "--chunk-size", type=int, default=1200, help="Chunk size for text splitting"
     )
     parser.add_argument(
         "--chunk-overlap",
         type=int,
-        default=200,
-        help="Chunk overlap for text splitting",
+        default=100,
+        help="Number of overlapping boundary characters between text chunks.",
     )
     parser.add_argument(
         "--embed-batch-size",
         type=int,
-        default=8,
+        default=256,
         help="Batch size for embedding inference",
     )
     parser.add_argument(
         "--embed-concurrency",
         type=int,
-        default=20,
-        help="Concurrency for embedding stage",
+        default=15,
+        help="Number of Embedder replicas",
     )
     parser.add_argument(
-        "--num-gpus", type=int, default=1, help="Number of GPUs to use for embedding"
+        "--num-gpus", type=int, default=1, help="Number of GPUs per Embedder"
     )
     parser.add_argument(
         "--model-name",
         type=str,
-        default="Salesforce/SFR-Embedding-Mistral",
-        help="SentenceTransformer model name",
+        default="Salesforce/SFR-Embedding-Code-400M_R",
+        help="Embedding model name",
     )
     parser.add_argument(
-        "--show-sample",
+        "--smoke-test",
         action="store_true",
-        help="Show sample records instead of writing output",
-    )
-    parser.add_argument(
-        "--output-path", type=str, default=None, help="Parquet output path"
+        help="Runs a smoke test with a small subset of the data",
     )
     parser.add_argument(
         "--chaos-test",
@@ -96,37 +91,6 @@ def parse_args():
         help="Enable chaos testing to simulate node failures",
     )
     return parser.parse_args()
-
-
-def process_file(record: dict) -> dict:
-    file_path = Path(record["path"])
-    supported_extensions = {".pdf", ".docx", ".pptx", ".ppt", ".html", ".txt"}
-
-    if file_path.suffix.lower() not in supported_extensions:
-        return {"pages": []}
-
-    try:
-        with io.BytesIO(record["bytes"]) as stream:
-            elements = partition(file=stream)
-            doc_id = str(uuid.uuid4())
-
-            # Group text by page
-            page_texts = {}
-            for el in elements:
-                page_number = getattr(el.metadata, "page_number", 1) or 1
-                page_texts.setdefault(page_number, []).append(str(el))
-
-            # Combine texts for each page
-            for page_number, texts in page_texts.items():
-                yield {
-                    "text": " ".join(texts).strip(),
-                    "source": str(file_path),
-                    "page_number": page_number,
-                    "doc_id": doc_id,
-                }
-    except Exception:
-        # Silently skip files that cannot be processed
-        return
 
 
 class Chunker:
@@ -145,9 +109,8 @@ class Chunker:
             {
                 "text": text,
                 "source": page["source"],
-                "page_number": page.get("page_number", 1),
-                "chunk_id": str(uuid.uuid4()),
-                "doc_id": page["doc_id"],
+                "chunk_id": f"{page['id']}_{str(uuid.uuid4())}",
+                "doc_id": page["id"],
             }
             for text in self.splitter.split_text(page["text"])
         ]
@@ -156,44 +119,37 @@ class Chunker:
 class Embedder:
     def __init__(self, model_name: str):
         self.model = SentenceTransformer(
-            model_name, device="cuda" if torch.cuda.is_available() else "cpu"
+            model_name,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            trust_remote_code=True,
         )
 
-    def __call__(self, batch: Dict) -> Dict:
-        embeddings = self.model.encode(
+    def __call__(self, batch: Dict[str, ndarray]) -> Dict[str, ndarray]:
+        batch["embeddings"] = self.model.encode(
             batch["text"], convert_to_numpy=True, batch_size=len(batch["text"])
         )
-        return {
-            "embeddings": embeddings,
-            "text": batch["text"],
-            "source": batch["source"],
-            "doc_id": batch["doc_id"],
-            "page_number": batch["page_number"],
-            "chunk_id": batch["chunk_id"],
-        }
+        return batch
 
 
 def main(args):
-    ds = ray.data.read_binary_files(
+    start_time = time.time()
+    ds = ray.data.read_parquet(
         args.source_directory,
         include_paths=True,
-        concurrency=args.read_concurrency,
     )
-    # Record start time after metadata fetching
-    start_time_without_metadata_fetching = time.time()
-    if args.show_sample:
-        ds = ds.limit(5)
-    ds = ds.flat_map(
-        process_file, concurrency=args.process_concurrency, num_cpus=args.process_cpus
-    )
+    metadata_fetch_end = time.time()
+    metadata_fetching_s = metadata_fetch_end - start_time
+    if args.smoke_test:
+        ds = ds.limit(100)
+
     ds = ds.flat_map(
         Chunker(
             method=args.chunk_method,
             chunk_size=args.chunk_size,
             chunk_overlap=args.chunk_overlap,
         ),
-        concurrency=args.process_concurrency,
-        num_cpus=args.process_cpus,
+        concurrency=args.chunk_concurrency,
+        num_cpus=args.chunk_cpus,
     )
     ds = ds.map_batches(
         Embedder,
@@ -202,47 +158,39 @@ def main(args):
         concurrency=args.embed_concurrency,
         num_gpus=args.num_gpus,
     )
-    start = time.time()
-    if args.output_path:
-        ds.write_parquet(args.output_path)
-    elif args.show_sample:
-        ds.show(5)
-    else:
-        ds.materialize()
-    duration = time.time() - start
-    count = ds.count()
-    throughput = count / duration if duration > 0 else 0.0
+    ds.write_parquet(WRITE_PATH, num_rows_per_file=5_000)
+    end_time = time.time()
+    runtime_s = end_time - start_time
+    num_rows = ray.data.read_parquet(WRITE_PATH).count()
+    throughput_rows_s = num_rows / runtime_s
 
     # Compute metrics for time and throughput without metadata fetch
-    total_time_s_wo_metadata_fetch = time.time() - start_time_without_metadata_fetching
-    throughput_images_s_wo_metadata_fetch = (
-        count / total_time_s_wo_metadata_fetch
-        if total_time_s_wo_metadata_fetch > 0
-        else 0.0
-    )
+    runtime_s_wo_metadata_fetch = end_time - metadata_fetch_end
+    throughput_rows_s_wo_metadata_fetch = num_rows / runtime_s_wo_metadata_fetch
 
     # Report chaos testing node failures
     if args.chaos_test:
         dead_nodes = [node["NodeID"] for node in ray.nodes() if not node["Alive"]]
-        assert dead_nodes
+        assert dead_nodes, "No dead nodes during chaos test"
         print(f"Total chaos killed: {dead_nodes}")
 
     return {
-        BenchmarkMetric.RUNTIME: duration,
-        BenchmarkMetric.NUM_ROWS: count,
-        BenchmarkMetric.THROUGHPUT: throughput,
+        BenchmarkMetric.RUNTIME: runtime_s,
+        BenchmarkMetric.NUM_ROWS: num_rows,
+        BenchmarkMetric.THROUGHPUT: throughput_rows_s,
         "source_directory": args.source_directory,
         "model_name": args.model_name,
         "chunk_method": args.chunk_method,
-        "start_time_without_metadata_fetching": start_time_without_metadata_fetching,
-        "total_time_s_wo_metadata_fetch": total_time_s_wo_metadata_fetch,
-        "throughput_images_s_wo_metadata_fetch": throughput_images_s_wo_metadata_fetch,
+        "metadata_fetching_s": metadata_fetching_s,
+        "runtime_s_wo_metadata_fetch": runtime_s_wo_metadata_fetch,
+        "throughput_rows_s_wo_metadata_fetch": throughput_rows_s_wo_metadata_fetch,
         "chaos_test": args.chaos_test,
     }
 
 
 if __name__ == "__main__":
     args = parse_args()
+    print(f"Writing to {WRITE_PATH}")
     benchmark = Benchmark()
     benchmark.run_fn("text-embeddings-benchmark", main, args)
     benchmark.write_result()
