@@ -65,6 +65,8 @@ from ray.serve._private.constants import (
     SERVE_LOGGER_NAME,
     SERVE_CONTROLLER_NAME,
     SERVE_HTTP_REQUEST_ID_HEADER,
+    SERVE_HTTP_REQUEST_TIMEOUT_S_HEADER,
+    SERVE_HTTP_REQUEST_DISCONNECT_DISABLED_HEADER,
     SERVE_NAMESPACE,
 )
 from ray.anyscale.serve._private.replica_response_generator import (
@@ -1095,6 +1097,24 @@ class AnyscaleReplica(ReplicaBase):
 
         return route
 
+    def _parse_request_timeout(self, headers: Dict[str, str]) -> Optional[float]:
+        """Gets the desired request timeout from the headers.
+        If the header is missing or invalid, returns the default request timeout
+        from HttpOptions. If the header is non-positive, timeout is disabled.
+        """
+        header_name = SERVE_HTTP_REQUEST_TIMEOUT_S_HEADER.encode("utf-8")
+        if header_name not in headers:
+            return self._http_options.request_timeout_s
+
+        value = headers.get(header_name).decode("utf-8")
+        try:
+            timeout = float(value)
+            if timeout > 0:
+                return timeout
+            return None
+        except ValueError:
+            return self._http_options.request_timeout_s
+
     async def _direct_ingress_asgi(
         self,
         scope: Scope,
@@ -1162,6 +1182,13 @@ class AnyscaleReplica(ReplicaBase):
             headers.get(SERVE_HTTP_REQUEST_ID_HEADER.encode("utf-8")).decode("utf-8")
             or generate_request_id()
         )
+        request_disconnect_disabled = (
+            headers.get(
+                SERVE_HTTP_REQUEST_DISCONNECT_DISABLED_HEADER.encode("utf-8"), b"?0"
+            ).decode("utf-8")
+        ) == "?1"
+        request_timeout_s = self._parse_request_timeout(headers)
+
         request_metadata = RequestMetadata(
             request_id=request_id,
             internal_request_id=generate_request_id(),
@@ -1185,10 +1212,17 @@ class AnyscaleReplica(ReplicaBase):
                 await send(msg)
             return
 
-        receive_proxy = ASGIDIReceiveProxy(
-            scope, receive, self._user_callable_wrapper.event_loop
-        )
-        receive_task = receive_proxy.fetch_until_disconnect_task()
+        # Optimization: we can avoid creating an async receive task if the client
+        # has disabled handling disconnects for this request.
+        if request_disconnect_disabled:
+            receive_proxy = receive
+            receive_task = None
+        else:
+            receive_proxy = ASGIDIReceiveProxy(
+                scope, receive, self._user_callable_wrapper.event_loop
+            )
+            receive_task = receive_proxy.fetch_until_disconnect_task()
+
         response_started = False
         response_finished = False
         first_message_peeked = False
@@ -1236,10 +1270,21 @@ class AnyscaleReplica(ReplicaBase):
                             for message in asgi_messages:
                                 await send_user_message(message)
 
+            # Optimization: if Serve doesn't need to handle disconnects and
+            # timeouts for this request, we can avoid event loop overhead by
+            # directly awaiting the user code.
+            if receive_task is None and request_timeout_s is None:
+                return await call_asgi()
+
+            # Otherwise, we'd always need the call_asgi() task.
             request_task = asyncio.create_task(call_asgi())
+            tasks = [request_task]
+            if receive_task is not None:
+                tasks.append(receive_task)
+
             done, _ = await asyncio.wait(
-                [request_task, receive_task],
-                timeout=self._http_options.request_timeout_s,
+                tasks,
+                timeout=request_timeout_s,
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
@@ -1248,7 +1293,8 @@ class AnyscaleReplica(ReplicaBase):
             # complete, the client has sent a disconnect message after the request
             # is completed. That is why we check for `response_finished` here.
             if request_task in done or response_finished:
-                receive_task.cancel()
+                if receive_task is not None:
+                    receive_task.cancel()
                 await request_task
             elif receive_task in done:
                 request_task.cancel()

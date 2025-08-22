@@ -10,6 +10,7 @@ py_test_module_list(
         exclude = [
             "tests/test_deployment_scheduler.py",
             "tests/test_direct_ingress.py",
+            "tests/test_direct_ingress_standalone.py",
         ],
     ),
     tags = [
@@ -86,11 +87,47 @@ py_test_module_list(
 )
 
 py_test_module_list(
+    size = "large",
+    data = glob(["tests/fixtures/*.*"]),
+    files = [
+        "tests/test_direct_ingress_standalone.py",
+    ],
+    tags = [
+        "direct_ingress",
+        "exclusive",
+        "team:serve",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test_module_list(
     size = "medium",
     data = glob(["tests/fixtures/*.*"]),
     env = {"ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT": "1"},
     files = [
         "tests/test_direct_ingress.py",
+    ],
+    name_suffix = "_with_grpc",
+    tags = [
+        "direct_ingress",
+        "exclusive",
+        "team:serve",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test_module_list(
+    size = "large",
+    data = glob(["tests/fixtures/*.*"]),
+    env = {"ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT": "1"},
+    files = [
+        "tests/test_direct_ingress_standalone.py",
     ],
     name_suffix = "_with_grpc",
     tags = [
