@@ -100,11 +100,6 @@ ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S = float(
     os.environ.get("ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S", "30")
 )
 
-# Feature flag to enable throughput optimized Ray Serve.
-ANYSCALE_RAY_SERVE_THROUGHPUT_OPT = (
-    os.environ.get("ANYSCALE_RAY_SERVE_THROUGHPUT_OPT", "0") == "1"
-)
-
 # Feature flag to enable freezing the garbage collector on startup.
 ANYSCALE_FREEZE_GC_ON_STARTUP = (
     os.environ.get("ANYSCALE_FREEZE_GC_ON_STARTUP", "0") == "1"
@@ -112,7 +107,7 @@ ANYSCALE_FREEZE_GC_ON_STARTUP = (
 
 # If throughput optimized Ray Serve is enabled, set the following constants.
 # This should be at the end.
-if ANYSCALE_RAY_SERVE_THROUGHPUT_OPT:
+if os.environ.get("RAY_SERVE_THROUGHPUT_OPTIMIZED", "0") == "1":
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = True
     ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = True
     ANYSCALE_FREEZE_GC_ON_STARTUP = True

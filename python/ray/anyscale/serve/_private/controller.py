@@ -4,10 +4,12 @@ from typing import Dict, List, Optional, Set
 
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
-    ANYSCALE_RAY_SERVE_THROUGHPUT_OPT,
 )
 from ray.serve._private.common import DeploymentID, RequestProtocol
-from ray.serve._private.constants import SERVE_LOGGER_NAME
+from ray.serve._private.constants import (
+    RAY_SERVE_THROUGHPUT_OPTIMIZED,
+    SERVE_LOGGER_NAME,
+)
 from ray.serve._private.controller import ServeController
 from ray.serve._private.deployment_state import DeploymentReplica
 from ray.serve._private.node_port_manager import NodePortManager
@@ -39,7 +41,7 @@ class AnyscaleServeController(ServeController):
         grpc_options: Optional[gRPCOptions] = None,
     ):
         # Set the feature flags for throughput optimized Ray Serve.
-        if ANYSCALE_RAY_SERVE_THROUGHPUT_OPT:
+        if RAY_SERVE_THROUGHPUT_OPTIMIZED:
             logger.info(
                 "Throughput optimized Ray Serve enabled with the following configurations:\n"
                 "  • Direct ingress enabled\n"
