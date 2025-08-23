@@ -7,22 +7,9 @@ from ray.dashboard.modules.metrics.dashboards.common import (
 )
 
 
-class PanelId:
-    """
-    A class to generate unique panel IDs.
-    """
-
-    id = 0
-
-    @staticmethod
-    def next():
-        PanelId.id += 1
-        return PanelId.id
-
-
 # Ray Train Metrics (Controller)
 CONTROLLER_STATE_PANEL = Panel(
-    id=PanelId.next(),
+    id=1,
     title="Controller State",
     description="Current state of the train controller.",
     unit="",
@@ -36,7 +23,7 @@ CONTROLLER_STATE_PANEL = Panel(
 
 
 CONTROLLER_OPERATION_TIME_PANEL = Panel(
-    id=PanelId.next(),
+    id=2,
     title="Controller Operation Time",
     description="Time taken by the controller for worker group operations.",
     unit="seconds",
@@ -56,7 +43,7 @@ CONTROLLER_OPERATION_TIME_PANEL = Panel(
 
 # Ray Train Metrics (Worker)
 WORKER_CHECKPOINT_REPORT_TIME_PANEL = Panel(
-    id=PanelId.next(),
+    id=3,
     title="Checkpoint Report Time",
     description="Time taken to report a checkpoint to storage.",
     unit="seconds",
@@ -72,7 +59,7 @@ WORKER_CHECKPOINT_REPORT_TIME_PANEL = Panel(
 
 # Core System Resources
 CPU_UTILIZATION_PANEL = Panel(
-    id=PanelId.next(),
+    id=4,
     title="CPU Usage",
     description="CPU core utilization across all workers.",
     unit="cores",
@@ -89,7 +76,7 @@ CPU_UTILIZATION_PANEL = Panel(
 )
 
 MEMORY_UTILIZATION_PANEL = Panel(
-    id=PanelId.next(),
+    id=5,
     title="Total Memory Usage",
     description="Total physical memory used vs total available memory.",
     unit="bytes",
@@ -106,7 +93,7 @@ MEMORY_UTILIZATION_PANEL = Panel(
 )
 
 MEMORY_DETAILED_PANEL = Panel(
-    id=PanelId.next(),
+    id=6,
     title="Memory Allocation Details",
     description="Memory allocation details including available and shared memory.",
     unit="bytes",
@@ -125,7 +112,7 @@ MEMORY_DETAILED_PANEL = Panel(
 # GPU Resources
 # TODO: Add GPU Device/Index as a filter.
 GPU_UTILIZATION_PANEL = Panel(
-    id=PanelId.next(),
+    id=7,
     title="GPU Usage",
     description="GPU utilization across all workers.",
     unit="GPUs",
@@ -142,7 +129,7 @@ GPU_UTILIZATION_PANEL = Panel(
 )
 
 GPU_MEMORY_UTILIZATION_PANEL = Panel(
-    id=PanelId.next(),
+    id=8,
     title="GPU Memory Usage",
     description="GPU memory usage across all workers.",
     unit="bytes",
@@ -160,7 +147,7 @@ GPU_MEMORY_UTILIZATION_PANEL = Panel(
 
 # Storage Resources
 DISK_UTILIZATION_PANEL = Panel(
-    id=PanelId.next(),
+    id=9,
     title="Disk Space Usage",
     description="Disk space usage across all workers.",
     unit="bytes",
@@ -177,7 +164,7 @@ DISK_UTILIZATION_PANEL = Panel(
 )
 
 DISK_THROUGHPUT_PANEL = Panel(
-    id=PanelId.next(),
+    id=10,
     title="Disk Throughput",
     description="Current disk read/write throughput.",
     unit="Bps",
@@ -194,7 +181,7 @@ DISK_THROUGHPUT_PANEL = Panel(
 )
 
 DISK_OPERATIONS_PANEL = Panel(
-    id=PanelId.next(),
+    id=11,
     title="Disk Operations",
     description="Current disk read/write operations per second.",
     unit="ops/s",
@@ -212,7 +199,7 @@ DISK_OPERATIONS_PANEL = Panel(
 
 # Network Resources
 NETWORK_THROUGHPUT_PANEL = Panel(
-    id=PanelId.next(),
+    id=12,
     title="Network Throughput",
     description="Current network send/receive throughput.",
     unit="Bps",
@@ -229,7 +216,7 @@ NETWORK_THROUGHPUT_PANEL = Panel(
 )
 
 NETWORK_TOTAL_PANEL = Panel(
-    id=PanelId.next(),
+    id=13,
     title="Network Total Traffic",
     description="Total network traffic sent/received.",
     unit="bytes",
@@ -251,7 +238,7 @@ TRAIN_GRAFANA_ROWS = [
     # Train Metrics Row
     Row(
         title="Train Metrics",
-        id=PanelId.next(),
+        id=14,
         panels=[
             # Ray Train Metrics (Controller)
             CONTROLLER_STATE_PANEL,
@@ -264,7 +251,7 @@ TRAIN_GRAFANA_ROWS = [
     # System Resources Row
     Row(
         title="Resource Utilization",
-        id=PanelId.next(),
+        id=15,
         panels=[
             CPU_UTILIZATION_PANEL,
             MEMORY_UTILIZATION_PANEL,
@@ -311,7 +298,7 @@ TRAIN_WORKER_PANELS = [
 TURBO_TRAIN_GRAFANA_PANELS = [
     # DCGM Profiling Metrics (SM_ACTIVITY)
     Panel(
-        id=PanelId.next(),
+        id=1001,
         title="GPU SM Activity",
         description="GPU Streaming Multiprocessor Activity. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
         # Note `percentunit` is a special unit that will render the y-axis
@@ -328,7 +315,7 @@ TURBO_TRAIN_GRAFANA_PANELS = [
     ),
     # DCGM Profiling Metrics (SM_OCCUPANCY)
     Panel(
-        id=PanelId.next(),
+        id=1002,
         title="GPU SM Occupancy",
         description="GPU Streaming Multiprocessor Occupancy. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
         unit="percentunit",
@@ -343,7 +330,7 @@ TURBO_TRAIN_GRAFANA_PANELS = [
     ),
     # DCGM Profiling Metrics (GPU Power Draw)
     Panel(
-        id=PanelId.next(),
+        id=1003,
         title="GPU Power Draw",
         description="GPU power draw from DCGM metrics. More details can be found at: https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html#metrics",
         unit="watts",
