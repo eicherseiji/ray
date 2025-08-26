@@ -20,8 +20,10 @@ from pandas.api.types import is_object_dtype, is_scalar, is_string_dtype
 
 from ray.air.constants import TENSOR_COLUMN_NAME
 from ray.air.util.tensor_extensions.utils import _should_convert_to_tensor
+from ray.anyscale.data._internal.block import OptimizedTableBlockMixin
+from ray.anyscale.data._internal.pandas_block import _OptimizedPandasRow
 from ray.data._internal.numpy_support import convert_to_numpy
-from ray.data._internal.row import TableRow
+from ray.data._internal.row import row_repr, row_repr_pretty, row_str
 from ray.data._internal.table_block import TableBlockAccessor, TableBlockBuilder
 from ray.data._internal.util import is_null
 from ray.data.block import (
@@ -60,10 +62,13 @@ def lazy_import_pandas():
     return _pandas
 
 
-class PandasRow(TableRow):
+class PandasRow(Mapping):
     """
     Row of a tabular Dataset backed by a Pandas DataFrame block.
     """
+
+    def __init__(self, row: Any):
+        self._row = row
 
     def __getitem__(self, key: Union[str, List[str]]) -> Any:
         from ray.data.extensions import TensorArrayElement
@@ -122,6 +127,15 @@ class PandasRow(TableRow):
                 pydict[key] = value
 
         return pydict
+
+    def __str__(self):
+        return row_str(self)
+
+    def __repr__(self):
+        return row_repr(self)
+
+    def _repr_pretty_(self, p, cycle):
+        return row_repr_pretty(self, p, cycle)
 
 
 class PandasBlockColumnAccessor(BlockColumnAccessor):
@@ -269,11 +283,14 @@ class PandasBlockBuilder(TableBlockBuilder):
 PandasBlockSchema = collections.namedtuple("PandasBlockSchema", ["names", "types"])
 
 
-class PandasBlockAccessor(TableBlockAccessor):
-    ROW_TYPE = PandasRow
+class PandasBlockAccessor(OptimizedTableBlockMixin, TableBlockAccessor):
+    ROW_TYPE = _OptimizedPandasRow
 
     def __init__(self, table: "pandas.DataFrame"):
         super().__init__(table)
+
+    def _get_row(self, index: int) -> _OptimizedPandasRow:
+        return self.ROW_TYPE(self._table, index)
 
     def column_names(self) -> List[str]:
         return self._table.columns.tolist()
@@ -284,10 +301,10 @@ class PandasBlockAccessor(TableBlockAccessor):
         return self._table.assign(**{name: value})
 
     @staticmethod
-    def _build_tensor_row(row: PandasRow) -> np.ndarray:
+    def _build_tensor_row(row: _OptimizedPandasRow, row_idx: int) -> np.ndarray:
         from ray.data.extensions import TensorArrayElement
 
-        tensor = row[TENSOR_COLUMN_NAME].iloc[0]
+        tensor = row[TENSOR_COLUMN_NAME].iloc[row_idx]
         if isinstance(tensor, TensorArrayElement):
             # Getting an item in a Pandas tensor column may return a TensorArrayElement,
             # which we have to convert to an ndarray.
@@ -591,9 +608,10 @@ class PandasBlockAccessor(TableBlockAccessor):
     def iter_rows(
         self, public_row_format: bool
     ) -> Iterator[Union[Mapping, np.ndarray]]:
-        for i in range(self.num_rows()):
+        num_rows = self.num_rows()
+        for i in range(num_rows):
             row = self._get_row(i)
-            if public_row_format and isinstance(row, TableRow):
+            if public_row_format:
                 yield row.as_pydict()
             else:
                 yield row

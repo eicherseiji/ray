@@ -518,9 +518,11 @@ def propagate_logs():
     # NOTE: This only enables log propagation in the driver process, not the workers!
     logging.getLogger("ray").propagate = True
     logging.getLogger("ray.data").propagate = True
+    logging.getLogger("ray.anyscale.data").propagate = True
     yield
     logging.getLogger("ray").propagate = False
     logging.getLogger("ray.data").propagate = False
+    logging.getLogger("ray.anyscale.data").propagate = False
 
 
 # Provide a shared Ray instance for a test class
