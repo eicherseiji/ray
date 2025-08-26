@@ -15,7 +15,6 @@ from ray.rllib.utils.test_utils import add_rllib_example_script_args
 parser = add_rllib_example_script_args(
     default_timesteps=5e6,
 )
-parser.set_defaults(enable_new_api_stack=True)
 # Use `parser` to add your own custom command line options to this script
 # and (if needed) use their values to set up `config` below.
 args = parser.parse_args()

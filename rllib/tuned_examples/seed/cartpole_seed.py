@@ -38,9 +38,6 @@ parser.add_argument(
     type=int,
     default=1,
 )
-parser.set_defaults(
-    enable_new_api_stack=True,
-)
 # Use `parser` to add your own custom command line options to this script
 # and (if needed) use their values to set up `config` below.
 args = parser.parse_args()

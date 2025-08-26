@@ -56,7 +56,6 @@ parser.add_argument(
     "first.",
 )
 parser.set_defaults(
-    enable_new_api_stack=True,
     env="ale_py:ALE/Pong-v5",
     num_agents=2,
     num_envs_per_env_runner=5,

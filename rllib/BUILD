@@ -620,7 +620,6 @@ py_test(
     srcs = ["tuned_examples/bc_irl_ppo/cartpole_bc_irl_ppo.py"],
     args = [
         "--as-test",
-        "--enable-new-api-stack",
     ],
     # Include the offline data files.
     data = [
