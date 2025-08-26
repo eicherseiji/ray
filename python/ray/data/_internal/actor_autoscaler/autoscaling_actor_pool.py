@@ -120,3 +120,6 @@ class AutoscalingActorPool(ABC):
             return self.num_tasks_in_flight() / (
                 self.max_actor_concurrency() * self.num_running_actors()
             )
+
+    def max_concurrent_tasks(self) -> int:
+        return self.max_actor_concurrency() * self.num_running_actors()
