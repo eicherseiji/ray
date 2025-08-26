@@ -248,10 +248,11 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                         f"column (target name)"
                     )
 
-            existing_columns = fragments[0].physical_schema.names or columns
-
             # Check collision with existing columns
-            if self._generated_id_column in existing_columns:
+            field_index = fragments[0].physical_schema.get_field_index(
+                self._generated_id_column
+            )
+            if field_index >= 0:
                 if columns is not None and self._generated_id_column in columns:
                     raise ValueError(
                         f"generated_id_column='{self._generated_id_column}' conflicts with a column in the columns list"
@@ -418,7 +419,14 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         for path, chunk_metadata in zip(paths, chunk_metadatas):
             fragment = path_to_fragment[path]
             if chunk_metadata is None:
-                fragments.append(fragment)
+                if self._generated_id_column:
+                    # For checkpointing, we need to create a fragment for each row group.
+                    for row_group_index in range(fragment.metadata.num_row_groups):
+                        fragments.append(
+                            fragment.subset(row_group_ids=[row_group_index])
+                        )
+                else:
+                    fragments.append(fragment)
             else:
                 fragments.extend(
                     self._fragments_from_chunk_metadata(fragment, chunk_metadata)
