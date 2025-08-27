@@ -2077,6 +2077,37 @@
       cluster:
         cluster_compute: compute_tpl_single_node_gce.yaml
 
+- name: serve_throughput_optimized_microbenchmarks
+  group: Serve tests
+  working_dir: serve_tests
+
+  frequency: nightly
+  team: serve
+
+  cluster:
+    byod:
+      runtime_env:
+        - RAY_SERVE_THROUGHPUT_OPTIMIZED=1
+        - RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY=0
+    cluster_compute: compute_tpl_single_node_16_cpu.yaml
+    cloud_id: cld_wy5a6nhazplvu32526ams61d98
+    project_id: prj_lhlrf1u5yv8qz9qg3xzw8fkiiq
+
+  run:
+    timeout: 7200
+    long_running: false
+    script: python workloads/microbenchmarks.py --run-all
+
+  alert: default
+
+  variations:
+    - __suffix__: aws
+    - __suffix__: gce
+      env: gce
+      frequency: manual
+      cluster:
+        cluster_compute: compute_tpl_single_node_gce.yaml
+
 - name: serve_resnet_benchmark
   group: Serve tests
   working_dir: serve_tests
@@ -2860,9 +2891,7 @@
 
   team: core
   cluster:
-    byod:
-      runtime_env:
-        - RAY_enable_open_telemetry=1
+    byod: {}
     cluster_compute: stress_tests/placement_group_tests_compute.yaml
 
   run:
@@ -2934,9 +2963,7 @@
   working_dir: microbenchmark
 
   cluster:
-    byod:
-      runtime_env:
-        - RAY_enable_open_telemetry=1
+    byod: {}
     cluster_compute: tpl_64.yaml
 
   run:
@@ -3215,9 +3242,7 @@
   frequency: nightly
   team: core
   cluster:
-    byod:
-      runtime_env:
-        - RAY_enable_open_telemetry=1
+    byod: {}
     cluster_compute: stress_tests/stress_tests_compute.yaml
 
   run:
@@ -3257,9 +3282,7 @@
   frequency: nightly
   team: core
   cluster:
-    byod:
-      runtime_env:
-        - RAY_enable_open_telemetry=1
+    byod: {}
     cluster_compute: stress_tests/stress_tests_compute.yaml
 
   run:
@@ -3391,9 +3414,7 @@
   team: core
   env: aws_perf
   cluster:
-    byod:
-      runtime_env:
-        - RAY_enable_open_telemetry=1
+    byod: {}
     cluster_compute: stress_tests/stress_tests_single_node_oom_compute.yaml
 
   run:
@@ -3557,7 +3578,6 @@
       type: gpu
       runtime_env:
         - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-        - RAY_enable_open_telemetry=1
     cluster_compute: single_node.yaml
 
   run:
@@ -3585,7 +3605,6 @@
       type: gpu
       runtime_env:
         - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-        - RAY_enable_open_telemetry=1
     cluster_compute: object_store.yaml
 
   run:
@@ -3614,7 +3633,6 @@
       type: gpu
       runtime_env:
         - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-        - RAY_enable_open_telemetry=1
     cluster_compute: object_store/small_objects.yaml
 
   run:
@@ -3638,7 +3656,6 @@
       type: gpu
       runtime_env:
         - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-        - RAY_enable_open_telemetry=1
     cluster_compute: object_store/large_objects.yaml
 
   run:
@@ -3662,7 +3679,6 @@
       type: gpu
       runtime_env:
         - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-        - RAY_enable_open_telemetry=1
     cluster_compute: distributed.yaml
 
   run:
@@ -3711,7 +3727,6 @@
       type: gpu
       runtime_env:
         - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-        - RAY_enable_open_telemetry=1
     cluster_compute: distributed.yaml
 
   run:
@@ -3740,7 +3755,6 @@
       type: gpu
       runtime_env:
         - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-        - RAY_enable_open_telemetry=1
     cluster_compute: distributed.yaml
 
   run:
@@ -3790,7 +3804,6 @@
       type: gpu
       runtime_env:
         - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-        - RAY_enable_open_telemetry=1
     cluster_compute: many_nodes.yaml
 
   run:

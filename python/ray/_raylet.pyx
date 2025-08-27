@@ -4163,6 +4163,11 @@ cdef class CoreWorker:
                                          method_meta.retry_exceptions,
                                          method_meta.generator_backpressure_num_objects, # noqa
                                          method_meta.enable_task_events,
+                                         # TODO(swang): Pass
+                                         # enable_tensor_transport when
+                                         # serializing an ActorHandle and
+                                         # sending to another actor.
+                                         False,  # enable_tensor_transport
                                          method_meta.method_name_to_tensor_transport,
                                          actor_method_cpu,
                                          actor_creation_function_descriptor,
@@ -4181,6 +4186,7 @@ cdef class CoreWorker:
                                          {},  # method retry_exceptions
                                          {},  # generator_backpressure_num_objects
                                          {},  # enable_task_events
+                                         False,  # enable_tensor_transport
                                          None,  # method_name_to_tensor_transport
                                          0,  # actor method cpu
                                          actor_creation_function_descriptor,
