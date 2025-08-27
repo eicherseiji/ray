@@ -1,5 +1,4 @@
 import os
-import tempfile
 from typing import Dict
 
 import numpy as np
@@ -80,9 +79,12 @@ class TestReadImages:
         ]
 
         if ignore_missing_paths:
-            ds = ray.data.read_images(paths, ignore_missing_paths=ignore_missing_paths)
+            ds = ray.data.read_images(
+                paths, include_paths=True, ignore_missing_paths=ignore_missing_paths
+            )
+            paths = [row["path"] for row in ds.take_all()]
             # example:// directive redirects to /ray/python/ray/data/examples/data
-            assert len(ds.input_files()) == 1 and ds.input_files()[0].endswith(
+            assert len(paths) == 1 and paths[0].endswith(
                 "ray/data/examples/data/image-datasets/simple/image1.jpg",
             )
         else:
@@ -273,10 +275,13 @@ class TestReadImages:
         finally:
             ctx.target_max_block_size = target_max_block_size
 
-    def test_unidentified_image_error(ray_start_regular_shared):
-        with tempfile.NamedTemporaryFile(suffix=".png") as file:
-            with pytest.raises(ValueError):
-                ray.data.read_images(paths=file.name).materialize()
+    def test_unidentified_image_error(ray_start_regular_shared, tmp_path):
+        path = str(tmp_path / "invalid.png")
+        with open(path, "wb") as file:
+            file.write(b"spam")  # Invalid bytes for a PNG file
+
+        with pytest.raises(ValueError):
+            ray.data.read_images(paths=file.name).materialize()
 
     def test_custom_meta_provider_emits_deprecation_warning(ray_start_regular_shared):
         with pytest.warns(DeprecationWarning):

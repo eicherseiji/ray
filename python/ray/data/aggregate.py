@@ -12,6 +12,17 @@ if TYPE_CHECKING:
     from ray.data import Schema
 
 
+# _Optional implements container protocol similar to standalone Optional class
+# object in other languages (like Java, Scala, etc) by utilizing Python's `List`
+#
+# Unlike default Python's `Optional` it allows to encode following states:
+#   - Holding no value (ie empty)
+#   - Holding value (that could still be null)
+_Optional = List
+
+_OPTIONAL_EMPTY = []
+
+
 @Deprecated(message="AggregateFn is deprecated, please use AggregateFnV2")
 @PublicAPI
 class AggregateFn:
@@ -791,6 +802,14 @@ class Quantile(AggregateFnV2):
         return ls
 
     def finalize(self, accumulator: List[Any]) -> Optional[U]:
+        def unwrap(v):
+            try:
+                return v.as_py() if hasattr(v, "as_py") else v
+            except Exception:
+                return v
+
+        accumulator = [unwrap(v) for v in accumulator]
+
         if self._ignore_nulls:
             accumulator = [v for v in accumulator if not is_null(v)]
         else:
