@@ -15,3 +15,10 @@ steps:
             - "/var/run/docker.sock:/var/run/docker.sock"
     agents:
       queue: rayturbo_large_queue
+
+  # v2 init
+  - label: "build init"
+    priority: 10
+    commands:
+      - curl -sSfL "https://raw.githubusercontent.com/ray-project/rayci/stable/run_rayci.sh" > /tmp/run_rayci.sh
+      - /bin/bash /tmp/run_rayci.sh -upload -config anyscale/ci/config-release.yaml
