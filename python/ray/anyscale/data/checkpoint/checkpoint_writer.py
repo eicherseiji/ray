@@ -89,6 +89,10 @@ class BatchBasedCheckpointWriter(CheckpointWriter):
         checkpoint_ids_table = BlockAccessor.for_block(checkpoint_ids_block).to_arrow()
 
         def _write():
+            # TODO:srinathk10: Refer https://anyscale1.atlassian.net/browse/DATA-1361
+            # We can do groupby on the file fragment and write the checkpointed row ids
+            # as a list here. Given the low cardinality of the file fragment, this should
+            # reduce the side of the checkpoint file.
             pq.write_table(
                 checkpoint_ids_table,
                 ckpt_file_path,

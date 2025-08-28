@@ -119,7 +119,9 @@ class RowBasedCloudObjectStorageCheckpointWriter(CheckpointWriter):
                 completed_ids.append(result.result())
 
             # Verify that all checkpoints were written successfully.
-            assert set(future_ids) == set(completed_ids), (
+            future_ids_strings = {normalize_id(_id) for _id in future_ids}
+            completed_ids_strings = {normalize_id(_id) for _id in completed_ids}
+            assert set(future_ids_strings) == set(completed_ids_strings), (
                 f"Checkpoint writes failed for rows with IDs: "
-                f"{set(future_ids) - set(completed_ids)}"
+                f"{set(future_ids_strings) - set(completed_ids_strings)}"
             )

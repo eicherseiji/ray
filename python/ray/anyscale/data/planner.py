@@ -120,16 +120,16 @@ class RayTurboPlanner(Planner):
         if checkpoint_config is not None and _supports_checkpointing(logical_plan):
             self._supports_checkpointing = True
 
-            get_checkpoint_ref = None
+            load_checkpoint = None
             if checkpoint_config.is_batch_based():
                 checkpoint_callback = LoadCheckpointCallback(checkpoint_config)
                 add_execution_callback(checkpoint_callback, logical_plan.context)
-                get_checkpoint_ref = checkpoint_callback.get_checkpoint_ref
+                load_checkpoint = checkpoint_callback.load_checkpoint
 
             # Dynamically set the plan functions for checkpointing because they
             # need to a reference to the checkpoint ref.
             self._plan_fns_for_checkpointing = _get_plan_fns_for_checkpointing(
-                get_checkpoint_ref
+                load_checkpoint
             )
 
         elif checkpoint_config is not None:
@@ -176,20 +176,20 @@ def _supports_checkpointing(logical_plan: LogicalPlan) -> bool:
 
 
 def _get_plan_fns_for_checkpointing(
-    get_checkpoint_ref: Callable[[], ObjectRef]
+    load_checkpoint: Callable[[], ObjectRef]
 ) -> Dict[Type[LogicalOperator], PlanLogicalOpFn]:
     plan_fns = {
         Read: functools.partial(
             plan_read_op_with_checkpoint_filter,
-            get_checkpoint_ref=get_checkpoint_ref,
+            load_checkpoint=load_checkpoint,
         ),
         ReadFiles: functools.partial(
             plan_read_files_op_with_checkpoint_filter,
-            get_checkpoint_ref=get_checkpoint_ref,
+            load_checkpoint=load_checkpoint,
         ),
         AbstractFrom: functools.partial(
             plan_from_op_with_checkpoint_filter,
-            get_checkpoint_ref=get_checkpoint_ref,
+            load_checkpoint=load_checkpoint,
         ),
         Write: plan_write_op_with_checkpoint_writer,
     }

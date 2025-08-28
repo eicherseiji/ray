@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Callable, List, Optional
+from typing import Callable, List, Optional
 
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
 from ray.anyscale.data._internal.readers.parquet_reader import ParquetReader
@@ -16,13 +16,14 @@ from ray.data._internal.execution.operators.map_transformer import (
     MapTransformFn,
     MapTransformFnDataType,
 )
+from ray import ObjectRef
 
 
 def plan_read_files_op_with_checkpoint_filter(
     op: ReadFiles,
     physical_children: List[PhysicalOperator],
     data_context: DataContext,
-    get_checkpoint_ref: Optional[Callable[[], Any]] = None,
+    load_checkpoint: Optional[Callable[[], ObjectRef]] = None,
 ) -> PhysicalOperator:
     if (
         data_context.checkpoint_config is not None
@@ -33,15 +34,17 @@ def plan_read_files_op_with_checkpoint_filter(
             f"ParquetReader, but got {type(op.reader)}"
         )
 
-    physical_op = plan_read_files_op(op, physical_children, data_context)
-    _insert_filter_transform_fn(physical_op, data_context, get_checkpoint_ref)
+    physical_op = plan_read_files_op(
+        op, physical_children, data_context, load_checkpoint
+    )
+    _insert_filter_transform_fn(physical_op, data_context, load_checkpoint)
     return physical_op
 
 
 def _insert_filter_transform_fn(
     physical_op: MapOperator,
     data_context: DataContext,
-    get_checkpoint_ref: Optional[Callable[[], Any]],
+    load_checkpoint: Optional[Callable[[], ObjectRef]],
 ) -> MapOperator:
     transform_fns: List[
         MapTransformFn
@@ -64,7 +67,9 @@ def _insert_filter_transform_fn(
     )
     physical_op._map_transformer.set_transform_fns(transform_fns)
 
-    if get_checkpoint_ref is not None:
+    if load_checkpoint is not None:
+        # Checkpoint ObjectRef is resolved by Ray Core and the task is run only
+        # after the object is loaded.
         physical_op.add_map_task_kwargs_fn(
-            lambda: {CHECKPOINTED_IDS_KWARG_NAME: get_checkpoint_ref()}
+            lambda: {CHECKPOINTED_IDS_KWARG_NAME: load_checkpoint()}
         )

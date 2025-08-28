@@ -16,9 +16,14 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
 from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
+from ray.anyscale.data.checkpoint.util import normalize_id
 
 import ray
 from ray.data.tests.conftest import *  # noqa
+
+
+# Generated ID column name
+GENERATED_ID_COL = "row_id"
 
 
 @pytest.fixture
@@ -34,7 +39,7 @@ def checkpoint_config_fixture():
     original_config = ctx.checkpoint_config
 
     def _setup_checkpoint_config(
-        generated_id_column="row_id", checkpoint_path="/tmp/checkpoint"
+        generated_id_column=GENERATED_ID_COL, checkpoint_path="/tmp/checkpoint"
     ):
         ctx.checkpoint_config = CheckpointConfig(
             generated_id_column=generated_id_column, checkpoint_path=checkpoint_path
@@ -601,6 +606,31 @@ def test_schema():
     }
 
 
+def verify_unique_generated_id_column(
+    table: pa.Table, generated_id_column: str, expected_count: int
+) -> None:
+    """Verify uniqueness of generated_id_column IDs in a PyArrow table.
+
+    Args:
+        table: PyArrow table containing the data
+        generated_id_column: Name of the generated ID column
+        expected_count: Expected number of unique IDs
+    """
+    # Extract generated ID column
+    generated_ids = table[generated_id_column].to_numpy().tolist()
+
+    # Create unique identifiers using the normalize_id API
+    unique_identifiers = set()
+    for generated_id in generated_ids:
+        unique_id = normalize_id(generated_id)
+        unique_identifiers.add(unique_id)
+
+    # Verify uniqueness
+    assert (
+        len(unique_identifiers) == expected_count
+    ), f"Expected {expected_count} unique generated_id_column IDs, got {len(unique_identifiers)}"
+
+
 def create_test_data(num_rows: int, schema: dict) -> dict:
     """Create test data based on the provided schema."""
     data = {}
@@ -733,8 +763,8 @@ def test_read_parquet_with_columns_selectivity(
     [
         # Collision with existing schema column
         (
-            {"one": [1, 2, 3], "row_id": ["a", "b", "c"]},
-            "row_id",
+            {"one": [1, 2, 3], GENERATED_ID_COL: ["a", "b", "c"]},
+            GENERATED_ID_COL,
             {},
             None,
             "generated_id_column='row_id' conflicts with an existing column",
@@ -742,9 +772,13 @@ def test_read_parquet_with_columns_selectivity(
         ),
         # Collision with columns list
         (
-            {"one": [1, 2, 3], "two": ["a", "b", "c"], "row_id": ["d", "e", "f"]},
-            "row_id",
-            {"columns": ["one", "two", "row_id"]},
+            {
+                "one": [1, 2, 3],
+                "two": ["a", "b", "c"],
+                GENERATED_ID_COL: ["d", "e", "f"],
+            },
+            GENERATED_ID_COL,
+            {"columns": ["one", "two", GENERATED_ID_COL]},
             None,
             "generated_id_column='row_id' conflicts with a column in the columns list",
             "collision with explicit columns list",
@@ -769,7 +803,7 @@ def test_read_parquet_with_columns_selectivity(
         ),
     ],
 )
-def test_parquet_generated_row_id_collisions(
+def test_parquet_generated_id_column_collisions(
     ray_start_regular_shared,
     tmp_path,
     checkpoint_config_fixture,
@@ -801,7 +835,7 @@ def test_parquet_generated_row_id_collisions(
         ds.materialize()
 
 
-def test_parquet_generated_row_id_with_filter_pushdown(
+def test_parquet_generated_id_column_with_filter_pushdown(
     ray_start_regular_shared,
     tmp_path,
     checkpoint_config_fixture,
@@ -825,13 +859,13 @@ def test_parquet_generated_row_id_with_filter_pushdown(
     expected_count = len(expected_filtered_df)
 
     # Set up checkpoint config with generated_id_column
-    checkpoint_config_fixture(generated_id_column="row_id")
+    checkpoint_config_fixture(generated_id_column=GENERATED_ID_COL)
 
     # Read with row IDs and apply filter
     ds_filtered = ray.data.read_parquet(data_path).filter(expr=filter_condition)
 
     # Verify schema includes row_id column
-    assert ds_filtered.schema().names == ["id", "value", "row_id"]
+    assert ds_filtered.schema().names == ["id", "value", GENERATED_ID_COL]
 
     # Collect filtered data
     filtered_batches = list(ds_filtered.iter_batches(batch_format="pyarrow"))
@@ -846,17 +880,10 @@ def test_parquet_generated_row_id_with_filter_pushdown(
         filtered_table.num_rows == expected_count
     ), f"Expected {expected_count} rows, got {filtered_table.num_rows}"
 
-    # Verify row IDs preserve original file-based positions
-    row_ids = filtered_table["row_id"].to_numpy()
+    # Verify generated_id_column preserves original file-based positions
+    verify_unique_generated_id_column(filtered_table, GENERATED_ID_COL, expected_count)
 
-    # Extract row ID strings for uniqueness checks
-    # Row IDs are now simple strings in format "/path/to/file/row_id"
-    row_id_strings = row_ids.tolist()
-
-    # Row IDs should be unique
-    assert len(set(row_id_strings)) == len(row_id_strings), "Row IDs should be unique"
-
-    # Row IDs should correspond to original positions from each file's range
+    # generated_id_column IDs should correspond to original positions from each file's range
     # Each file had 50 rows with ranges: file0=[0-49], file1=[50-99], file2=[100-149], file3=[150-199]
     # After filtering "value < 10", we expect gaps in row IDs where filtered rows were removed
     filtered_df = filtered_table.to_pandas()
@@ -884,13 +911,13 @@ def test_parquet_read_with_generated_id_column_checkpoint_config(
     data_path, file_info, total_rows = large_parquet_dataset()
 
     # Set up checkpoint config with generated_id_column
-    checkpoint_config_fixture(generated_id_column="row_id")
+    checkpoint_config_fixture(generated_id_column=GENERATED_ID_COL)
 
     # Read all files with row IDs
     ds = ray.data.read_parquet(data_path)
 
     # Verify schema includes row_id column
-    assert ds.schema().names == ["one", "two", "row_id"]
+    assert ds.schema().names == ["one", "two", GENERATED_ID_COL]
 
     # Collect all data as Arrow table to verify row ID properties
     batches = list(ds.iter_batches(batch_format="pyarrow"))
@@ -899,20 +926,8 @@ def test_parquet_read_with_generated_id_column_checkpoint_config(
     # Verify we have exactly 1000 rows
     assert all_data_table.num_rows == total_rows
 
-    # Extract columns as numpy arrays for efficient processing
-    row_ids = all_data_table["row_id"].to_numpy()
-
-    # Extract row ID strings for uniqueness checks
-    # Row IDs are now simple strings in format "/path/to/file/row_id"
-    row_id_strings = row_ids.tolist()
-
-    # Verify row IDs are unique and properly distributed
-    unique_row_ids = set(row_id_strings)
-
-    # All composite keys should be unique since they include both row_id and path information
-    assert (
-        len(unique_row_ids) == total_rows
-    ), f"Expected {total_rows} unique row IDs, got {len(unique_row_ids)}"
+    # Verify generated ID column uniqueness
+    verify_unique_generated_id_column(all_data_table, GENERATED_ID_COL, total_rows)
 
 
 def test_parquet_chunked_reading_preserves_order(ray_start_regular_shared, tmp_path):
@@ -1285,6 +1300,174 @@ def test_chunked_out_of_range_returns_empty(
         )
     )
     assert len(tables) == 0
+
+
+def test_read_files_with_checkpoint_ids_fully_skip_fragment(
+    ray_start_regular_shared, tmp_path, checkpoint_config_fixture
+):
+    """Test read_files with checkpoint_ids that fully skip a fragment."""
+    checkpoint_config_fixture(generated_id_column=GENERATED_ID_COL)
+
+    table = pa.table(
+        {"id": list(range(100)), "value": [f"val_{i}" for i in range(100)]}
+    )
+    file_path = os.path.join(tmp_path, "test.parquet")
+    pq.write_table(table, file_path, row_group_size=25)  # 4 row groups
+
+    file_size = os.path.getsize(file_path)
+    file_manifest = FileManifest.construct_manifest([file_path], [file_size], [None])
+
+    parquet_reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        use_threads=True,
+        to_batches_kwargs={},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+
+    checkpointed_ids = pa.table(
+        {
+            "checkpointed_fragment": [f"{file_path}/row_group={i}" for i in range(4)],
+            "num_rows": [25, 25, 25, 25],
+            "checkpointed_row_count": [25, 25, 25, 25],
+            "checkpointed_row_ids": pa.array(
+                [[], [], [], []], type=pa.list_(pa.bool_())
+            ),
+        }
+    )
+
+    tables = list(
+        parquet_reader.read_files(
+            file_manifest,
+            checkpoint_ids=checkpointed_ids,
+            filesystem=pa.fs.LocalFileSystem(),
+        )
+    )
+
+    assert len(tables) == 0, f"Expected 0 tables, got {len(tables)}"
+
+
+def test_read_files_with_checkpoint_ids_partial_skip_fragment(
+    ray_start_regular_shared, tmp_path, checkpoint_config_fixture
+):
+    """Test read_files with checkpoint_ids that partially skip a fragment."""
+    checkpoint_config_fixture(generated_id_column=GENERATED_ID_COL)
+
+    table = pa.table({"id": list(range(20)), "value": [f"val_{i}" for i in range(20)]})
+    file_path = os.path.join(tmp_path, "test.parquet")
+    pq.write_table(table, file_path, row_group_size=5)  # 4 row groups
+
+    file_size = os.path.getsize(file_path)
+    file_manifest = FileManifest.construct_manifest([file_path], [file_size], [None])
+
+    parquet_reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        use_threads=True,
+        to_batches_kwargs={},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+
+    checkpointed_ids_table = pa.table(
+        {
+            "checkpointed_fragment": [f"{file_path}/row_group={i}" for i in range(4)],
+            "num_rows": [5, 5, 5, 5],
+            "checkpointed_row_count": [3, 0, 0, 0],
+            "checkpointed_row_ids": pa.array(
+                [
+                    [True, True, True, False, False],
+                    [False, False, False, False, False],
+                    [False, False, False, False, False],
+                    [False, False, False, False, False],
+                ],
+                type=pa.list_(pa.bool_()),
+            ),
+        }
+    )
+
+    checkpointed_ids = ray.data.from_arrow(checkpointed_ids_table).take_batch(
+        batch_format="pyarrow"
+    )
+
+    tables = list(
+        parquet_reader.read_files(
+            file_manifest,
+            checkpoint_ids=checkpointed_ids,
+            filesystem=pa.fs.LocalFileSystem(),
+        )
+    )
+
+    # Should return 4 tables (all row groups), but first group should have filtered rows
+    assert len(tables) == 4, f"Expected 4 tables, got {len(tables)}"
+    total_rows = sum(table.num_rows for table in tables)
+    assert total_rows == 17, f"Expected 17 rows (20 - 3 checkpointed), got {total_rows}"
+
+
+def test_read_files_with_checkpoint_ids_no_skip_fragment(
+    ray_start_regular_shared, tmp_path, checkpoint_config_fixture
+):
+    """Test read_files with checkpoint_ids that don't skip any fragments."""
+    checkpoint_config_fixture(generated_id_column=GENERATED_ID_COL)
+
+    table = pa.table(
+        {"id": list(range(100)), "value": [f"val_{i}" for i in range(100)]}
+    )
+    file_path = os.path.join(tmp_path, "test.parquet")
+    pq.write_table(table, file_path, row_group_size=25)  # 4 row groups
+
+    file_size = os.path.getsize(file_path)
+    file_manifest = FileManifest.construct_manifest([file_path], [file_size], [None])
+
+    parquet_reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        use_threads=True,
+        to_batches_kwargs={},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+
+    checkpointed_ids_table = pa.table(
+        {
+            # Different file, different row group
+            "checkpointed_fragment": ["/non/existent/path.parquet/row_group=0"],
+            "num_rows": [25],
+            "checkpointed_row_count": [5],
+            # Different file has checkpointed rows
+            "checkpointed_row_ids": pa.array(
+                [[False] * 100 + [True, True, True, True, True] + [False] * 95],
+                type=pa.list_(pa.bool_()),
+            ),
+        }
+    )
+
+    checkpointed_ids = ray.data.from_arrow(checkpointed_ids_table).take_batch(
+        batch_format="pyarrow"
+    )
+
+    tables = list(
+        parquet_reader.read_files(
+            file_manifest,
+            checkpoint_ids=checkpointed_ids,
+            filesystem=pa.fs.LocalFileSystem(),
+        )
+    )
+
+    # Should return all data with no filtering
+    assert len(tables) > 0, "Expected some tables to be returned"
+    total_rows = sum(table.num_rows for table in tables)
+    assert total_rows == 100, f"Expected 100 rows (no filtering), got {total_rows}"
 
 
 if __name__ == "__main__":

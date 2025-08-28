@@ -2,13 +2,15 @@ import argparse
 import os
 import time
 import numpy
+import random
+import math
 from typing import Optional
 from ray.data.datasource import WriteResult
 from benchmark import Benchmark, BenchmarkMetric
 import ray
 from ray.data import DataContext
 from ray.anyscale.data.checkpoint import CheckpointBackend, CheckpointConfig
-
+from pyarrow.fs import FileSelector, FileType, FileSystem
 from ray.data._internal.datasource.parquet_datasink import ParquetDatasink
 
 
@@ -60,6 +62,12 @@ def run_dataset(
     if not num_rows:
         num_rows = ds.count()
 
+    # TODO(srinathk10): Remove this once hash shuffle parallelism is system configurable.
+    if num_rows == 10_000_000:
+        ctx.default_hash_shuffle_parallelism = 25
+    elif num_rows == 3_000_000_000:
+        ctx.default_hash_shuffle_parallelism = 500
+
     def transform(batch):
         time.sleep(transform_sleep_s)
         return batch
@@ -108,6 +116,75 @@ def run_dataset(
         ParquetDatasink.on_write_complete = original_on_write_complete
 
 
+def _delete_pct_of_checkpoint_files(
+    checkpoint_config: CheckpointConfig,
+    percentage: float,
+    *,
+    recursive: bool = True,
+    seed: Optional[int] = 42,
+) -> int:
+    """Delete a percentage of checkpoint files to test recovery scenarios."""
+    if not (0.0 <= percentage <= 1.0):
+        raise ValueError(f"percentage must be in [0, 1], got {percentage}")
+
+    if seed is not None:
+        random.seed(seed)
+
+    checkpoint_path = checkpoint_config.checkpoint_path
+
+    # Handle both local paths and S3 URIs
+    if checkpoint_path.startswith(("s3://", "gs://", "file://", "http://", "https://")):
+        # For URIs, get the filesystem and strip the scheme
+        fs, base_path = FileSystem.from_uri(checkpoint_path)
+    else:
+        # For local paths, use the provided filesystem
+        fs = checkpoint_config.filesystem
+        base_path = checkpoint_path
+
+    # Get list of files
+    info = fs.get_file_info(base_path)
+    if info.type == FileType.Directory:
+        selector = FileSelector(base_path, recursive=recursive)
+        file_infos = fs.get_file_info(selector)
+        files = [
+            checkpoint_path.rstrip("/") + "/" + fi.path[len(base_path) :].lstrip("/")
+            for fi in file_infos
+            if fi.type == FileType.File
+        ]
+    elif info.type == FileType.File:
+        files = [checkpoint_path]
+    else:
+        files = []
+
+    if not files:
+        print(f"No checkpoint files found in {checkpoint_path}")
+        return 0
+
+    if percentage == 0.0:
+        print(f"percentage=0.0, no files selected from {checkpoint_path}")
+        return 0
+
+    # Select and delete files
+    num_to_delete = min(len(files), max(1, math.ceil(len(files) * percentage)))
+    chosen = random.sample(files, num_to_delete)
+
+    print(
+        f"Deleting {len(chosen)} out of {len(files)} checkpoint files ({percentage*100:.0f}%)"
+    )
+
+    # Count rows before deletion
+    ds = ray.data.read_parquet(chosen)
+    total_rows_deleted = ds.count()
+    print(f"Selected {len(chosen)} files contain {total_rows_deleted} total rows")
+
+    # Delete files (strip s3:// prefix for filesystem operations)
+    for p in chosen:
+        delete_path = p[5:] if p.startswith("s3://") else p
+        fs.delete_file(delete_path)
+
+    return total_rows_deleted
+
+
 def run_checkpoints_benchmark(
     benchmark: Benchmark,
     checkpoint_config: Optional[CheckpointConfig],
@@ -150,26 +227,57 @@ def run_checkpoints_benchmark(
         }
 
         if checkpoint_config is not None:
-            print(f"[{benchmark_name}] Rerunning dataset with full checkpoint")
-            start_time = time.time()
-            num_rows_written = run_dataset(
-                checkpoint_config,
-                input_data_path,
-                transform_sleep_s,
-                inference_sleep_s,
-                inference_batch_size,
-                inference_concurrency,
-                data_output_path,
-                num_output_files,
-                num_rows=num_rows,
-            )
-            assert num_rows_written == 0
-            runtime = time.time() - start_time
-            # TODO: capture checkpoint loading time.
-            benchmark_results["runtime_with_full_checkpoint"] = time.time() - start_time
-            print(
-                f"[{benchmark_name}] dataset with full checkpoint finished in {runtime:.2f} seconds"
-            )
+            # TODO(srinathk10): Allow partial checkpoint recovery only for 10M rows now
+            # and remove this once it scales.
+            if num_rows == 10_000_000:
+                test_scenarios = [
+                    ("full_checkpoint", 1.0),  # Full completion
+                    ("90_percent_completion", 0.9),  # 90% completion
+                    ("75_percent_completion", 0.75),  # 75% completion
+                    ("50_percent_completion", 0.5),  # 50% completion
+                    ("25_percent_completion", 0.25),  # 25% completion
+                    ("10_percent_completion", 0.1),  # 10% completion
+                ]
+            else:
+                test_scenarios = [
+                    ("full_checkpoint", 1.0),  # Full completion
+                ]
+
+            for scenario_name, completion_percentage in test_scenarios:
+                if completion_percentage < 1.0:
+                    rows_to_recover = _delete_pct_of_checkpoint_files(
+                        checkpoint_config, 1.0 - completion_percentage
+                    )
+                    print(
+                        f"[{benchmark_name}] Testing checkpoint recovery with {completion_percentage*100:.0f}% completion, {num_rows} total rows, {rows_to_recover} rows to recover"
+                    )
+                else:
+                    rows_to_recover = 0
+                    print(
+                        f"[{benchmark_name}] Rerunning dataset with full checkpoint, {num_rows} total rows"
+                    )
+
+                start_time = time.time()
+                num_rows_written = run_dataset(
+                    checkpoint_config,
+                    input_data_path,
+                    transform_sleep_s,
+                    inference_sleep_s,
+                    inference_batch_size,
+                    inference_concurrency,
+                    data_output_path,
+                    num_output_files,
+                    num_rows=num_rows,
+                )
+                assert (
+                    num_rows_written == rows_to_recover
+                ), f"num_rows_written: {num_rows_written}, rows_to_recover: {rows_to_recover}"
+                runtime = time.time() - start_time
+                benchmark_results[f"runtime_with_{scenario_name}"] = runtime
+                print(
+                    f"[{benchmark_name}] dataset with {scenario_name} finished in {runtime:.2f} seconds"
+                )
+
         return benchmark_results
 
     benchmark.run_fn(benchmark_name, run)

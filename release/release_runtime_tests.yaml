@@ -154,13 +154,14 @@
     timeout: 3600
     script: python cpu_job_autoscaling_benchmark.py
 
-- name: "checkpoint_benchmark_{{scale}}_default_id"
+- name: "checkpoint_benchmark_{{scale}}_{{id_column}}"
   group: data-tests
   working_dir: anyscale/data
 
   matrix:
     setup:
       scale: [small, large]
+      id_column: [default_id, generated_id_column]
 
   frequency: nightly
   team: data
@@ -171,29 +172,7 @@
 
   run:
     timeout: 4800
-    script: python ./run_checkpoint_benchmark.py {{scale}} default_id
-
-
-# TODO(srinathk10): Disable large scale for generated_id_column due to performance issues.
-# Refer https://anyscale1.atlassian.net/browse/DATA-1241
-- name: "checkpoint_benchmark_{{scale}}_generated_id_column"
-  group: data-tests
-  working_dir: anyscale/data
-
-  matrix:
-    setup:
-      scale: [small]
-
-  frequency: nightly
-  team: data
-  cluster:
-    byod:
-      type: gpu
-    cluster_compute: "checkpoint_benchmark_compute_{{scale}}.yaml"
-
-  run:
-    timeout: 4800
-    script: python ./run_checkpoint_benchmark.py {{scale}} generated_id_column
+    script: python ./run_checkpoint_benchmark.py {{scale}} {{id_column}}
 
 
 ###############

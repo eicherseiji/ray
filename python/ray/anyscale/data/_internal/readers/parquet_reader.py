@@ -36,8 +36,11 @@ from ray.data.datasource import Partitioning, PathPartitionParser
 from ray.data.datasource.path_util import _has_file_extension
 from ray.util.debug import log_once
 from ray.anyscale.data.checkpoint.util import (
+    CheckpointedFragmentInfo,
+    get_checkpointed_fragment_info,
     get_generated_id_column,
     GENERATED_ID_COLUMN_TYPE,
+    exclude_checkpointed_rows,
 )
 
 from .file_reader import FileReader
@@ -207,7 +210,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         filter_expr: Optional[pyarrow.dataset.Expression] = None,
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
-        filesystem,
+        filesystem: pyarrow.fs.FileSystem,
+        checkpoint_ids: Optional[Block] = None,
     ) -> Iterable[DataBatch]:
         if columns and columns_rename:
             assert set(columns_rename.keys()).issubset(columns), (
@@ -293,6 +297,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                     data_columns=data_columns,
                     partition_columns=partition_columns,
                     columns_rename=columns_rename,
+                    checkpoint_ids=checkpoint_ids,
                 ),
                 # NOTE: It's crucial for the sequence to have preserved (deterministic)
                 #       ordering so that that tasks could be safely retried (when
@@ -308,6 +313,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 data_columns=data_columns,
                 partition_columns=partition_columns,
                 columns_rename=columns_rename,
+                checkpoint_ids=checkpoint_ids,
             )
 
     def _calculate_row_group_range(
@@ -428,9 +434,21 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 else:
                     fragments.append(fragment)
             else:
-                fragments.extend(
-                    self._fragments_from_chunk_metadata(fragment, chunk_metadata)
-                )
+                if self._generated_id_column:
+                    for fragment_item in self._fragments_from_chunk_metadata(
+                        fragment, chunk_metadata
+                    ):
+                        assert len(fragment_item.row_groups) == 1, (
+                            f"Expected each fragment to have exactly 1 row group when "
+                            f"generated_id_column is set, but found fragment with "
+                            f"{len(fragment_item.row_groups)} row groups"
+                        )
+                        fragments.append(fragment_item)
+                else:
+                    fragments.extend(
+                        self._fragments_from_chunk_metadata(fragment, chunk_metadata)
+                    )
+
         check_for_legacy_tensor_type(parquet_dataset.schema)
         return fragments
 
@@ -455,6 +473,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         data_columns: Optional[List[str]] = None,
         partition_columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
+        checkpoint_ids: Optional[Block] = None,
     ) -> Iterable["pyarrow.Table"]:
         for fragment in fragments:
             partitions = {}
@@ -468,6 +487,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 fragment.path,
                 schema,
                 data_columns,
+                checkpoint_ids,
             ):
                 if self._include_paths:
                     batch = batch.append_column(
@@ -571,7 +591,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         row_group_num_rows = row_group_meta.num_rows
 
         if row_group_num_rows == 0:
-            # First row group has no rows
+            # Row group has no rows
             return 1
 
         # Calculate row group size in bytes for the projected columns
@@ -603,7 +623,35 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         path: str,
         schema: pyarrow.Schema,
         columns: Optional[List[str]],
+        checkpoint_ids: Optional[Block] = None,
     ) -> Iterable[pyarrow.Table]:
+        checkpointed_fragment_info: Optional[CheckpointedFragmentInfo] = None
+        if self._generated_id_column and checkpoint_ids is not None:
+            assert len(fragment.row_groups) == 1
+            checkpointed_fragment_info = get_checkpointed_fragment_info(
+                fragment=fragment,
+                row_group_idx=fragment.row_groups[0].id,
+                checkpointed_ids=checkpoint_ids,
+            )
+            if checkpointed_fragment_info.fully_checkpointed:
+                # Skip batching the fragment if all rows are checkpointed
+                logger.debug(
+                    "Skipping reading fragment %s row group %d because all rows are checkpointed",
+                    fragment.path,
+                    fragment.row_groups[0].id,
+                )
+                return
+            else:
+                # If the fragment is not fully checkpointed, we need to exclude the checkpointed rows from the table
+                logger.debug(
+                    "Exclude checkpointed rows from fragment %s, row group %d, "
+                    "row count %d, checkpointed row count %d",
+                    fragment.path,
+                    fragment.row_groups[0].id,
+                    fragment.metadata.row_group(0).num_rows,
+                    checkpointed_fragment_info.checkpointed_row_count,
+                )
+
         if self._batch_size is not None:
             batch_size = self._batch_size
         elif self._sampled_batch_size is not None:
@@ -637,13 +685,53 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 continue
             table = pa.Table.from_batches([batch])
 
-            # Add row IDs if requested
             if self._generated_id_column:
+                # Add generated ID column to the table
+                assert len(fragment.row_groups) == 1
                 table = table.append_column(
                     self._generated_id_column,
-                    get_generated_id_column(path, current_row_offset, table.num_rows),
+                    get_generated_id_column(
+                        path=path,
+                        row_group_idx=fragment.row_groups[0].id,
+                        total_num_rows=fragment.metadata.row_group(0).num_rows,
+                        current_row_offset=current_row_offset,
+                        current_num_rows=table.num_rows,
+                    ),
                 )
+
+                # Store the original offset used for generating row IDs
+                original_offset = current_row_offset
+
+                # Update the current row offset for the row IDs before excluding checkpointed rows
+                num_rows_before_exclude = table.num_rows
                 current_row_offset += table.num_rows
+
+                # Exclude checkpointed rows from the table using the original offset
+                if checkpointed_fragment_info is not None:
+                    assert (
+                        not checkpointed_fragment_info.fully_checkpointed
+                    ), "Table should not be fully checkpointed"
+                    table = exclude_checkpointed_rows(
+                        table=table,
+                        checkpointed_fragment_info=checkpointed_fragment_info,
+                        current_row_offset=original_offset,
+                        current_num_rows=num_rows_before_exclude,
+                    )
+
+                if num_rows_before_exclude > table.num_rows:
+                    logger.debug(
+                        "Excluded %d checkpointed rows from fragment %s, row group %d, range [%d, %d]",
+                        num_rows_before_exclude - table.num_rows,
+                        fragment.path,
+                        fragment.row_groups[0].id,
+                        original_offset,
+                        original_offset + num_rows_before_exclude - 1,
+                    )
+
+                # Even if this fragment is fully checkpointed, the table may be empty because
+                # the all the rows for this batch were checkpointed.
+                if table.num_rows == 0:
+                    continue
 
             if self._block_udf is not None:
                 table = self._block_udf(table)

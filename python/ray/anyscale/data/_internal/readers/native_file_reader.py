@@ -14,7 +14,7 @@ from ray.data._internal.util import (
     iterate_with_retry,
     make_async_gen,
 )
-from ray.data.block import DataBatch
+from ray.data.block import Block, DataBatch
 from ray.data.context import DataContext
 from ray.data.datasource import Partitioning, PathPartitionParser
 from ray.anyscale.data._internal.file_indexer import ChunkMetadata
@@ -65,7 +65,8 @@ class NativeFileReader(FileReader):
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
         filter_expr: Optional["pyarrow.dataset.Expression"] = None,
-        filesystem,
+        filesystem: "pyarrow.fs.FileSystem",
+        checkpoint_ids: Optional[Block] = None,
     ) -> Iterable[DataBatch]:
         paths = file_manifest.paths
         file_chunk_metadatas = file_manifest.file_chunk_metadatas

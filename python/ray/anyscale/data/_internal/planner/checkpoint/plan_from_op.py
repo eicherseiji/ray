@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Callable, List, Optional
+from typing import Callable, List, Optional
 
 from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_IDS_KWARG_NAME,
@@ -13,6 +13,7 @@ from ray.data._internal.execution.operators.map_transformer import (
     BuildOutputBlocksMapTransformFn,
     MapTransformer,
 )
+from ray import ObjectRef
 from ray.data._internal.logical.operators.from_operators import AbstractFrom
 from ray.data.context import DataContext
 
@@ -21,7 +22,7 @@ def plan_from_op_with_checkpoint_filter(
     op: AbstractFrom,
     physical_children: List[PhysicalOperator],
     data_context: DataContext,
-    get_checkpoint_ref: Optional[Callable[[], Any]] = None,
+    load_checkpoint: Optional[Callable[[], ObjectRef]] = None,
 ) -> PhysicalOperator:
     assert len(physical_children) == 0
 
@@ -43,9 +44,9 @@ def plan_from_op_with_checkpoint_filter(
         name="FilterCheckpointedRows",
     )
 
-    if get_checkpoint_ref is not None:
+    if load_checkpoint is not None:
         map_operator.add_map_task_kwargs_fn(
-            lambda: {CHECKPOINTED_IDS_KWARG_NAME: get_checkpoint_ref()}
+            lambda: {CHECKPOINTED_IDS_KWARG_NAME: load_checkpoint()}
         )
 
     return map_operator
