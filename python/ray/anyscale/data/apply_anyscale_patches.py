@@ -28,6 +28,16 @@ from ray.anyscale.data._internal.logical.rules.map_fusion import (
 from ray.anyscale.data.api.context_mixin import DataContextMixin
 from ray.anyscale.data.api.dataset_mixin import DatasetMixin
 from ray.anyscale.data.checkpoint.iterator_mixin import DataIteratorMixin
+from ray.anyscale.data.preprocessors import (
+    Chain,
+    OrdinalEncoder,
+    SimpleImputer,
+    StandardScaler,
+    OneHotEncoder,
+    MultiHotEncoder,
+    LabelEncoder,
+    Categorizer,
+)
 from ray.data._internal.execution.execution_callback import add_execution_callback
 from ray.data._internal.execution.interfaces.op_runtime_metrics import (
     MetricsGroup,
@@ -40,6 +50,12 @@ from ray.data._internal.logical.optimizers import (
 )
 from ray.data._internal.logical.rules.configure_map_task_memory import (
     ConfigureMapTaskMemoryUsingOutputSize,
+)
+import ray.data.preprocessors as preproc_module
+
+
+ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS = env_bool(
+    "ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS", True
 )
 
 ANYSCALE_LOCAL_LIMIT_MAP_OPERATOR_ENABLED = env_bool(
@@ -151,6 +167,16 @@ def apply_anyscale_patches():
     _patch_class_with_mixin(ray.data.Dataset, DatasetMixin)
     _patch_class_with_dataclass_mixin(ray.data.DataContext, DataContextMixin)
     _patch_class_with_mixin(ray.data.DataIterator, DataIteratorMixin)
+
+    if ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS:
+        preproc_module.Chain = Chain
+        preproc_module.SimpleImputer = SimpleImputer
+        preproc_module.StandardScaler = StandardScaler
+        preproc_module.OrdinalEncoder = OrdinalEncoder
+        preproc_module.OneHotEncoder = OneHotEncoder
+        preproc_module.MultiHotEncoder = MultiHotEncoder
+        preproc_module.LabelEncoder = LabelEncoder
+        preproc_module.Categorizer = Categorizer
 
     # Patch default aggregation implementations with more performant
     # vectorized versions
