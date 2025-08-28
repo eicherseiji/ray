@@ -6,7 +6,7 @@ from typing import Optional, OrderedDict
 from unittest.mock import MagicMock, patch
 
 import pytest
-
+import ray
 from ray.anyscale.data._internal.actor_autoscaler.rayturbo_actor_autoscaler import (
     DefaultActorPoolResizingPolicy,
     RayTurboActorAutoscaler,
@@ -176,6 +176,10 @@ class TestClusterAutoscaling(unittest.TestCase):
             "object_store_memory": 500,
             "node:__internal_head__": 1.0,
         }
+        ray.init()
+
+    def teardown_class(self):
+        ray.shutdown()
 
     def test_get_node_resource_spec_and_count(self):
         # Test _get_node_resource_spec_and_count

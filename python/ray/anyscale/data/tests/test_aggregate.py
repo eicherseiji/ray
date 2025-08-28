@@ -32,6 +32,7 @@ from ray.data.aggregate import (
     Unique,
     Count,
 )
+from ray.tests.conftest import *  # noqa  # noqa
 
 
 @pytest.mark.parametrize(
@@ -124,7 +125,7 @@ def _map_to_pa_compute_method(agg_cls: type):
     return _map[agg_cls]
 
 
-def test_default_shuffle_aggregator_args():
+def test_default_shuffle_aggregator_args(ray_start_regular_shared):
     parent_op_mock = MagicMock(PhysicalOperator)
     parent_op_mock._output_dependencies = []
 
