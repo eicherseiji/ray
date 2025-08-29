@@ -39,7 +39,7 @@ def test_row_partitions_fallback_complex_types():
     partitions = _hash_partition_vectorized(table, num_partitions)
 
     # Should still work, just using fallback implementation
-    assert np.array_equal(partitions, [0, 0, 1])
+    assert np.array_equal(partitions, [1, 0, 0])
 
 
 def test_row_partitions_fallback_struct_types():
@@ -55,7 +55,7 @@ def test_row_partitions_fallback_struct_types():
     num_partitions = 2
     partitions = _hash_partition_vectorized(table, num_partitions)
 
-    assert np.array_equal(partitions, [0, 1, 0])
+    assert np.array_equal(partitions, [0, 1, 1])
 
 
 def test_hash_partition_optimized_empty_table():

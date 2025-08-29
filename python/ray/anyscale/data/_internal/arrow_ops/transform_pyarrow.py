@@ -2,10 +2,11 @@ import logging
 from typing import Dict, List, Tuple
 
 import numpy as np
+from polars.exceptions import PolarsError
 import pyarrow as pa
 
-from ray.data._internal.arrow_ops.transform_pyarrow import _hash_partition
 from ray.util.debug import log_once
+from ray.data._internal.arrow_ops.transform_pyarrow import _hash_partition
 
 logger = logging.getLogger(__name__)
 
@@ -44,15 +45,15 @@ def _hash_partition_vectorized(
         projected_table, rechunk=False
     )  # zero-copy wrapper
 
-    for col_name in df.columns:
-        dtype = df.schema[col_name]
-
-        if dtype.is_nested():  # List, Array, Struct etc.
-            # Fall back to original implementation for complex types
-            return _hash_partition(projected_table, num_partitions=num_partitions)
-
-    # Hash the entire row (now all columns are already hashed integers)
-    return (df.hash_rows(seed=0).to_numpy() % num_partitions).astype(np.int64)
+    try:
+        # Hash the entire row (now all columns are already hashed integers)
+        return (df.hash_rows(seed=0).to_numpy() % num_partitions).astype(np.int64)
+    except PolarsError as e:
+        logger.warning(
+            f"Optimized hash partitioning failed with error: {e}. Falling back to baseline implementation."
+        )
+        # As a fallback, use the original implementation.
+        return _hash_partition(projected_table, num_partitions=num_partitions)
 
 
 # Conditionally apply numba compilation if available
