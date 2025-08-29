@@ -7,6 +7,10 @@ IMG_TYPE="${2:-cpu}"
 BASE_TYPE="${3:-ray}"
 IS_SLIM="${4:-0}"
 
+LAYER_TYPE="${LAYER_TYPE:-base}"
+SKIP_ANYSCALE_LAYER="${SKIP_ANYSCALE_LAYER:-0}"
+REPO_SERIES_NAME="${REPO_SERIES_NAME:-runtime}"
+
 source anyscale/ci/setup-env.sh
 
 IMAGE_PREFIX="${RAYCI_BUILD_ID}"
@@ -28,11 +32,11 @@ fi
 OSS_WHEEL_URL_PREFIX="https://ray-wheels.s3.us-west-2.amazonaws.com/${UPSTREAM_BRANCH}/${UPSTREAM_COMMIT}/"
 
 if [[ "${BASE_TYPE}" == "ray" ]]; then
-    RAYTURBO_REPO="830883877497.dkr.ecr.us-west-2.amazonaws.com/anyscale/runtime"
+    RAYTURBO_REPO="830883877497.dkr.ecr.us-west-2.amazonaws.com/anyscale/${REPO_SERIES_NAME}"
 elif [[ "${BASE_TYPE}" == "ray-llm" ]]; then
-    RAYTURBO_REPO="830883877497.dkr.ecr.us-west-2.amazonaws.com/anyscale/runtime-llm"
+    RAYTURBO_REPO="830883877497.dkr.ecr.us-west-2.amazonaws.com/anyscale/${REPO_SERIES_NAME}-llm"
 elif [[ "${BASE_TYPE}" == "ray-ml" ]]; then
-    RAYTURBO_REPO="830883877497.dkr.ecr.us-west-2.amazonaws.com/anyscale/runtime-ml"
+    RAYTURBO_REPO="830883877497.dkr.ecr.us-west-2.amazonaws.com/anyscale/${REPO_SERIES_NAME}-ml"
 else
     echo "Unknown base type: ${BASE_TYPE}" >/dev/stderr
     exit 1
@@ -166,19 +170,21 @@ aws s3 cp "${S3_TEMP}/${WHEEL_FILE}" "${BUILD_TMP}/runtime-whl/${WHEEL_FILE}"
 if [[ "${IS_SLIM}" == "1" ]]; then
     readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_slim_20250515.tar.gz"
     readonly DATAPLANE_TGZ_WANT="c2060c5a70d39eaeeeee2834b9f3bb4ad27b8f44d2e41f6e6c25449d781fb2d7"
-    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-slim-py${PY_VERSION}-${IMG_TYPE}-base${ARCH_SUFFIX}"
+    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-slim-py${PY_VERSION}-${IMG_TYPE}-${LAYER_TYPE}${ARCH_SUFFIX}"
 else
     readonly ANYSCALE_DATAPLANE_LAYER="s3://runtime-release-test-artifacts/dataplane/dataplane_20250624.tar.gz"
     readonly DATAPLANE_TGZ_WANT="3cffb55f1a56f0bc6256cbf1a38bf1e764e202a647a4272b80531760f1250059"
-    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-${BASE_TYPE}-py${PY_VERSION}-${IMG_TYPE}-base${ARCH_SUFFIX}"
+    readonly BASE_IMG="${RAYCI_WORK_REPO}:${IMAGE_PREFIX}-${BASE_TYPE}-py${PY_VERSION}-${IMG_TYPE}-${LAYER_TYPE}${ARCH_SUFFIX}"
 fi
 
-aws s3 cp "${ANYSCALE_DATAPLANE_LAYER}" "${BUILD_TMP}/dataplane.tar.gz"
-DATAPLANE_TGZ_GOT="$(sha256sum "${BUILD_TMP}/dataplane.tar.gz" | cut -d' ' -f1)"
-if [[ "${DATAPLANE_TGZ_GOT}" != "${DATAPLANE_TGZ_WANT}" ]]; then
-    echo "Dataplane tarball sha256 digest:" \
-        "got ${DATAPLANE_TGZ_GOT}, want ${DATAPLANE_TGZ_WANT}" >/dev/stderr
-    exit 1
+if [[ "${SKIP_ANYSCALE_LAYER}" == "0" ]]; then
+    aws s3 cp "${ANYSCALE_DATAPLANE_LAYER}" "${BUILD_TMP}/dataplane.tar.gz"
+    DATAPLANE_TGZ_GOT="$(sha256sum "${BUILD_TMP}/dataplane.tar.gz" | cut -d' ' -f1)"
+    if [[ "${DATAPLANE_TGZ_GOT}" != "${DATAPLANE_TGZ_WANT}" ]]; then
+        echo "Dataplane tarball sha256 digest:" \
+            "got ${DATAPLANE_TGZ_GOT}, want ${DATAPLANE_TGZ_WANT}" >/dev/stderr
+        exit 1
+    fi
 fi
 
 aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin "${RUNTIME_ECR}"
@@ -342,11 +348,14 @@ fi
 
 rm -rf "${CONTEXT_TMP}"
 
-echo "--- Build ${ANYSCALE_IMG}"
-docker build --progress=plain \
-    --build-arg BASE_IMAGE="${RAY_IMG}" \
-    -t "${ANYSCALE_IMG}" -f Dockerfile - < "${BUILD_TMP}/dataplane.tar.gz"
-
+if [[ "${SKIP_ANYSCALE_LAYER}" == "0" ]]; then
+    echo "--- Build ${ANYSCALE_IMG}"
+    docker build --progress=plain \
+        --build-arg BASE_IMAGE="${RAY_IMG}" -t "${ANYSCALE_IMG}" -f Dockerfile - < "${BUILD_TMP}/dataplane.tar.gz"
+else
+    echo "--- Skip Anyscale layer"
+    docker tag "${RAY_IMG}" "${ANYSCALE_IMG}"
+fi
 
 ####
 echo "--- Pushing images"
