@@ -112,6 +112,22 @@
     timeout: 4800
     script: python ./run_checkpoint_benchmark.py {{scale}} {{id_column}}
 
+# NOTE(@balaji): This is temporary until we enable the rate-based autoscaler by default.
+- name: text_embeddings_benchmark_autoscalingv2
+  frequency: nightly
+  python: "3.11"  # necessary for the llm-cu128 image
+  working_dir: nightly_tests
+  team: data
+
+  cluster:
+    byod:
+      type: llm-cu128
+    cluster_compute: dataset/autoscaling_gpu_g6e_2xl_aws.yaml
+
+  run:
+    timeout: 3600
+    script: >
+      RAY_DATA_ENABLE_RATE_BASED_CLUSTER_AUTOSCALER=True python dataset/text_embeddings_benchmark.py --embed-concurrency 15
 
 ###############
 # Rllib tests
