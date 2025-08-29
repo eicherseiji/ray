@@ -33,7 +33,7 @@ from ray.dashboard.modules.job.job_supervisor import JobSupervisor
 from ray.dashboard.modules.job.utils import get_head_node_id
 from ray.dashboard.utils import close_logger_file_descriptor
 from ray.exceptions import ActorDiedError, ActorUnschedulableError, RuntimeEnvSetupError
-from ray.job_submission import JobStatus
+from ray.job_submission import JobStatus, JobErrorType
 from ray.runtime_env import RuntimeEnvConfig
 from ray.util.scheduling_strategies import (
     NodeAffinitySchedulingStrategy,
@@ -225,6 +225,7 @@ class JobManager:
                             job_id,
                             JobStatus.FAILED,
                             message=err_msg,
+                            error_type=JobErrorType.JOB_SUPERVISOR_ACTOR_START_TIMEOUT,
                         )
                         should_monitor = False
                         logger.error(err_msg)
@@ -251,6 +252,7 @@ class JobManager:
                                 "Unexpected error occurred: "
                                 "failed to get job supervisor."
                             ),
+                            error_type=JobErrorType.JOB_SUPERVISOR_ACTOR_START_FAILURE,
                         )
                         should_monitor = False
                         continue
@@ -272,6 +274,7 @@ class JobManager:
                         logger.error(f"Failed to set up runtime_env for job {job_id}.")
 
                         target_job_error_message = f"runtime_env setup failed: {e}"
+                        target_job_error_type = JobErrorType.RUNTIME_ENV_SETUP_FAILURE
 
                     elif isinstance(e, ActorUnschedulableError):
                         logger.error(
@@ -282,10 +285,14 @@ class JobManager:
                         target_job_error_message = (
                             f"Job supervisor actor could not be scheduled: {e}"
                         )
+                        target_job_error_type = (
+                            JobErrorType.JOB_SUPERVISOR_ACTOR_UNSCHEDULABLE
+                        )
 
                     elif isinstance(e, ActorDiedError):
                         logger.error(f"Job supervisor actor for {job_id} died: {e}")
                         target_job_error_message = f"Job supervisor actor died: {e}"
+                        target_job_error_type = JobErrorType.JOB_SUPERVISOR_ACTOR_DIED
 
                     else:
                         logger.warning(
@@ -309,6 +316,9 @@ class JobManager:
                             )
 
                             target_job_error_message = f"Unexpected error occurred: {e}"
+                            target_job_error_type = (
+                                JobErrorType.JOB_SUPERVISOR_ACTOR_UNKNOWN_FAILURE
+                            )
 
                     # If target job error message is set it entails that the job ought
                     # to be marked as failed (and terminated)
@@ -321,6 +331,8 @@ class JobManager:
                             job_id,
                             job_status,
                             message=target_job_error_message,
+                            error_type=target_job_error_type
+                            or JobErrorType.JOB_SUPERVISOR_ACTOR_UNKNOWN_FAILURE,
                         )
 
                 # Log error message to the job driver file for easy access.
@@ -608,6 +620,7 @@ class JobManager:
                     f"Failed to start supervisor actor {submission_id}: '{e}'"
                     f". Full traceback:\n{tb_str}"
                 ),
+                error_type=JobErrorType.JOB_SUPERVISOR_ACTOR_START_FAILURE,
             )
         finally:
             close_logger_file_descriptor(driver_logger)
