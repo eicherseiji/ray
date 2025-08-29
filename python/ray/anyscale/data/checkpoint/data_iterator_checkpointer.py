@@ -1,10 +1,10 @@
 import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import logging
 import os
 from queue import Queue
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 import pyarrow as pa
 import pyarrow.fs
@@ -15,6 +15,7 @@ from ray.data.block import Block, BlockAccessor
 from ray.data.context import DataContext
 from ray.data._internal.block_batching.interfaces import Batch, BatchMetadata
 from ray.data._internal.util import call_with_retry
+from ray.data.datasource import PathPartitionFilter, PartitionStyle
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,62 @@ class BatchMetadataWithRowIDs(BatchMetadata):
     """
 
     row_ids: Block
+
+
+@dataclass
+class RowIDBasedStateDict:
+    """State dict for a row-based data iterator checkpointer.
+    Attributes:
+        epoch_idx: The index of the current epoch.
+        checkpoint_idx: The index of the current checkpoint.
+    """
+
+    epoch_idx: int
+    checkpoint_idx: int
+
+    # Hive-style partition keys.
+    EPOCH_PATH_KEY: ClassVar[str] = "epoch"
+    CHECKPOINT_IDX_PATH_KEY: ClassVar[str] = "checkpoint"
+    RANK_PATH_KEY: ClassVar[str] = "rank"
+
+    def should_restore(self) -> bool:
+        """Whether the state dict was captured mid-epoch and warrants restoring.
+        `checkpoint_idx=-1` indicates that the state dict was captured at
+        an epoch boundary, in which case we do not load any checkpoint files
+        and start a new epoch.
+        """
+        return self.checkpoint_idx >= 0
+
+    @property
+    def restoration_checkpoint_path_filter(self) -> PathPartitionFilter:
+        """Filter for checkpoint files to load during mid-epoch restoration.
+        Returns a filter that matches all checkpoint files for this state dict.
+        """
+        return PathPartitionFilter.of(
+            filter_fn=lambda partitioned_path: (
+                int(partitioned_path[self.EPOCH_PATH_KEY]) == self.epoch_idx
+                and int(partitioned_path[self.CHECKPOINT_IDX_PATH_KEY])
+                <= self.checkpoint_idx
+            ),
+            style=PartitionStyle.HIVE,
+        )
+
+    @classmethod
+    def from_dict(cls, state_dict: Dict[str, Any]) -> "RowIDBasedStateDict":
+        required_keys = {f.name for f in fields(cls)}
+        missing_keys = required_keys - state_dict.keys()
+        if missing_keys:
+            raise ValueError(
+                f"Invalid state dict: {state_dict}. Missing keys: {missing_keys}"
+            )
+
+        return cls(**{k: state_dict[k] for k in required_keys})
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "epoch_idx": self.epoch_idx,
+            "checkpoint_idx": self.checkpoint_idx,
+        }
 
 
 class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
@@ -263,9 +320,9 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         # TODO: handle multiple datasets (add the dataset name to the path)
         return os.path.join(
             self._checkpoint_path_unwrapped,
-            f"rank={self.world_rank}",
-            f"epoch={self._epoch_idx}",
-            f"checkpoint={self._current_checkpoint_idx}",
+            f"{RowIDBasedStateDict.RANK_PATH_KEY}={self.world_rank}",
+            f"{RowIDBasedStateDict.EPOCH_PATH_KEY}={self._epoch_idx}",
+            f"{RowIDBasedStateDict.CHECKPOINT_IDX_PATH_KEY}={self._current_checkpoint_idx}",
         )
 
     @property
@@ -437,10 +494,11 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
 
             self._should_update_state_dict = False
 
-        return {
-            "epoch_idx": self._epoch_idx,
-            "checkpoint_idx": self._latest_committed_checkpoint_idx,
-        }
+        state_dict = RowIDBasedStateDict(
+            epoch_idx=self._epoch_idx,
+            checkpoint_idx=self._latest_committed_checkpoint_idx,
+        ).to_dict()
+        return state_dict
 
     def _setup_new_checkpoint_directory(self, new_checkpoint_dir: str):
         """Setup a new checkpoint directory.

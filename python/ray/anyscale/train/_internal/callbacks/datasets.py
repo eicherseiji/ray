@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, List
 
 import ray
@@ -12,6 +13,8 @@ from ray.train.v2._internal.data_integration.interfaces import (
 )
 from ray.train.v2._internal.execution.worker_group import Worker
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+logger = logging.getLogger(__name__)
 
 
 class AnyscaleDatasetShardProvider:
@@ -44,6 +47,7 @@ class AnyscaleDatasetShardProvider:
                 worker_node_ids=worker_node_ids,
             )
         )
+        self._cached_dataset_shards: Dict[str, DataIterator] = {}
 
     def get_dataset_shard(self, dataset_info: DatasetShardMetadata) -> DataIterator:
         dataset_name = dataset_info.dataset_name
@@ -54,7 +58,18 @@ class AnyscaleDatasetShardProvider:
                 "argument."
             )
 
-        return ray.get(self._dataset_manager.get_dataset_shard.remote(dataset_info))
+        if dataset_name not in self._cached_dataset_shards:
+            self._cached_dataset_shards[dataset_name] = ray.get(
+                self._dataset_manager.get_dataset_shard.remote(dataset_info)
+            )
+        elif dataset_info.state_dict is not None:
+            raise ValueError(
+                "Loading a `state_dict` is only supported for the first call to "
+                "`ray.train.get_dataset_shard` for a dataset. "
+                "Updating the data iterator state is not supported."
+            )
+
+        return self._cached_dataset_shards[dataset_name]
 
 
 class DatasetsSetupCallback(RayDatasetsSetupCallback):

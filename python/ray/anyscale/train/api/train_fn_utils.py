@@ -1,10 +1,14 @@
+from typing import Any, Dict, Optional
+
 from ray.data import DataIterator
 from ray.train.v2._internal.execution.train_fn_utils import get_train_fn_utils
 from ray.util.annotations import PublicAPI
 
 
 @PublicAPI(stability="stable")
-def get_dataset_shard(dataset_name: str) -> DataIterator:
+def get_dataset_shard(
+    dataset_name: str, state_dict: Optional[Dict[str, Any]] = None
+) -> DataIterator:
     """Returns the :class:`ray.data.DataIterator` shard for this worker.
 
     Call :meth:`~ray.data.DataIterator.iter_torch_batches` or
@@ -42,6 +46,10 @@ def get_dataset_shard(dataset_name: str) -> DataIterator:
     Args:
         dataset_name: If a Dictionary of Datasets was passed to ``Trainer``, then
             specifies which dataset shard to return.
+        state_dict: [Experimental] Optional state dict to restore the dataset iterator.
+            This requires data iterator checkpointing to be enabled via
+            `ray.train.DataConfig`, and the state dict must be one that was saved with
+            `DataIterator.state_dict()`.
 
     Returns:
         The ``DataIterator`` shard to use for this worker.
@@ -56,5 +64,6 @@ def get_dataset_shard(dataset_name: str) -> DataIterator:
         DatasetShardMetadata(
             dataset_name=dataset_name,
             world_rank=train_fn_utils.get_context().get_world_rank(),
+            state_dict=state_dict,
         )
     )

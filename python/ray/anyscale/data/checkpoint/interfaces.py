@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 
 import pyarrow
 
+from ray.data.datasource import PathPartitionFilter
 from ray.util.annotations import PublicAPI
 
 
@@ -97,6 +98,8 @@ class CheckpointConfig:
             Only used for row-based backends.
         write_num_threads: Number of threads used to write checkpoint files for
             completed rows.
+        checkpoint_path_partition_filter: Filter for checkpoint files to load during
+            restoration when reading from `checkpoint_path`.
     """
 
     DEFAULT_CHECKPOINT_PATH_BUCKET_ENV_VAR = "ANYSCALE_ARTIFACT_STORAGE"
@@ -113,6 +116,7 @@ class CheckpointConfig:
         override_backend: Optional[CheckpointBackend] = None,
         filter_num_threads: int = 3,
         write_num_threads: int = 3,
+        checkpoint_path_partition_filter: Optional[PathPartitionFilter] = None,
     ):
         self.id_column: Optional[str] = id_column
         self.generated_id_column: Optional[str] = generated_id_column
@@ -164,6 +168,7 @@ class CheckpointConfig:
         self.delete_checkpoint_on_success: bool = delete_checkpoint_on_success
         self.filter_num_threads: int = filter_num_threads
         self.write_num_threads: int = write_num_threads
+        self.checkpoint_path_partition_filter = checkpoint_path_partition_filter
 
     def is_row_based(self):
         """Whether the checkpoint backend is row-based."""
@@ -249,7 +254,8 @@ class TrainingIngestCheckpointConfig:
             auto-generated row IDs feature.
     """
 
-    checkpoint_path: Optional[str] = None
+    # TODO: Set default checkpoint path to `RunConfig.storage_path/name`.
+    checkpoint_path: str
     id_column: Optional[str] = None
     generated_id_column: Optional[str] = None
 

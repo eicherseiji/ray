@@ -11,8 +11,26 @@ py_test_module_list(
     env = {"RAY_TRAIN_V2_ENABLED": "1"},
     files = glob(
         ["tests/test_*.py"],
-        exclude = ["tests/test_elastic_e2e.py"],
+        exclude = [
+            "tests/test_elastic_e2e.py",
+            "tests/test_dataset_checkpointing.py",
+        ],
     ),
+    tags = [
+        "exclusive",
+        "team:ml",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
+    name = "test_dataset_checkpointing",
+    size = "medium",
+    srcs = ["tests/test_dataset_checkpointing.py"],
+    env = {"RAY_TRAIN_V2_ENABLED": "1"},
     tags = [
         "exclusive",
         "team:ml",

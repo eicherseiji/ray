@@ -33,6 +33,7 @@ from ray.data._internal.logical.interfaces import (
 from ray.data._internal.logical.operators.from_operators import AbstractFrom
 from ray.data._internal.logical.operators.join_operator import Join
 from ray.data._internal.logical.operators.read_operator import Read
+from ray.data._internal.logical.operators.streaming_split_operator import StreamingSplit
 from ray.data._internal.logical.operators.write_operator import Write
 from ray.data._internal.planner.planner import (
     PlanLogicalOpFn,
@@ -160,7 +161,7 @@ class RayTurboPlanner(Planner):
 
 def _supports_checkpointing(logical_plan: LogicalPlan) -> bool:
     # TODO: Add useful warnings and error messages if we don't support checkpointing.
-    if not isinstance(logical_plan.dag, Write):
+    if not isinstance(logical_plan.dag, (Write, StreamingSplit)):
         return False
 
     def _all_paths_contain_checkpoint_filter(op: LogicalOperator) -> bool:

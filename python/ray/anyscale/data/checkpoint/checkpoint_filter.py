@@ -1,7 +1,7 @@
 import abc
 import logging
 import time
-from typing import List
+from typing import List, Optional
 
 import numpy
 import pyarrow
@@ -29,6 +29,7 @@ from ray.data.datasource.path_util import _unwrap_protocol
 from ray.types import ObjectRef
 from ray.data import DataContext
 from ray.data.context import ShuffleStrategy
+from ray.data.datasource import PathPartitionFilter
 
 
 logger = logging.getLogger(__name__)
@@ -129,7 +130,11 @@ class CheckpointLoader:
     """Loading checkpoint data."""
 
     def __init__(
-        self, checkpoint_path: str, filesystem: pyarrow.fs.FileSystem, id_column: str
+        self,
+        checkpoint_path: str,
+        filesystem: pyarrow.fs.FileSystem,
+        id_column: str,
+        checkpoint_path_partition_filter: Optional[PathPartitionFilter] = None,
     ):
         """Initialize the CheckpointLoader.
 
@@ -137,10 +142,13 @@ class CheckpointLoader:
             checkpoint_path: The path to the checkpoint
             filesystem: The filesystem to use
             id_column: The name of the ID column
+            checkpoint_path_partition_filter: Filter for checkpoint files to load during
+                restoration when reading from `checkpoint_path`.
         """
         self.checkpoint_path = checkpoint_path
         self.filesystem = filesystem
         self.id_column = id_column
+        self.checkpoint_path_partition_filter = checkpoint_path_partition_filter
 
     def load_checkpoint(self) -> ObjectRef[Block]:
         """Loading checkpoint data.
@@ -152,7 +160,9 @@ class CheckpointLoader:
 
         # Load the checkpoint data
         checkpoint_ds: ray.data.Dataset = ray.data.read_parquet(
-            self.checkpoint_path, filesystem=self.filesystem
+            self.checkpoint_path,
+            filesystem=self.filesystem,
+            partition_filter=self.checkpoint_path_partition_filter,
         )
 
         # Pre-process data pipeline
@@ -341,9 +351,11 @@ class GeneratedIdColumnCheckpointLoader(CheckpointLoader):
             row_group,
             num_rows,
             actual_count,
-            f"empty_list({checkpointed_row_ids_col.type})"
-            if actual_count == num_rows
-            else f"scattered[{actual_count}/{num_rows}]({checkpointed_row_ids_col.type})",
+            (
+                f"empty_list({checkpointed_row_ids_col.type})"
+                if actual_count == num_rows
+                else f"scattered[{actual_count}/{num_rows}]({checkpointed_row_ids_col.type})"
+            ),
         )
 
         # Return exactly 1 row per group with the specified columns
@@ -425,11 +437,17 @@ class BatchBasedCheckpointFilter(CheckpointFilter):
 
         if self.generated_id_column:
             loader = GeneratedIdColumnCheckpointLoader(
-                self.checkpoint_path, self.filesystem, self.id_column
+                checkpoint_path=self.checkpoint_path,
+                filesystem=self.filesystem,
+                id_column=self.id_column,
+                checkpoint_path_partition_filter=self.ckpt_config.checkpoint_path_partition_filter,
             )
         else:
             loader = IdColumnCheckpointLoader(
-                self.checkpoint_path, self.filesystem, self.id_column
+                checkpoint_path=self.checkpoint_path,
+                filesystem=self.filesystem,
+                id_column=self.id_column,
+                checkpoint_path_partition_filter=self.ckpt_config.checkpoint_path_partition_filter,
             )
         return loader.load_checkpoint()
 

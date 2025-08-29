@@ -44,3 +44,18 @@ class DataConfig(RayDataConfig):
         self.dataset_checkpoint_configs: Dict[str, DatasetCheckpointConfig] = (
             dataset_checkpoint_configs or {}
         )
+
+        # TODO: [unsharded-data-ckpt] Checkpointing only supports sharded datasets
+        # for now because _supports_checkpointing only returns True for
+        # datasets ending in a `streaming_split` operator.
+        if self._datasets_to_split != "all":
+            unsharded_datasets = set(self.dataset_checkpoint_configs.keys()) - set(
+                self._datasets_to_split
+            )
+            if unsharded_datasets:
+                raise NotImplementedError(
+                    "Dataset checkpointing is not currently supported for unsharded datasets. "
+                    f"Please add {unsharded_datasets} to `DataConfig.datasets_to_split` "
+                    "or remove the `DataConfig.dataset_checkpoint_configs` key for "
+                    "these unsharded datasets. "
+                )
