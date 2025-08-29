@@ -40,7 +40,7 @@ from ray.dashboard.modules.job.tests.conftest import (
     create_ray_cluster,
 )
 from ray.exceptions import RpcError
-from ray.job_submission import JobStatus
+from ray.job_submission import JobStatus, JobErrorType
 from ray.tests.conftest import call_ray_start  # noqa: F401
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy  # noqa: F401
 from ray.util.state import list_tasks
@@ -426,14 +426,20 @@ async def _check_job_succeeded(*, get_job_info, job_id: str):
     return status == JobStatus.SUCCEEDED
 
 
-async def check_job_failed(job_manager, job_id):
-    return await _check_job_failed(get_job_info=job_manager.get_job_info, job_id=job_id)
+async def check_job_failed(job_manager, job_id, expected_error_type=None):
+    return await _check_job_failed(
+        get_job_info=job_manager.get_job_info,
+        job_id=job_id,
+        expected_error_type=expected_error_type,
+    )
 
 
-async def _check_job_failed(*, get_job_info, job_id: str):
+async def _check_job_failed(*, get_job_info, job_id: str, expected_error_type=None):
     data = await get_job_info(job_id)
     status = data.status
     assert status in {JobStatus.PENDING, JobStatus.RUNNING, JobStatus.FAILED}
+    if expected_error_type:
+        assert data.error_type == expected_error_type
     return status == JobStatus.FAILED
 
 
@@ -739,7 +745,10 @@ class TestRuntimeEnv:
         )
 
         await async_wait_for_condition(
-            check_job_failed, job_manager=job_manager, job_id=job_id
+            check_job_failed,
+            job_manager=job_manager,
+            job_id=job_id,
+            expected_error_type=JobErrorType.RUNTIME_ENV_SETUP_FAILURE,
         )
 
         data = await job_manager.get_job_info(job_id)
@@ -899,7 +908,10 @@ class TestAsyncAPI:
             actor = job_manager._get_actor_for_job(job_id)
             ray.kill(actor, no_restart=True)
             await async_wait_for_condition(
-                check_job_failed, job_manager=job_manager, job_id=job_id
+                check_job_failed,
+                job_manager=job_manager,
+                job_id=job_id,
+                expected_error_type=JobErrorType.JOB_SUPERVISOR_ACTOR_DIED,
             )
             data = await job_manager.get_job_info(job_id)
             assert data.driver_exit_code is None
@@ -953,7 +965,10 @@ class TestAsyncAPI:
             actor = job_manager._get_actor_for_job(job_id)
             ray.kill(actor, no_restart=True)
             await async_wait_for_condition(
-                check_job_failed, job_manager=job_manager, job_id=job_id
+                check_job_failed,
+                job_manager=job_manager,
+                job_id=job_id,
+                expected_error_type=JobErrorType.JOB_SUPERVISOR_ACTOR_DIED,
             )
             data = await job_manager.get_job_info(job_id)
 
@@ -1064,7 +1079,10 @@ class TestTailLogs:
                 print(lines, end="")
 
             await async_wait_for_condition(
-                check_job_failed, job_manager=job_manager, job_id=job_id
+                check_job_failed,
+                job_manager=job_manager,
+                job_id=job_id,
+                expected_error_type=JobErrorType.JOB_ENTRYPOINT_COMMAND_ERROR,
             )
             # check if the driver is killed
             data = await job_manager.get_job_info(job_id)
@@ -1279,7 +1297,10 @@ async def test_failed_job_logs_max_char(job_manager):
     )
 
     await async_wait_for_condition(
-        check_job_failed, job_manager=job_manager, job_id=job_id
+        check_job_failed,
+        job_manager=job_manager,
+        job_id=job_id,
+        expected_error_type=JobErrorType.JOB_ENTRYPOINT_COMMAND_ERROR,
     )
 
     # Verify the status message length
@@ -1354,7 +1375,10 @@ async def test_job_pending_timeout(job_manager, monkeypatch):
 
     # Wait for the job to timeout.
     await async_wait_for_condition(
-        check_job_failed, job_manager=job_manager, job_id=job_id
+        check_job_failed,
+        job_manager=job_manager,
+        job_id=job_id,
+        expected_error_type=JobErrorType.JOB_SUPERVISOR_ACTOR_START_TIMEOUT,
     )
 
     # Check that the job timed out.
@@ -1379,7 +1403,10 @@ sys.exit({EXIT_CODE})
     job_id = await job_manager.submit_job(entrypoint=exit_code_cmd)
     # Wait for the job to timeout.
     await async_wait_for_condition(
-        check_job_failed, job_manager=job_manager, job_id=job_id
+        check_job_failed,
+        job_manager=job_manager,
+        job_id=job_id,
+        expected_error_type=JobErrorType.JOB_ENTRYPOINT_COMMAND_ERROR,
     )
 
     # Check that the job failed
