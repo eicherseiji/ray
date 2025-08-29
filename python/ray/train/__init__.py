@@ -87,5 +87,17 @@ if is_v2_enabled():
     from ray.anyscale.train.api.config import (  # noqa: E402, F811, isort: skip
         ScalingConfig,
     )
+    from ray.anyscale.train.api.data_config import (  # noqa: E402, F811, isort: skip
+        DataConfig,
+        DatasetCheckpointConfig,
+    )
+    from ray.anyscale.train.api.train_fn_utils import (  # noqa: E402, F811, isort: skip
+        get_dataset_shard,
+    )
 
     ScalingConfig.__module__ = "ray.train"
+    DataConfig.__module__ = "ray.train"
+    DatasetCheckpointConfig.__module__ = "ray.train"
+    get_dataset_shard.__module__ = "ray.train"
+
+    __all__.append("DatasetCheckpointConfig")

@@ -1,6 +1,4 @@
-import collections
 from pathlib import Path
-import threading
 
 import pytest
 import pyarrow.parquet as pq
@@ -9,7 +7,10 @@ import ray.data
 from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
     RowIDBasedDataIteratorCheckpointer,
 )
-from ray.train.v2._internal.execution.context import DistributedContext
+from ray.train import DatasetCheckpointConfig
+import ray.train.collective
+from ray.train.v2.api.data_parallel_trainer import DataParallelTrainer
+
 
 from ray.tests.conftest import *  # noqa
 
@@ -30,16 +31,16 @@ def _read_checkpoint_files_for_state_dict(state_dict: dict, root_path: Path) -> 
 
 
 @pytest.mark.parametrize("reinit_iter", [True, False])
-def test_multiple_checkpoints_per_epoch(
-    ray_start_regular_shared, tmp_path, reinit_iter
-):
+def test_multiple_checkpoints_per_epoch(ray_start_10_cpus, tmp_path, reinit_iter):
     """Test that multiple checkpoints can be created per epoch, for several epochs.
 
     Checkpoints are created at 1/3 and 2/3 way through each epoch.
     A checkpoint is also created at the end of each epoch.
     """
     checkpointer = RowIDBasedDataIteratorCheckpointer(
-        id_column="id", checkpoint_path=tmp_path
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
     )
 
     num_epochs = 2
@@ -93,16 +94,16 @@ def test_multiple_checkpoints_per_epoch(
         )
 
 
-def test_streaming_split_iterator_checkpointing(ray_start_regular_shared, tmp_path):
-    """Test that streaming split iterators can be checkpointed.
+def test_e2e_with_ray_train(ray_start_10_cpus, tmp_path):
+    """Test that the checkpointing works end-to-end with Ray Train.
 
-    This tests multiple workers iterating concurrently over the same dataset.
-
-    We test that the mid-epoch and end-of-epoch checkpoints are correct.
-    TODO: Just convert this to a e2e test in a follow-up PR.
+    Checkpoints are created at 1/3 and 2/3 way through each epoch,
+    and at the end of each epoch on 2 workers.
     """
+    data_checkpoint_path = tmp_path / "data_checkpoints"
+    train_checkpoint_path = tmp_path / "train_checkpoints"
+
     world_size = 2
-    num_epochs = 2
     num_batches_per_worker = 120
     batch_size = 10
     num_mid_epoch_checkpoints = 2
@@ -110,79 +111,67 @@ def test_streaming_split_iterator_checkpointing(ray_start_regular_shared, tmp_pa
         i * (num_batches_per_worker // (num_mid_epoch_checkpoints + 1)) + 1
         for i in range(1, num_mid_epoch_checkpoints + 1)
     ]
-
-    checkpointers = [
-        RowIDBasedDataIteratorCheckpointer(
-            checkpoint_path=str(tmp_path),
-            id_column="id",
-            distributed_context=DistributedContext(
-                world_rank=i,
-                world_size=world_size,
-                local_rank=i,
-                local_world_size=world_size,
-                node_rank=0,
-            ),
-        )
-        for i in range(world_size)
-    ]
     ds = ray.data.range(num_batches_per_worker * world_size * batch_size)
-    ds_iters = ds.streaming_split(world_size, equal=True)
 
-    for ds_iter, checkpointer in zip(ds_iters, checkpointers):
-        ds_iter._enable_checkpointing(checkpointer)
+    def train_fn(config):
+        ds_iter = ray.train.get_dataset_shard("train")
 
-    state_dicts_per_worker = collections.defaultdict(list)
-
-    def run_epoch(ds_iter, rank):
         consumed_batches = 0
-        for _ in ds_iter.iter_batches(batch_size=batch_size):
+        seen_ids = []
+        for batch in ds_iter.iter_batches(batch_size=batch_size):
+            seen_ids.extend(batch["id"].tolist())
             consumed_batches += 1
             if consumed_batches in checkpoint_at_batches:
                 state_dict = ds_iter.state_dict()
-                state_dicts_per_worker[rank].append(state_dict)
-        state_dict = ds_iter.state_dict()
-        state_dicts_per_worker[rank].append(state_dict)
-
-    for epoch in range(num_epochs):
-        consumers = [
-            threading.Thread(target=run_epoch, args=(ds_iter, rank))
-            for rank, ds_iter in enumerate(ds_iters)
-        ]
-        [consumer.start() for consumer in consumers]
-        [consumer.join() for consumer in consumers]
-
-        # All workers should have returned the same state dicts.
-        rank_0_state_dicts = state_dicts_per_worker[0]
-        for state_dicts in state_dicts_per_worker.values():
-            assert all(
-                state_dict == rank_0_state_dict
-                for state_dict, rank_0_state_dict in zip(
-                    state_dicts, rank_0_state_dicts
+                rank_0_state_dict = ray.train.collective.broadcast_from_rank_zero(
+                    state_dict
                 )
-            )
+                assert rank_0_state_dict == state_dict
 
-        # Check the mid-epoch checkpoints.
-        for checkpoint_idx, consumed_batches in enumerate(checkpoint_at_batches):
-            checkpointed_row_ids = _read_checkpoint_files_for_state_dict(
-                rank_0_state_dicts[checkpoint_idx], tmp_path
-            )
-            # We just check that the number of checkpointed row ids is correct.
-            # streaming_split(equal=True) splits blocks between workers,
-            # so the the consumption is not in order.
-            # For example, for 2 workers, the first batch would look like:
-            # Worker 0: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-            # Worker 1: [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009]
-            assert (
-                len(checkpointed_row_ids) == consumed_batches * world_size * batch_size
-            )
+                # Check that the global checkpointed row ids are correct.
+                # NOTE: streaming_split(equal=True) splits blocks between workers,
+                # so the the consumption is not in order.
+                # For example, for 2 workers, the first batch could look like:
+                # Worker 0: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+                # Worker 1: [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009]
+                checkpointed_row_ids = _read_checkpoint_files_for_state_dict(
+                    state_dict, data_checkpoint_path
+                )
+                assert (
+                    len(checkpointed_row_ids)
+                    == consumed_batches * batch_size * world_size
+                )
 
-        # Check the end of epoch checkpoints.
-        for state_dicts in state_dicts_per_worker.values():
-            last_state_dict = state_dicts[-1]
-            assert last_state_dict == {"epoch_idx": epoch + 1, "checkpoint_idx": -1}
-            assert (
-                _read_checkpoint_files_for_state_dict(last_state_dict, tmp_path) == []
-            )
+                # Check that the checkpointed row ids contains all seen batches from workers.
+                assert set(seen_ids) <= set(checkpointed_row_ids)
+
+        state_dict = ds_iter.state_dict()
+        rank_0_state_dict = ray.train.collective.broadcast_from_rank_zero(state_dict)
+        assert rank_0_state_dict == state_dict
+        assert state_dict == {
+            "epoch_idx": 1,
+            "checkpoint_idx": -1,
+        }
+
+        checkpointed_row_ids = _read_checkpoint_files_for_state_dict(
+            state_dict, data_checkpoint_path
+        )
+        assert checkpointed_row_ids == []
+
+    trainer = DataParallelTrainer(
+        train_fn,
+        scaling_config=ray.train.ScalingConfig(num_workers=world_size),
+        run_config=ray.train.RunConfig(storage_path=str(train_checkpoint_path)),
+        datasets={"train": ds},
+        dataset_config=ray.train.DataConfig(
+            dataset_checkpoint_configs={
+                "train": DatasetCheckpointConfig(
+                    checkpoint_path=str(data_checkpoint_path), id_column="id"
+                )
+            }
+        ),
+    )
+    trainer.fit()
 
 
 if __name__ == "__main__":

@@ -55,7 +55,7 @@ def test_dataset_setup_callback_patch(num_workers, excluded_resources):
     an elastic number of workers is enabled."""
     from ray.train.v2._internal.callbacks import DatasetsSetupCallback  # isort: skip
     from ray.anyscale.train._internal.callbacks.datasets import (
-        AnyscaleDatasetsSetupCallback,
+        DatasetsSetupCallback as AnyscaleDatasetsSetupCallback,
     )
 
     assert DatasetsSetupCallback is AnyscaleDatasetsSetupCallback

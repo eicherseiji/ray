@@ -176,7 +176,7 @@ def _supports_checkpointing(logical_plan: LogicalPlan) -> bool:
 
 
 def _get_plan_fns_for_checkpointing(
-    load_checkpoint: Callable[[], ObjectRef]
+    load_checkpoint: Callable[[], ObjectRef],
 ) -> Dict[Type[LogicalOperator], PlanLogicalOpFn]:
     plan_fns = {
         Read: functools.partial(

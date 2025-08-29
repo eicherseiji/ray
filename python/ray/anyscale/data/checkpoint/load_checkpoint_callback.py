@@ -22,9 +22,7 @@ class LoadCheckpointCallback(ExecutionCallback):
         assert config.is_batch_based()
         self._config = config
 
-        self._ckpt_filter: Optional[
-            BatchBasedCheckpointFilter
-        ] = BatchBasedCheckpointFilter(config)
+        self._ckpt_filter = BatchBasedCheckpointFilter(config)
         self._checkpoint_ref: Optional[ObjectRef[Block]] = None
 
     def before_execution_starts(self, executor: StreamingExecutor):

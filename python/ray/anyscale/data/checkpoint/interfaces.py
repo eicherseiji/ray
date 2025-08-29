@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import os
 import warnings
 from enum import Enum
@@ -67,7 +68,36 @@ class CheckpointBackend(Enum):
 
 @PublicAPI(stability="beta")
 class CheckpointConfig:
-    """Configuration for row-level checkpointing."""
+    """Configuration for row-level checkpointing.
+
+    Args:
+        id_column: Name of the ID column in the input dataset.
+            ID values must be unique across all rows in the dataset and must persist
+            during all operators. Either `id_column` or `generated_id_column` must be
+            provided.
+        checkpoint_path: Path to store the checkpoint data. It can be a path to a cloud
+            object storage (e.g. `s3://bucket/path`) or a file system path.
+            If the latter, the path must be a network-mounted file system (e.g.
+            `/mnt/cluster_storage/`) that is accessible to the entire cluster.
+            If not set, defaults to `${ANYSCALE_ARTIFACT_STORAGE}/ray_data_checkpoint`.
+        generated_id_column: Name of the ID column to generate a row ID for each row.
+            Use this when you don't have an `id_column` in the input dataset.
+            Currently, only Parquet files based data sources are supported for
+            auto-generated row IDs feature.
+        delete_checkpoint_on_success: If true, automatically delete checkpoint
+            data when the dataset execution succeeds. Only supported for
+            batch-based backend currently.
+        override_filesystem: Override the :class:`pyarrow.fs.FileSystem` object used to
+            read/write checkpoint data. Use this when you want to use custom credentials.
+        override_backend: Override the :class:`CheckpointBackend` object used to
+            access the checkpoint backend storage. Only use this if you want to use
+            the row-backend checkpoint backends. By default, batch-based backends
+            are used.
+        filter_num_threads: Number of threads used to filter checkpointed rows.
+            Only used for row-based backends.
+        write_num_threads: Number of threads used to write checkpoint files for
+            completed rows.
+    """
 
     DEFAULT_CHECKPOINT_PATH_BUCKET_ENV_VAR = "ANYSCALE_ARTIFACT_STORAGE"
     DEFAULT_CHECKPOINT_PATH_DIR = "ray_data_checkpoint"
@@ -84,36 +114,6 @@ class CheckpointConfig:
         filter_num_threads: int = 3,
         write_num_threads: int = 3,
     ):
-        """
-        Args:
-            id_column: Name of the ID column in the input dataset.
-                ID values must be unique across all rows in the dataset and must persist
-                during all operators. Either `id_column` or `generated_id_column` must be
-                provided.
-            generated_id_column: Name of the ID column to generate a row ID for each row.
-                Use this when you don't have an `id_column` in the input dataset.
-                Currently, only Parquet files based data sources are supported for
-                auto-generated row IDs feature.
-            checkpoint_path: Path to store the checkpoint data. It can be a path to a cloud
-                object storage (e.g. `s3://bucket/path`) or a file system path.
-                If the latter, the path must be a network-mounted file system (e.g.
-                `/mnt/cluster_storage/`) that is accessible to the entire cluster.
-                If not set, defaults to `${ANYSCALE_ARTIFACT_STORAGE}/ray_data_checkpoint`.
-            delete_checkpoint_on_success: If true, automatically delete checkpoint
-                data when the dataset execution succeeds. Only supported for
-                batch-based backend currently.
-            override_filesystem: Override the :class:`pyarrow.fs.FileSystem` object used to
-                read/write checkpoint data. Use this when you want to use custom credentials.
-            override_backend: Override the :class:`CheckpointBackend` object used to
-                access the checkpoint backend storage. Only use this if you want to use
-                the row-backend checkpoint backends. By default, batch-based backends
-                are used.
-            filter_num_threads: Number of threads used to filter checkpointed rows.
-                Only used for row-based backends.
-            write_num_threads: Number of threads used to write checkpoint files for
-                completed rows.
-        """
-
         self.id_column: Optional[str] = id_column
         self.generated_id_column: Optional[str] = generated_id_column
 
@@ -140,7 +140,7 @@ class CheckpointConfig:
 
         if not isinstance(self.id_column, str) or len(self.id_column) == 0:
             raise InvalidCheckpointingConfig(
-                "Checkpoint ID column must be as an non-empty string, "
+                "Checkpoint ID column must be a non-empty string, "
                 f"but got {self.id_column}"
             )
 
@@ -221,6 +221,63 @@ class CheckpointConfig:
             raise InvalidCheckpointingConfig(
                 f"Invalid checkpoint path: {checkpoint_path}. "
             ) from e
+
+
+# TODO: We can pull out a common CheckpointConfig base class.
+# Then, the batch inference specific logic from above can be moved
+# to a BatchInferenceCheckpointConfig subclass.
+# The checkpoint "restore" logic is common to both batch inference
+# and training ingest, but the checkpoint "write" configuration differs.
+@dataclass
+class TrainingIngestCheckpointConfig:
+    """Configuration for training ingest checkpointing.
+
+    Args:
+        checkpoint_path: Path to store the checkpoint data. It can be a path to a cloud
+            object storage (e.g. `s3://bucket/path`) or a file system path.
+            If the latter, the path must be a network-mounted file system (e.g.
+            `/mnt/cluster_storage/`) that is accessible to the entire cluster.
+            If not set, defaults to `{RunConfig.storage_path}/{RunConfig.name}`
+            configured on the `ray.train` trainer.
+        id_column: Name of the ID column in the input dataset.
+            ID values must be unique across all rows in the dataset and must persist
+            during all operators. Either `id_column` or `generated_id_column` must be
+            provided.
+        generated_id_column: Name of the ID column to generate a row ID for each row.
+            Use this when you don't have an `id_column` in the input dataset.
+            Currently, only Parquet files based data sources are supported for
+            auto-generated row IDs feature.
+    """
+
+    checkpoint_path: Optional[str] = None
+    id_column: Optional[str] = None
+    generated_id_column: Optional[str] = None
+
+    def __post_init__(self):
+        # Validate that we don't have both `id_column` and `generated_id_column`
+        # explicitly specified
+        if self.id_column is not None and self.generated_id_column is not None:
+            raise InvalidCheckpointingConfig(
+                "Cannot specify both `id_column` and `generated_id_column`. "
+                "Use `id_column` when you have an existing ID column in your dataset, "
+                "or use `generated_id_column` when you want to generate row IDs "
+                "automatically."
+            )
+
+        # If no `id_column` is provided, use the generated row ID column
+        elif self.id_column is None and self.generated_id_column is None:
+            raise InvalidCheckpointingConfig(
+                "Either `id_column` or `generated_id_column` must be provided. "
+                "Use `id_column` when you have an existing ID column in your dataset, "
+                "or use `generated_id_column` when you want to generate row IDs "
+                "automatically."
+            )
+
+        if not isinstance(self.id_column, str) or len(self.id_column) == 0:
+            raise InvalidCheckpointingConfig(
+                "Checkpoint ID column must be a non-empty string, "
+                f"but got {self.id_column}"
+            )
 
 
 class InvalidCheckpointingConfig(Exception):

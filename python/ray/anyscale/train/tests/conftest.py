@@ -2,6 +2,8 @@ import logging
 
 import pytest
 
+import ray
+
 
 @pytest.fixture(autouse=True)
 def setup_logging():
@@ -10,3 +12,10 @@ def setup_logging():
     logger.setLevel(logging.INFO)
     yield
     logger.setLevel(orig_level)
+
+
+@pytest.fixture()
+def ray_start_4_cpus():
+    ray.init(num_cpus=4)
+    yield
+    ray.shutdown()

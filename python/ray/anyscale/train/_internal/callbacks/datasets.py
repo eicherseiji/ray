@@ -1,10 +1,63 @@
-from typing import Dict
+from typing import Dict, List
 
-import ray.train
-from ray.train.v2._internal.callbacks.datasets import DatasetsSetupCallback
+import ray
+from ray.data import DataContext, DataIterator, NodeIdStr
+from ray.train.v2._internal.callbacks.datasets import (
+    DatasetsSetupCallback as RayDatasetsSetupCallback,
+)
+from ray.train.v2._internal.data_integration.interfaces import (
+    DatasetShardProvider,
+    DatasetShardMetadata,
+    GenDataset,
+)
+from ray.train.v2._internal.execution.worker_group import Worker
+from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 
-class AnyscaleDatasetsSetupCallback(DatasetsSetupCallback):
+class AnyscaleDatasetShardProvider:
+    def __init__(
+        self,
+        datasets: Dict[str, GenDataset],
+        data_config: ray.train.DataConfig,
+        data_context: DataContext,
+        world_size: int,
+        worker_node_ids: List[NodeIdStr],
+    ):
+        from ray.anyscale.train._internal.data_integration.dataset_manager import (
+            DatasetManager,
+        )
+
+        self._dataset_names = set(datasets)
+        self._dataset_manager = (
+            ray.remote(DatasetManager)
+            .options(
+                num_cpus=0,
+                scheduling_strategy=NodeAffinitySchedulingStrategy(
+                    ray.get_runtime_context().get_node_id(), soft=False
+                ),
+            )
+            .remote(
+                datasets=datasets,
+                data_config=data_config,
+                data_context=data_context,
+                world_size=world_size,
+                worker_node_ids=worker_node_ids,
+            )
+        )
+
+    def get_dataset_shard(self, dataset_info: DatasetShardMetadata) -> DataIterator:
+        dataset_name = dataset_info.dataset_name
+        if dataset_name not in self._dataset_names:
+            raise KeyError(
+                f"Dataset shard for '{dataset_name}' not found. "
+                "Please ensure that the dataset is passed through the Trainer `datasets` "
+                "argument."
+            )
+
+        return ray.get(self._dataset_manager.get_dataset_shard.remote(dataset_info))
+
+
+class DatasetsSetupCallback(RayDatasetsSetupCallback):
     def get_train_total_resources(
         self, scaling_config: ray.train.ScalingConfig
     ) -> Dict[str, float]:
@@ -17,3 +70,30 @@ class AnyscaleDatasetsSetupCallback(DatasetsSetupCallback):
             return {}
 
         return super().get_train_total_resources(scaling_config)
+
+    # --------------------------
+    # WorkerGroupCallback
+    # --------------------------
+
+    def before_init_train_context(
+        self, workers: List[Worker]
+    ) -> Dict[str, List[DatasetShardProvider]]:
+        world_size = len(workers)
+        worker_node_ids = [worker.metadata.node_id for worker in workers]
+        datasets = {k: v() if callable(v) else v for k, v in self._datasets.items()}
+
+        # TODO: Move this to the constructor.
+        # Notify the DataConfig about the total resources reserved for training.
+        total_train_resources = self.get_train_total_resources(self._scaling_config)
+        self._data_config.set_train_total_resources(
+            total_train_resources.get("CPU", 0), total_train_resources.get("GPU", 0)
+        )
+
+        dataset_shard_provider = AnyscaleDatasetShardProvider(
+            datasets=datasets,
+            data_config=self._data_config,
+            data_context=self._data_context,
+            world_size=world_size,
+            worker_node_ids=worker_node_ids,
+        )
+        return {"dataset_shard_provider": [dataset_shard_provider] * world_size}

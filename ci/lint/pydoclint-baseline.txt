@@ -509,8 +509,6 @@ python/ray/anyscale/data/api/read_api.py
 python/ray/anyscale/data/checkpoint/interfaces.py
     DOC001: Method `__init__` Potential formatting errors in docstring. Error message: No specification for "Args": ""
     DOC001: Function/method `__init__`: Potential formatting errors in docstring. Error message: No specification for "Args": "" (Note: DOC001 could trigger other unrelated violations under this function/method too. Please fix the docstring formatting first.)
-    DOC101: Method `CheckpointConfig.__init__`: Docstring contains fewer arguments than in function signature.
-    DOC103: Method `CheckpointConfig.__init__`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [checkpoint_path: Optional[str], delete_checkpoint_on_success: bool, filter_num_threads: int, id_column: str, override_backend: Optional[CheckpointBackend], override_filesystem: Optional['pyarrow.fs.FileSystem'], write_num_threads: int].
 --------------------
 python/ray/anyscale/data/tests/test_snowflake.py
     DOC101: Function `execute`: Docstring contains fewer arguments than in function signature.

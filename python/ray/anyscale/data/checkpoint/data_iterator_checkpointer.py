@@ -4,21 +4,17 @@ import logging
 import os
 from queue import Queue
 import threading
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
 import pyarrow.fs
 import pyarrow.parquet as pq
 
+from ray.anyscale.data.checkpoint.interfaces import TrainingIngestCheckpointConfig
 from ray.data.block import Block, BlockAccessor
 from ray.data.context import DataContext
 from ray.data._internal.block_batching.interfaces import Batch, BatchMetadata
 from ray.data._internal.util import call_with_retry
-
-
-if TYPE_CHECKING:
-    from ray.train.v2._internal.execution.context import DistributedContext
-
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +37,19 @@ class DataIteratorCheckpointer(abc.ABC):
         (e.g. by calling `state_dict`) along with the user's model state.
 
     Args:
-        distributed_context: The distributed context describing the world rank/size
-            if running in a distributed setting (e.g. with Ray Train).
+        world_rank: The world rank of the current worker if running in a distributed
+            setting (e.g. with Ray Train).
+        world_size: The world size of the current distributed setting if running in a
+            distributed setting (e.g. with Ray Train).
     """
 
     def __init__(
         self,
-        # TODO: Pass in the training ingest dataset checkpoint config class here.
-        distributed_context: Optional["DistributedContext"] = None,
+        world_rank: int = 0,
+        world_size: int = 1,
     ):
-        self._distributed_context = distributed_context
+        self._world_rank = world_rank
+        self._world_size = world_size
 
     @abc.abstractmethod
     def state_dict(self) -> Dict[str, Any]:
@@ -100,13 +99,13 @@ class DataIteratorCheckpointer(abc.ABC):
     def world_rank(self) -> int:
         """The world rank of the current worker.
         Defaults to 0 if not running in a distributed setting."""
-        return self._distributed_context.world_rank if self._distributed_context else 0
+        return self._world_rank
 
     @property
     def world_size(self) -> int:
         """The world size of the current distributed setting.
         Defaults to 1 if not running in a distributed setting."""
-        return self._distributed_context.world_size if self._distributed_context else 1
+        return self._world_size
 
 
 @dataclass
@@ -187,26 +186,27 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
     dict is not in scope for this class.
 
     Args:
-        id_column: The name of the column that contains the row IDs.
-        checkpoint_path: The path to the checkpoint directory.
-        distributed_context: The distributed context describing the world rank/size
-            if running in a distributed setting (e.g. with Ray Train).
+        checkpoint_config: The checkpoint configuration for the data iterator.
+        world_rank: The world rank of the current worker if running in a distributed
+            setting (e.g. with Ray Train).
+        world_size: The world size of the current distributed setting if running in a
+            distributed setting (e.g. with Ray Train).
     """
 
     TARGET_CHECKPOINT_SIZE_BYTES = 128 * 1024 * 1024  # 128 MB
 
     def __init__(
         self,
-        id_column: str,
-        checkpoint_path: str,
-        distributed_context: Optional["DistributedContext"] = None,
+        checkpoint_config: TrainingIngestCheckpointConfig,
+        world_rank: int = 0,
+        world_size: int = 1,
     ):
-        super().__init__(distributed_context)
+        super().__init__(world_rank=world_rank, world_size=world_size)
 
-        # TODO: Pass in the training ingest dataset checkpoint config class instead.
-        self._id_column = id_column
+        self._id_column = checkpoint_config.id_column
+        # TODO: Handle custom filesystems.
         self._fs, self._checkpoint_path_unwrapped = pyarrow.fs.FileSystem.from_uri(
-            checkpoint_path
+            checkpoint_config.checkpoint_path
         )
 
         self._epoch_idx = 0
@@ -218,6 +218,26 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
 
         # Whether the state dict should be updated on the next `state_dict` call.
         self._should_update_state_dict = False
+
+        # Queue for staging row IDs.
+        self._row_ids_staging_queue: Optional[Queue[Optional[Block]]] = None
+        # Background thread for flushing row IDs to a checkpoint file.
+        self._flush_thread: Optional[threading.Thread] = None
+        # Event for signaling that a forced flush has completed.
+        self._flush_completed_event: Optional[threading.Event] = None
+        # Exception raised during a flush operation.
+        self._flush_exception: Optional[Exception] = None
+        # Whether the flush thread attributes have been initialized.
+        self._flush_thread_initialized = False
+
+    def _init_flush_thread(self):
+        """Initialize a background thread that flushes row IDs to checkpoint files.
+
+        Delay the flush thread initialization until the start of iteration
+        in order to keep this class serializable.
+        """
+        if self._flush_thread_initialized:
+            return
 
         # Queue for staging row IDs.
         self._row_ids_staging_queue: Queue[Optional[Block]] = Queue()
@@ -233,6 +253,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         self._flush_exception: Optional[Exception] = None
 
         self._flush_thread.start()
+        self._flush_thread_initialized = True
 
     def _get_current_checkpoint_directory(self) -> str:
         """Get the current checkpoint directory where files are written.
@@ -268,6 +289,8 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
 
     def _flush_row_ids(self, row_ids_batches: List[pa.Array]):
         """Flush staged row IDs to a checkpoint file."""
+        assert self._flush_thread_initialized, "Flush thread not initialized."
+
         if not row_ids_batches:
             raise ValueError(
                 "Got an empty list of row IDs batches. "
@@ -342,6 +365,8 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
 
         Raises an exception if a previous flush operation failed.
         """
+        assert self._flush_thread_initialized, "Flush thread not initialized."
+
         self._flush_completed_event.clear()
         self._row_ids_staging_queue.put(None)
         self._flush_completed_event.wait()
@@ -352,6 +377,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         assert (
             self._epoch_running
         ), "Must call `start_epoch` before recording yielded batches."
+        assert self._flush_thread_initialized, "Flush thread not initialized."
 
         self._raise_if_flush_failed()
 
@@ -378,6 +404,8 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         # Create the checkpoint directory.
         checkpoint_dir = self._get_current_checkpoint_directory()
         self._setup_new_checkpoint_directory(checkpoint_dir)
+
+        self._init_flush_thread()
 
         self._epoch_running = True
 
