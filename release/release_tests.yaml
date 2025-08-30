@@ -4095,7 +4095,7 @@
   group: cluster-launcher-test
   working_dir: ../python/ray/autoscaler/
 
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
 
   cluster:
@@ -4185,7 +4185,7 @@
   group: cluster-launcher-test
   working_dir: ../python/ray/autoscaler/
 
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
@@ -4207,7 +4207,7 @@
   group: cluster-launcher-test
   working_dir: ../python/ray/autoscaler/
 
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
@@ -4232,7 +4232,7 @@
   stable: true
 
   env: gce
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
@@ -4257,7 +4257,7 @@
   stable: true
 
   env: gce
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
@@ -4357,7 +4357,7 @@
   stable: true
 
   env: gce
-  frequency: weekly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
