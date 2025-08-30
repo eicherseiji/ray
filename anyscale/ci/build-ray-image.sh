@@ -364,6 +364,12 @@ echo "--- Pushing images"
 docker_push "${RAY_IMG}"
 IMG_ANNOTATE=true docker_push "${ANYSCALE_IMG}"
 
+if [[ "${IMG_TYPE_CODE}" == "${ML_CUDA_VERSION}" && "${IS_SLIM}" != "1" ]]; then
+    BUILD_GPU_TAG="${IMAGE_PREFIX}-${PY_VERSION_CODE}-gpu${ARCH_SUFFIX}"
+    docker_push_as "${RAY_IMG}" "${RAYTURBO_REPO}:${BUILD_GPU_TAG}"
+    IMG_ANNOTATE=true docker_push_as "${ANYSCALE_IMG}" "${RAYTURBO_REPO}:${BUILD_GPU_TAG}-as"
+fi
+
 if [[ "${PUSH_COMMIT_TAGS}" == "true" ]]; then
     SHORT_COMMIT="${FULL_COMMIT:0:6}"  # Use 6 chars to be consistent with Ray upstream
     # During branch cut, do not modify ray version in this script

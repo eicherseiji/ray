@@ -98,13 +98,15 @@ steps:
     key: rayturbo-image
     tags: docker
     commands:
+      - export LAYER_TYPE=base-extra
+      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}}
     instance_type: medium
     depends_on:
       - rayturbo-wheels
       - rayturbo-helper
-      - raycpubase
-      - raycudabase
+      - raycpubaseextra
+      - raycudabaseextra
       - check-ray-wheels
     job_env: forge
     mount_buildkite_agent: true
@@ -130,13 +132,15 @@ steps:
     key: rayturbo-image-aarch64
     tags: docker
     commands:
+      - export LAYER_TYPE=base-extra
+      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}}
     instance_type: medium-arm64
     depends_on:
       - rayturbo-wheels-aarch64
       - rayturbo-helper
-      - raycpubase-aarch64
-      - raycudabase-aarch64
+      - raycpubaseextra-aarch64
+      - raycudabaseextra-aarch64
       - check-ray-wheels
     job_env: forge-aarch64
     mount_buildkite_agent: true
@@ -194,12 +198,14 @@ steps:
     key: rayturbo-llm-image
     tags: docker
     commands:
+      - export LAYER_TYPE=base-extra
+      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray-llm
     instance_type: medium
     depends_on:
       - rayturbo-wheels
       - rayturbo-helper
-      - ray-llmbase
+      - ray-llmbaseextra
       - check-ray-wheels
     job_env: forge
     mount_buildkite_agent: true
@@ -214,13 +220,15 @@ steps:
     key: rayturbo-ml-image
     tags: docker
     commands:
+      - export LAYER_TYPE=base-extra
+      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray-ml
     instance_type: medium
     depends_on:
       - rayturbo-wheels
       - rayturbo-helper
-      - ray-mlcpubase
-      - ray-mlcudabase
+      - ray-mlcpubaseextra
+      - ray-mlcudabaseextra
       - check-ray-wheels
     job_env: forge
     mount_buildkite_agent: true
