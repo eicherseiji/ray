@@ -478,6 +478,28 @@ class ActorPoolMapOperator(MapOperator):
     def get_autoscaling_actor_pools(self) -> List[AutoscalingActorPool]:
         return [self._actor_pool]
 
+    def per_task_resource_allocation(
+        self: "PhysicalOperator",
+    ) -> ExecutionResources:
+        max_concurrency = self._ray_remote_args.get("max_concurrency", 1)
+        per_actor_resource_usage = self._actor_pool.per_actor_resource_usage()
+        return ExecutionResources(
+            cpu=per_actor_resource_usage.cpu / max_concurrency,
+            gpu=per_actor_resource_usage.gpu / max_concurrency,
+            memory=per_actor_resource_usage.memory / max_concurrency,
+            object_store_memory=per_actor_resource_usage.object_store_memory
+            / max_concurrency,
+        )
+
+    def max_task_concurrency(self: "PhysicalOperator") -> Optional[int]:
+        max_concurrency = self._ray_remote_args.get("max_concurrency", 1)
+        return max_concurrency * self._actor_pool.max_size()
+
+    def min_scheduling_resources(
+        self: "PhysicalOperator",
+    ) -> ExecutionResources:
+        return self._actor_pool.per_actor_resource_usage()
+
     def update_resource_usage(self) -> None:
         """Updates resources usage."""
         for actor in self._actor_pool.get_running_actor_refs():
@@ -1107,18 +1129,3 @@ class _ActorPool(AutoscalingActorPool):
     def per_actor_resource_usage(self) -> ExecutionResources:
         """Per actor resource usage."""
         return self._per_actor_resource_usage
-
-    def get_pool_util(self) -> float:
-        if self.num_running_actors() == 0:
-            return 0.0
-        else:
-            # We compute utilization as a ration of
-            #  - Number of submitted tasks over
-            #  - Max number of tasks that Actor Pool could currently run
-            #
-            # This value could exceed 100%, since by default actors are allowed
-            # to queue tasks (to pipeline task execution by overlapping block
-            # fetching with the execution of the previous task)
-            return self.num_tasks_in_flight() / (
-                self._max_actor_concurrency * self.num_running_actors()
-            )
