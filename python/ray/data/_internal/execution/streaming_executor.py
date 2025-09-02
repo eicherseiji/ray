@@ -184,11 +184,7 @@ class StreamingExecutor(Executor, threading.Thread):
         self._backpressure_policies = get_backpressure_policies(
             self._data_context, self._topology, self._resource_manager
         )
-        self._cluster_autoscaler = create_cluster_autoscaler(
-            self._topology,
-            self._resource_manager,
-            execution_id=self._dataset_id,
-        )
+        self._cluster_autoscaler = create_cluster_autoscaler(self)
         self._actor_autoscaler = create_actor_autoscaler(
             self._topology,
             self._resource_manager,

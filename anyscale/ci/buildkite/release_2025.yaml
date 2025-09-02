@@ -1,0 +1,47 @@
+steps:
+  - block: Specify which release tests you want to run
+    if: 'build.env("AUTOMATIC") != "1"'
+    fields:
+        - select: Frequency
+          key: release-frequency
+          hint: Only select tests with this frequency.
+          default: any
+          options:
+            - label: All tests that match the filters (full tests)
+              value: any
+            - label: All tests that match the filters (run smoke tests if available)
+              value: any-smoke
+            - label: Nightly tests that match the filters
+              value: nightly
+            - label: Nightly (3x) tests that match the filters
+              value: nightly-3x
+            - label: Weekly tests that match the filters
+              value: weekly
+        - text: Test filters
+          key: release-test-filters
+          hint: >
+            Only select tests that match all (re.match()) the regex filters.
+            Each filter is of form `attr:regex` (e.g. name:test_name or group:ml).
+            Multiple filters can be specified: one on each line.
+          required: false
+        - select: Test execution priority
+          key: release-priority
+          hint: >
+            Per default, scheduled (e.g. nightly) tests are executed in a first-in-first-out order.
+            However, manually started tests start with a higher priority so that you can see results earlier.
+            There is also an option to run the tests with high priority, which will enqueue them next. This can
+            be used e.g. for running urgent release tests. Please only use this if necessary. Usually kicking
+            tests off with "manual" priority is sufficient.
+          default: manual
+          options:
+            - label: Default (no priority over scheduled runs)
+              value: default
+            - label: Manual (higher priority than scheduled runs)
+              value: manual
+            - label: High (run these tests as soon as possible)
+              value: high
+  - label: "build init"
+    priority: 10
+    commands:
+      - curl -sSfL "https://raw.githubusercontent.com/ray-project/rayci/stable/run_rayci.sh" > /tmp/run_rayci.sh
+      - /bin/bash /tmp/run_rayci.sh -upload -config anyscale/ci/config-release.yaml

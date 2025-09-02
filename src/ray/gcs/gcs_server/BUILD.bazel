@@ -507,6 +507,7 @@ ray_cc_library(
         ":gcs_worker_manager",
         ":grpc_service_interfaces",
         ":grpc_services",
+        "//src/ray/anyscale/gcs/gcs_server:gcs_server_io_context_policy",
         "//src/ray/gcs/pubsub:gcs_pub_sub_lib",
         "//src/ray/gcs/store_client",
         "//src/ray/gcs/store_client:in_memory_store_client",
