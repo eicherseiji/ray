@@ -25,6 +25,7 @@ hook_env_keys:
 skip_tags:
   - disabled
   - oss
+  - skip-on-release-tests
 build_env_keys:
   - AUTOMATIC
   - RELEASE_FREQUENCY
