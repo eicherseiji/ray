@@ -264,6 +264,7 @@ class JobManager:
 
             except Exception as e:
                 target_job_error_message = ""
+                target_job_error_type: Optional[JobErrorType] = None
                 if job_status is not None and job_status.is_terminal():
                     # If the job is already in a terminal state, then the actor
                     # exiting is expected.

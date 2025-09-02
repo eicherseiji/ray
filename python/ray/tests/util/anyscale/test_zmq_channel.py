@@ -8,7 +8,6 @@ import ray.cluster_utils
 from ray._common.utils import get_or_create_event_loop
 from ray.util.anyscale.zmq_channel import RouterChannel
 
-
 pytestmark = [
     pytest.mark.skipif(
         sys.platform != "linux" and sys.platform != "darwin",
