@@ -139,9 +139,13 @@ class SplitCoordinator:
         locality_hints: Optional[List[NodeIdStr]],
     ):
         dataset = dataset_wrapper._dataset
+
         # Set current DataContext.
-        self._data_context = dataset.context
+        # This needs to be a deep copy so that updates to the base dataset's
+        # context does not affect this process's global DataContext.
+        self._data_context = dataset.context.copy()
         ray.data.DataContext._set_current(self._data_context)
+
         if self._data_context.execution_options.locality_with_output is True:
             self._data_context.execution_options.locality_with_output = locality_hints
             logger.info(f"Auto configuring locality_with_output={locality_hints}")
@@ -166,6 +170,11 @@ class SplitCoordinator:
                     self._executor, dataset._plan
                 )
                 yield output_iterator
+
+                # HACK: Reset the checkpoint config to None after the first epoch
+                # to avoid loading the mid-epoch state on every subsequent epoch.
+                # https://anyscale1.atlassian.net/browse/DATA-1388
+                self._base_dataset.context.checkpoint_config = None
 
         self._next_epoch = gen_epochs()
         self._output_iterator = None

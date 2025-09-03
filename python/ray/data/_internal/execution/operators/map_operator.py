@@ -213,9 +213,9 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
             compute_strategy = TaskPoolStrategy()
 
         if isinstance(compute_strategy, TaskPoolStrategy):
-            from ray.data._internal.execution.operators.task_pool_map_operator import (
+            from ray.anyscale.data._internal.execution.operators.task_pool_map_operator import (
                 TaskPoolMapOperator,
-            )
+            )  # noqa: E501
 
             return TaskPoolMapOperator(
                 map_transformer,
@@ -231,9 +231,9 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
                 ray_remote_args=ray_remote_args,
             )
         elif isinstance(compute_strategy, ActorPoolStrategy):
-            from ray.data._internal.execution.operators.actor_pool_map_operator import (
+            from ray.anyscale.data._internal.execution.operators.actor_pool_map_operator import (
                 ActorPoolMapOperator,
-            )
+            )  # noqa: E501
 
             return ActorPoolMapOperator(
                 map_transformer,
