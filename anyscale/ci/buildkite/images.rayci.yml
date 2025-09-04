@@ -1,46 +1,6 @@
 # Build images for rayturbo
 group: rayturbo images
 steps:
-  - name: slim-cpubase
-    label: "wanda: slim.py{{matrix}}.cpu.base"
-    tags:
-      - python_dependencies
-      - docker
-    wanda: anyscale/ci/docker/anyscale.cpu.base.wanda.yaml
-    matrix:
-      - "3.9"
-      - "3.10"
-      - "3.11"
-      - "3.12"
-    env:
-      PYTHON_VERSION: "{{matrix}}"
-
-  - name: slim-cudabase
-    label: "wanda: slim.py{{matrix.python}}.cuda{{matrix.cuda}}.base"
-    tags:
-      - python_dependencies
-      - docker
-    wanda: anyscale/ci/docker/anyscale.cuda.base.wanda.yaml
-    matrix:
-      setup:
-        python:
-          - "3.9"
-          - "3.10"
-          - "3.11"
-          - "3.12"
-        cuda:
-          - "11.7.1"
-          - "11.8.0"
-          - "12.1.1"
-          - "12.3.2"
-          - "12.4.1"
-          - "12.5.1"
-          - "12.6.3"
-          - "12.8.1"
-    env:
-      PYTHON_VERSION: "{{matrix.python}}"
-      CUDA_VERSION: "{{matrix.cuda}}"
-
   - label: ":tapioca: go download helper"
     key: rayturbo-helper
     instance_type: small
@@ -99,7 +59,6 @@ steps:
     tags: docker
     commands:
       - export LAYER_TYPE=base-extra
-      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}}
     instance_type: medium
     depends_on:
@@ -133,7 +92,6 @@ steps:
     tags: docker
     commands:
       - export LAYER_TYPE=base-extra
-      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}}
     instance_type: medium-arm64
     depends_on:
@@ -171,8 +129,8 @@ steps:
     depends_on:
       - rayturbo-wheels
       - rayturbo-helper
-      - slim-cpubase
-      - slim-cudabase
+      - ray-slimcpubase
+      - ray-slimcudabase
       - check-ray-wheels
     job_env: forge
     mount_buildkite_agent: true
@@ -199,7 +157,6 @@ steps:
     tags: docker
     commands:
       - export LAYER_TYPE=base-extra
-      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray-llm
     instance_type: medium
     depends_on:
@@ -221,7 +178,6 @@ steps:
     tags: docker
     commands:
       - export LAYER_TYPE=base-extra
-      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray-ml
     instance_type: medium
     depends_on:

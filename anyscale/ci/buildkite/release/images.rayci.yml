@@ -43,7 +43,6 @@ steps:
       - export RAY_INLINE_SITE_PKG=true
       - export REPO_SERIES_NAME=ray
       - export LAYER_TYPE=base-extra-testdeps
-      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}}
     instance_type: medium
     depends_on:
@@ -72,7 +71,6 @@ steps:
       - export RAY_INLINE_SITE_PKG=true
       - export REPO_SERIES_NAME=ray
       - export LAYER_TYPE=base-extra-testdeps
-      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray-llm
     instance_type: medium
     depends_on:
@@ -97,7 +95,6 @@ steps:
       - export RAY_INLINE_SITE_PKG=true
       - export REPO_SERIES_NAME=ray
       - export LAYER_TYPE=base-extra-testdeps
-      - export SKIP_ANYSCALE_LAYER=1
       - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray-ml
     instance_type: medium
     depends_on:
