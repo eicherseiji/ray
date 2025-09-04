@@ -786,11 +786,11 @@ void CoreWorker::InternalHeartbeat() {
     if (spec.IsActorTask()) {
       auto actor_handle = actor_manager_->GetActorHandle(spec.ActorId());
       actor_handle->SetResubmittedActorTaskSpec(spec);
-      RAY_CHECK_OK(actor_task_submitter_->SubmitTask(spec));
+      actor_task_submitter_->SubmitTask(spec);
     } else if (spec.IsActorCreationTask()) {
-      RAY_CHECK_OK(actor_task_submitter_->SubmitActorCreationTask(spec));
+      actor_task_submitter_->SubmitActorCreationTask(spec);
     } else {
-      RAY_CHECK_OK(normal_task_submitter_->SubmitTask(spec));
+      normal_task_submitter_->SubmitTask(spec);
     }
   }
 
@@ -2004,7 +2004,7 @@ std::vector<rpc::ObjectReference> CoreWorker::SubmitTask(
 
     io_service_.post(
         [this, task_spec = std::move(task_spec)]() mutable {
-          RAY_UNUSED(normal_task_submitter_->SubmitTask(std::move(task_spec)));
+          normal_task_submitter_->SubmitTask(std::move(task_spec));
         },
         "CoreWorker.SubmitTask");
   }
@@ -2184,7 +2184,7 @@ Status CoreWorker::CreateActor(const RayFunction &function,
               task_manager_->FailPendingTask(
                   task_spec.TaskId(), rpc::ErrorType::ACTOR_CREATION_FAILED, &status);
             } else {
-              RAY_UNUSED(actor_task_submitter_->SubmitActorCreationTask(task_spec));
+              actor_task_submitter_->SubmitActorCreationTask(task_spec);
             }
           });
         },
@@ -2199,7 +2199,7 @@ Status CoreWorker::CreateActor(const RayFunction &function,
     }
     io_service_.post(
         [this, task_spec = std::move(task_spec)]() {
-          RAY_UNUSED(actor_task_submitter_->SubmitActorCreationTask(task_spec));
+          actor_task_submitter_->SubmitActorCreationTask(task_spec);
         },
         "CoreWorker.SubmitTask");
   }
@@ -2381,7 +2381,7 @@ Status CoreWorker::SubmitActorTask(
     returned_refs = task_manager_->AddPendingTask(
         rpc_address_, task_spec, CurrentCallSite(), max_retries);
 
-    RAY_CHECK_OK(actor_task_submitter_->SubmitTask(task_spec));
+    actor_task_submitter_->SubmitTask(task_spec);
   }
   task_returns = std::move(returned_refs);
   return Status::OK();
@@ -4568,10 +4568,10 @@ void CoreWorker::TaskManagerRetryTask(TaskSpecification &spec,
     if (spec.IsActorTask()) {
       auto actor_handle = actor_manager_->GetActorHandle(spec.ActorId());
       actor_handle->SetResubmittedActorTaskSpec(spec);
-      RAY_CHECK_OK(actor_task_submitter_->SubmitTask(spec));
+      actor_task_submitter_->SubmitTask(spec);
     } else {
       RAY_CHECK(spec.IsNormalTask());
-      RAY_CHECK_OK(normal_task_submitter_->SubmitTask(spec));
+      normal_task_submitter_->SubmitTask(spec);
     }
   }
 }
