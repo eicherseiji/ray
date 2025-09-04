@@ -191,6 +191,7 @@ from ray.tune.registry import ENV_CREATOR, _global_registry
 from ray.tune.resources import Resources
 from ray.tune.trainable import Trainable
 from ray.util import log_once
+from ray.util.placement_group import get_current_placement_group
 from ray.util.timer import _Timer
 from ray.tune.registry import get_trainable_cls
 
@@ -804,7 +805,8 @@ class Algorithm(Checkpointable, Trainable):
                 inference_only=False,
             )
             self.learner_group = self.config.build_learner_group(
-                rl_module_spec=module_spec
+                rl_module_spec=module_spec,
+                placement_group=get_current_placement_group(),
             )
 
             # Check if there are modules to load from the `module_spec`.

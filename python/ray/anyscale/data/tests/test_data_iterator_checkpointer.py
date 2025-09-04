@@ -1,0 +1,374 @@
+from pathlib import Path
+from typing import List
+from unittest.mock import patch
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
+
+from ray.data._internal.block_batching.interfaces import Batch
+from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
+    RowIDBasedDataIteratorCheckpointer,
+    BatchMetadataWithRowIDs,
+)
+from ray.train import DatasetCheckpointConfig
+
+from ray._common.test_utils import wait_for_condition
+
+
+def _create_batch(row_ids: List[int]) -> Batch:
+    table = pa.table({"id": pa.array(row_ids, type=pa.int64())})
+    return Batch(
+        metadata=BatchMetadataWithRowIDs(batch_idx=0, row_ids=table),
+        data=table,
+    )
+
+
+def _read_checkpoint_files(root_path: Path) -> List[int]:
+    """Read all row IDs from all checkpoint files in the given directory."""
+    row_ids = []
+    for checkpoint_path in root_path.glob("*/*.parquet"):
+        row_ids.extend(pq.read_table(checkpoint_path).column("id").to_pylist())
+    return sorted(row_ids)
+
+
+def test_basic(tmp_path):
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.start_epoch()
+
+    checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
+    checkpointer.record_yielded_batch(_create_batch([4, 5, 6]))
+
+    assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
+    checkpoint_path = tmp_path.joinpath(
+        "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
+    )
+    assert checkpoint_path.is_file()
+    assert pq.read_table(checkpoint_path).column("id").to_pylist() == [1, 2, 3, 4, 5, 6]
+
+
+def test_periodic_flush_on_file_size_threshold(tmp_path):
+    """Test that the checkpointer flushes row IDs to a checkpoint files when the
+    in-memory row ids size exceeds a threshold.
+    """
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.TARGET_CHECKPOINT_SIZE_BYTES = 6 * 8  # 6 int64s
+    checkpointer.start_epoch()
+
+    checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
+
+    checkpoint_path = tmp_path.joinpath(
+        "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
+    )
+    assert not checkpoint_path.is_file()
+
+    checkpointer.record_yielded_batch(_create_batch([4, 5, 6]))
+
+    # We've reached the threshold, which triggers a flush.
+    wait_for_condition(lambda: checkpoint_path.is_file(), timeout=1)
+
+    assert checkpoint_path.is_file()
+    assert pq.read_table(checkpoint_path).column("id").to_pylist() == [1, 2, 3, 4, 5, 6]
+
+
+def test_force_flush(tmp_path):
+    """Tests forcing a flush of staged row IDs to a checkpoint file."""
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.start_epoch()
+
+    checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
+    checkpointer.record_yielded_batch(_create_batch([4, 5, 6]))
+
+    checkpoint_path = tmp_path.joinpath(
+        "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
+    )
+    assert not checkpoint_path.is_file()
+
+    checkpointer._flush_all_staged_row_ids()
+
+    assert checkpoint_path.is_file()
+    assert pq.read_table(checkpoint_path).column("id").to_pylist() == [1, 2, 3, 4, 5, 6]
+
+
+def test_multi_worker_checkpoint_commit(tmp_path):
+    """Test that the checkpointer correctly handles multiple workers committing
+    checkpoints to the same checkpoint directory.
+    """
+    world_size = 4
+    checkpointers = [
+        RowIDBasedDataIteratorCheckpointer(
+            checkpoint_config=DatasetCheckpointConfig(
+                checkpoint_path=str(tmp_path), id_column="id"
+            ),
+            world_rank=i,
+            world_size=world_size,
+        )
+        for i in range(world_size)
+    ]
+
+    for checkpointer in checkpointers:
+        checkpointer.start_epoch()
+
+    for i, checkpointer in enumerate(checkpointers):
+        checkpointer.record_yielded_batch(_create_batch([i * 3, i * 3 + 1, i * 3 + 2]))
+
+    for i, checkpointer in enumerate(checkpointers):
+        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
+
+    for rank in range(world_size):
+        checkpoint_path = tmp_path.joinpath(
+            f"rank={rank}", "epoch=0", "checkpoint=0", "chunk_0.parquet"
+        )
+        assert checkpoint_path.is_file()
+        assert pq.read_table(checkpoint_path).column("id").to_pylist() == list(
+            range(rank * 3, (rank + 1) * 3)
+        )
+
+
+def test_state_dict_across_epoch_lifecycle(tmp_path):
+    """Test that `state_dict` works across the full epoch lifecycle.
+
+    Also, check that `state_dict` is idempotent and doesn't advance the checkpoint index
+    more than necessary if called multiple times in a row.
+    """
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.TARGET_CHECKPOINT_SIZE_BYTES = 6 * 8  # 6 int64s
+
+    # Before starting an epoch, `state_dict` returns a dummy state dict.
+    # NOTE: These for loops check `state_dict` idempotency.
+    for _ in range(2):
+        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": -1}
+
+    checkpointer.start_epoch()
+
+    # Start of epoch.
+    for _ in range(2):
+        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": -1}
+
+    # First checkpoint.
+    checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
+    for _ in range(2):
+        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
+    assert tmp_path.joinpath("rank=0", "epoch=0", "checkpoint=0").is_dir()
+    assert _read_checkpoint_files(tmp_path.joinpath("rank=0", "epoch=0")) == list(
+        range(1, 4)
+    )
+
+    # Second checkpoint.
+    checkpointer.record_yielded_batch(_create_batch([4, 5, 6]))
+    checkpointer.record_yielded_batch(_create_batch([7, 8, 9]))
+    checkpointer.record_yielded_batch(_create_batch([10, 11, 12]))
+    for _ in range(2):
+        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 1}
+    assert tmp_path.joinpath("rank=0", "epoch=0", "checkpoint=1").is_dir()
+    assert _read_checkpoint_files(tmp_path.joinpath("rank=0", "epoch=0")) == list(
+        range(1, 13)
+    )
+
+    # End of epoch.
+    checkpointer.end_epoch()
+    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+
+    # Start of new epoch.
+    checkpointer.start_epoch()
+    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+    # No directory should be created at this epoch boundary.
+    assert not tmp_path.joinpath("rank=0", "epoch=1", "checkpoint=-1").is_dir()
+
+
+def test_end_epoch(tmp_path):
+    """Test that the checkpointer correctly handles ending an epoch.
+
+    Ending an epoch should flush any staged row IDs to a checkpoint file.
+    """
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.start_epoch()
+    checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
+    checkpointer.end_epoch()
+
+    checkpoint_path = tmp_path.joinpath(
+        "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
+    )
+    assert checkpoint_path.is_file()
+    assert pq.read_table(checkpoint_path).column("id").to_pylist() == [1, 2, 3]
+
+    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+
+
+def test_unfinished_epoch(tmp_path):
+    """Test that the checkpointer correctly handles starting a new epoch
+    after an unfinished one.
+
+    Example usage in user code:
+
+    for epoch in range(num_epochs):
+        step_idx = 0
+        max_steps_per_epoch = 10
+        for batch in ds.iter_batches():
+            if step_idx >= max_steps_per_epoch:
+                break
+            step_idx += 1
+            ...
+    """
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.start_epoch()
+    checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
+
+    assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
+
+    # Start of new epoch, before finishing the previous one.
+    checkpointer.start_epoch()
+    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+
+
+def test_checkpoint_path(tmp_path):
+    """Test that the checkpoint path is correctly constructed."""
+    world_rank = 1
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        ),
+        world_rank=world_rank,
+        world_size=2,
+    )
+    checkpointer._epoch_idx = 3
+    checkpointer._latest_committed_checkpoint_idx = 13
+    checkpointer._chunk_idx = 15
+
+    assert checkpointer._get_current_checkpoint_path() == str(
+        tmp_path.joinpath("rank=1", "epoch=3", "checkpoint=14", "chunk_15.parquet")
+    )
+
+
+def test_setup_new_checkpoint_directory(tmp_path):
+    """Test that the checkpointer clears an existing checkpoint directory
+    if it exists before writing to it.
+    """
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpoint_path = tmp_path.joinpath("rank=0", "epoch=0", "checkpoint=0")
+    checkpoint_path.mkdir(parents=True, exist_ok=True)
+    checkpoint_path.joinpath("dummy").touch()
+
+    checkpointer._setup_new_checkpoint_directory(str(checkpoint_path))
+    assert checkpoint_path.is_dir()
+    assert not checkpoint_path.joinpath("dummy").is_file()
+
+
+def test_load_state_dict_from_mid_epoch(tmp_path):
+    """Test that the checkpointer state can continue from a mid-epoch state dict."""
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.load_state_dict({"epoch_idx": 1, "checkpoint_idx": 8})
+    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": 8}
+
+    checkpointer.start_epoch()
+
+    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": 8}
+
+    checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
+    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": 9}
+
+    checkpointer.end_epoch()
+    assert checkpointer.state_dict() == {"epoch_idx": 2, "checkpoint_idx": -1}
+
+
+def test_load_state_dict_from_start_or_end_of_epoch(tmp_path):
+    """Test that the checkpointer state can continue from a state dict
+    loaded from the start/end of an epoch.
+
+    [ Epoch 0 ] (epoch=1, checkpoint_idx=-1) [Epoch 1]
+
+    Example in user code:
+
+    for epoch in range(num_epochs):
+        for batch in ds.iter_batches():
+            ...
+        # Resuming from this state dict should just start a new epoch.
+        state_dict = checkpointer.state_dict()
+
+    """
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.load_state_dict({"epoch_idx": 1, "checkpoint_idx": -1})
+    checkpointer.start_epoch()
+
+    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+
+
+@pytest.mark.parametrize(
+    "state_dict",
+    [
+        {"epoch_idx": 1, "checkpoint_idx": 8},
+        {"epoch_idx": 2, "checkpoint_idx": -1},
+    ],
+)
+def test_load_state_dict_equivalence(tmp_path, state_dict):
+    """Test that calling `state_dict` after loading a state dict
+    returns the same state dict.
+    """
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.load_state_dict(state_dict)
+    assert checkpointer.state_dict() == state_dict
+
+
+@patch("pyarrow.parquet.write_table", side_effect=RuntimeError("mock error"))
+def test_flush_exception(mock_write_table, tmp_path):
+    """Test that the checkpointer raises an exception if a flush operation fails."""
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+    checkpointer.start_epoch()
+
+    checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
+
+    with pytest.raises(RuntimeError, match="Failed to flush"):
+        checkpointer.state_dict()
+
+    with pytest.raises(RuntimeError, match="Failed to flush"):
+        checkpointer.record_yielded_batch(_create_batch([4, 5, 6]))
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(pytest.main(["-v", __file__]))
