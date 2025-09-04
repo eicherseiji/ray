@@ -48,6 +48,9 @@ class ReadFiles(SourceOperator, AbstractMap):
 
         self.reader = reader
         self.filesystem = filesystem
+        # TODO assert that projected columns include filtered ones as this
+        #      isn't working correctly
+        # See https://github.com/apache/arrow/issues/47493
         self.filter_expr = filter_expr
         if columns is not None:
             if not isinstance(columns, list):

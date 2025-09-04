@@ -50,7 +50,7 @@ class ProjectionPushdown(Rule):
                 project_op: Project = op
                 read_op: ReadFiles = op.input_dependency
 
-                return cls._combine(read_op, project_op)
+                return cls._try_combine(read_op, project_op)
 
             # Otherwise, fuse projections into a single op
             elif isinstance(op.input_dependency, Project):
@@ -111,7 +111,7 @@ class ProjectionPushdown(Rule):
             )
 
     @staticmethod
-    def _combine(read_op: ReadFiles, project_op: Project) -> ReadFiles:
+    def _try_combine(read_op: ReadFiles, project_op: Project) -> LogicalOperator:
         # For now, don't push down expressions into ReadFiles operators
         # Only handle traditional column projections
         if project_op.exprs:
@@ -125,6 +125,16 @@ class ProjectionPushdown(Rule):
         new_spec = _combine_projection_specs(
             prev_spec=read_op_spec, new_spec=project_op_spec
         )
+
+        # NOTE: We can't simultaneously push projection and filter expression,
+        #       as this produces incorrect results in cases when filter contains
+        #       columns excluded in projection
+        #
+        # See for more details: https://github.com/apache/arrow/issues/47493
+        #
+        # TODO(DATA-1398) fix, once native expressions are used
+        if new_spec.cols is not None and read_op.filter_expr is not None:
+            return project_op
 
         logger.debug(
             f"Pushing projection down into read operation "

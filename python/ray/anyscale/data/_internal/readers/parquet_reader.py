@@ -512,24 +512,30 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                     batch = batch.rename_columns(
                         [columns_rename.get(col, col) for col in batch.schema.names]
                     )
+
                 yield batch
 
     def _get_batch_iterable(
         self,
         fragment: pyarrow.dataset.ParquetFileFragment,
-        batch_size: int,
+        batch_size: Optional[int],
         columns: Optional[List[str]],
         filter_expr: pyarrow.dataset.Expression,
         schema: pyarrow.Schema,
     ) -> Iterable[pyarrow.RecordBatch]:
         """Get an iterable of batches from a parquet fragment."""
+
+        to_batches_kwargs = {**self._to_batches_kwargs}
+
+        if batch_size is not None:
+            to_batches_kwargs.setdefault("batch_size", batch_size)
+
         try:
             return fragment.to_batches(
                 use_threads=self._use_threads,
                 columns=columns,
                 filter=filter_expr,
                 schema=schema,
-                batch_size=batch_size,
                 **self._to_batches_kwargs,
             )
         except pyarrow.lib.ArrowInvalid as e:
@@ -576,23 +582,29 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self,
         fragment: pyarrow.dataset.ParquetFileFragment,
         target_column_indices: List[int],
-    ) -> int:
+    ) -> Optional[int]:
         """Calculate an optimal batch size from the first row-group stats.
 
         If ``target_block_size`` is ``None`` (i.e. unlimited block size),
         the full first row-group is read in a single batch.
         """
-        # Handle the cases where there are no row-groups or rows.
-        if fragment.metadata is None or fragment.metadata.num_row_groups == 0:
-            # Fragment has no row groups
-            return 1
+        if (
+            # Handle the cases where there are no row-groups or rows.
+            fragment.metadata is None
+            or fragment.metadata.num_row_groups == 0
+            or
+            # Handle the case when we're reading out empty projection
+            len(target_column_indices) == 0
+        ):
+            # Fallback to default batch size
+            return None
 
         row_group_meta = fragment.metadata.row_group(0)
         row_group_num_rows = row_group_meta.num_rows
 
         if row_group_num_rows == 0:
             # Row group has no rows
-            return 1
+            return None
 
         # Calculate row group size in bytes for the projected columns
         row_group_size_bytes = sum(
