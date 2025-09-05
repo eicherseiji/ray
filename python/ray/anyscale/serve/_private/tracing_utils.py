@@ -1,6 +1,6 @@
 import inspect
 import os
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from functools import wraps
 import threading
 from typing import Any, Callable, Dict, List, Optional
@@ -15,7 +15,7 @@ from ray.anyscale.serve._private.constants import (
 
 try:
     from opentelemetry import trace
-    from opentelemetry.context import attach, get_current
+    from opentelemetry.context import attach, detach, get_current
     from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
     from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
     from opentelemetry.trace import SpanKind
@@ -41,6 +41,7 @@ except ImportError:
     TraceContextTextMapPropagator = None
     get_current = None
     attach = None
+    detach = None
     SpanAttributes = None
     ParentBasedTraceIdRatio = None
 
@@ -117,6 +118,26 @@ class TraceContextManager:
             self.span.end()
             _pop_trace_stack()
 
+        return False
+
+
+class BatchTraceContextManager:
+    """Attach/detach a tracing context around a block to scope the span of a batch."""
+
+    def __init__(self, trace_context: Optional[object]):
+        self._enabled = is_tracing_enabled() and trace_context is not None
+        self._trace_context = trace_context
+        self._token: Optional[Token] = None
+
+    def __enter__(self):
+        if self._enabled:
+            self._token = set_trace_context(self._trace_context)
+
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._enabled and self._token is not None:
+            detach_trace_context(self._token)
         return False
 
 
@@ -278,12 +299,20 @@ def extract_propagated_context(
     return None
 
 
-def set_trace_context(trace_context: Dict[str, str]):
+def set_trace_context(trace_context: Dict[str, str]) -> Optional[Token]:
     """Set the current trace context."""
     if attach is None:
         return
 
-    attach(trace_context)
+    return attach(trace_context)
+
+
+def detach_trace_context(token: Token):
+    """Detach the current trace context corresponding to the token."""
+    if detach is None:
+        return
+
+    detach(token)
 
 
 def get_trace_context() -> Optional[Dict[str, str]]:

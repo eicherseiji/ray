@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Thread
 from typing import Set
 from unittest.mock import patch
+import uuid
 
 import grpc
 import pytest
@@ -872,6 +873,138 @@ def test_append_trace_stack_multithread():
         task.join()
 
     assert len(passing) == number_of_tasks
+
+
+def test_batched_span_attached_to_first_request_trace():
+    """Ensure span created inside a batched method attaches to the first request's trace.
+
+    With 6 requests and max_batch_size=3, Serve should create 2 batches. Only the first request
+    in each batch should contribute the parent trace to the 'batched_span', yielding exactly
+    2 spans whose trace_ids match the traces of those first requests.
+    """
+
+    @serve.deployment
+    class BatchedDeployment:
+        def __init__(self):
+            # We keep a counter so we can assert two unique batches producing two unique spans
+            self._batch_idx = 0
+
+        @serve.batch(max_batch_size=3, batch_wait_timeout_s=1.0)
+        async def handle_batch(self, reqs):
+            tracer = trace.get_tracer(__name__)
+
+            # whichever request is at index 0 is the one whose context is attached
+            first_req_id = None
+            try:
+                first_req_id = reqs[0].headers.get("req-id")
+            except Exception:
+                pass
+
+            batch_idx = self._batch_idx
+            self._batch_idx += 1
+
+            with tracer.start_as_current_span(
+                "batched_span", context=get_trace_context()
+            ) as span:
+                if first_req_id is not None:
+                    span.set_attribute("first-req-id", first_req_id)
+                span.set_attribute("batch-idx", batch_idx)
+                return ["ok" for _ in reqs]
+
+        async def __call__(self, request: Request):
+            return await self.handle_batch(request)
+
+    serve.start(http_options=HTTPOptions(host="0.0.0.0"))
+    serve.run(BatchedDeployment.bind())
+
+    setup_tracing(
+        component_name="upstream_app",
+        component_id="batching_test_upstream_multi",
+        tracing_sampling_ratio=1.0,
+    )
+
+    tracer = trace.get_tracer("test_tracing_batching_multi")
+
+    def do_request(span_name: str):
+        req_id = str(uuid.uuid4())
+        with tracer.start_as_current_span(span_name) as span:
+            # tag the upstream span so we can map req-id -> trace_id later
+            span.set_attribute("req-id", req_id)
+
+            # build headers from current OTEL context
+            ctx = get_trace_context()
+            headers = {"req-id": req_id}
+            TraceContextTextMapPropagator().inject(headers, ctx)
+
+            url = get_application_url("HTTP")
+            r = httpx.post(f"{url}/", headers=headers)
+            r.raise_for_status()
+
+    # Launch 6 requests -> expect 2 batches of 3 requests each
+    threads = [Thread(target=do_request, args=(f"upstream_{i}",)) for i in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    serve.shutdown()
+
+    # Load span files
+    serve_logs_dir = get_serve_logs_dir()
+    spans_dir = os.path.join(serve_logs_dir, "spans")
+    files = os.listdir(spans_dir)
+    assert files, "No span files found. Tracing may not be configured."
+
+    replica_filename = None
+    upstream_filename = None
+    for file in files:
+        if "replica" in file:
+            replica_filename = file
+        elif "upstream" in file:
+            upstream_filename = file
+    assert replica_filename and upstream_filename
+
+    upstream_spans = load_spans(os.path.join(spans_dir, upstream_filename))
+    replica_spans = load_spans(os.path.join(spans_dir, replica_filename))
+
+    id_to_trace = {}
+    for s in upstream_spans:
+        rid = s.get("attributes", {}).get("req-id")
+        if rid:
+            id_to_trace[rid] = s["context"]["trace_id"]
+    assert (
+        len(id_to_trace) == 6
+    ), f"Expected 6 upstream request spans, saw {len(id_to_trace)}"
+
+    # Exactly two batch spans, one per each batch, are expected
+    batched_spans = [s for s in replica_spans if s["name"] == "batched_span"]
+    assert (
+        len(batched_spans) == 2
+    ), f"Expected 2 batched spans, saw {len(batched_spans)}"
+
+    # For each batched span, its trace_id should equal the trace of the first request in the batch
+    batched_trace_ids = set()
+    batch_indices = set()
+    for bs in batched_spans:
+        first_req_id = bs.get("attributes", {}).get("first-req-id")
+        assert (
+            first_req_id in id_to_trace
+        ), f"first-req-id {first_req_id} not found among upstream req-ids"
+        assert bs["context"]["trace_id"] == id_to_trace[first_req_id]
+        batched_trace_ids.add(bs["context"]["trace_id"])
+        batch_indices.add(bs.get("attributes", {}).get("batch-idx"))
+
+    # The two batched spans must correspond to two unique traces
+    assert (
+        len(batched_trace_ids) == 2
+    ), "Batched spans did not map to two unique upstream traces"
+
+    # And they must be from distinct batches
+    assert (
+        len(batch_indices) == 2
+    ), f"Expected two distinct batch indices, got {batch_indices}"
+
+    shutil.rmtree(spans_dir)
 
 
 if __name__ == "__main__":

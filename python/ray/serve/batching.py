@@ -27,6 +27,10 @@ from typing import (
 from ray import serve
 from ray._common.signature import extract_signature, flatten_args, recover_args
 from ray._common.utils import get_or_create_event_loop
+from ray.anyscale.serve._private.tracing_utils import (
+    BatchTraceContextManager,
+    get_trace_context,
+)
 from ray.serve._private.constants import SERVE_LOGGER_NAME
 from ray.serve._private.utils import extract_self_if_method_call
 from ray.serve.exceptions import RayServeException
@@ -45,6 +49,7 @@ class _SingleRequest:
     self_arg: Any
     flattened_args: List[Any]
     future: asyncio.Future
+    trace_context: Optional[Any]
 
 
 @dataclass
@@ -343,15 +348,19 @@ class _BatchQueue:
                 else:
                     func_future_or_generator = func(*args, **kwargs)
 
-                if isasyncgenfunction(func):
-                    func_generator = func_future_or_generator
-                    await self._consume_func_generator(
-                        func_generator, futures, len(batch)
-                    )
-                else:
-                    func_future = func_future_or_generator
-                    await self._assign_func_results(func_future, futures, len(batch))
-
+                # As OTEL span cannot belong to multiple traces, we choose the first request’s context
+                # as the parent, so the span emitted by this batch will appear only in the first request’s trace.
+                with BatchTraceContextManager(batch[0].trace_context):
+                    if isasyncgenfunction(func):
+                        func_generator = func_future_or_generator
+                        await self._consume_func_generator(
+                            func_generator, futures, len(batch)
+                        )
+                    else:
+                        func_future = func_future_or_generator
+                        await self._assign_func_results(
+                            func_future, futures, len(batch)
+                        )
             except Exception as e:
                 logger.exception("_process_batch ran into an unexpected exception.")
 
@@ -690,7 +699,8 @@ def batch(
             batch_queue = lazy_batch_queue_wrapper.queue
 
             future = get_or_create_event_loop().create_future()
-            batch_queue.put(_SingleRequest(self, flattened_args, future))
+            trace_context = get_trace_context()
+            batch_queue.put(_SingleRequest(self, flattened_args, future, trace_context))
             return future
 
         @wraps(_func)
