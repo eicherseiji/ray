@@ -3,6 +3,8 @@ import sys
 
 import ray.train
 
+from ray.train.v2.tests.util import create_dummy_run_context
+
 
 def test_logging_manager():
     from ray.train.v2._internal.logging import LoggingManager
@@ -63,9 +65,10 @@ def test_dataset_setup_callback_patch(num_workers, excluded_resources):
     scaling_config = ray.train.ScalingConfig(
         num_workers=num_workers, resources_per_worker={"CPU": 1}
     )
-    callback = DatasetsSetupCallback(
-        datasets={}, data_config=None, scaling_config=scaling_config
+    train_run_context = create_dummy_run_context(
+        datasets={}, dataset_config=None, scaling_config=scaling_config
     )
+    callback = DatasetsSetupCallback(train_run_context=train_run_context)
     assert callback.get_train_total_resources(scaling_config) == excluded_resources
 
 
