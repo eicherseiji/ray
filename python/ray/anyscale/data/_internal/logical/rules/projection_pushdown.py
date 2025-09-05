@@ -126,16 +126,6 @@ class ProjectionPushdown(Rule):
             prev_spec=read_op_spec, new_spec=project_op_spec
         )
 
-        # NOTE: We can't simultaneously push projection and filter expression,
-        #       as this produces incorrect results in cases when filter contains
-        #       columns excluded in projection
-        #
-        # See for more details: https://github.com/apache/arrow/issues/47493
-        #
-        # TODO(DATA-1398) fix, once native expressions are used
-        if new_spec.cols is not None and read_op.filter_expr is not None:
-            return project_op
-
         logger.debug(
             f"Pushing projection down into read operation "
             f"(projection columns = {new_spec.cols}, remap = {new_spec.cols_remap})"

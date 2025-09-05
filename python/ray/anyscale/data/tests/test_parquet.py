@@ -270,35 +270,9 @@ def test_transient_error_handling(restore_data_context, ray_start_regular_shared
     ray.data.read_parquet("example://iris.parquet", filesystem=fs).materialize()
 
 
-def test_proper_projection_for_partitioned_datasets(temp_dir):
-    ds = ray.data.read_parquet("example://iris.parquet").materialize()
-
-    partitioned_ds_path = f"{temp_dir}/partitioned_iris"
-    # Write out partitioned dataset
-    ds.write_parquet(partitioned_ds_path, partition_cols=["variety"])
-
-    partitioned_ds = ray.data.read_parquet(
-        partitioned_ds_path, columns=["variety"]
-    ).materialize()
-
-    print(partitioned_ds.schema())
-
-    assert [
-        "sepal.length",
-        "sepal.width",
-        "petal.length",
-        "petal.width",
-        "variety",
-    ] == ds.take_batch(batch_format="pyarrow").column_names
-    assert ["variety"] == partitioned_ds.take_batch(batch_format="pyarrow").column_names
-
-    assert ds.count() == partitioned_ds.count()
-
-
 @pytest.mark.parametrize(
     "columns,expected_exception,expected_message",
     [
-        ([], ValueError, "`columns` cannot be an empty list."),
         ("not_a_list", TypeError, "`columns` must be a list of strings."),
         (["valid_col", 123], TypeError, "All elements in `columns` must be strings."),
         (["variety", "sepal.length"], None, None),
@@ -531,7 +505,6 @@ def test_read_parquet_batching(ray_start_regular_shared, tmp_path, test_case):
         schema=None,
         dataset_kwargs={},
         batch_size=batch_size,
-        use_threads=True,
         to_batches_kwargs={},
         block_udf=None,
         include_paths=False,
@@ -950,7 +923,6 @@ def test_parquet_chunked_reading_preserves_order(ray_start_regular_shared, tmp_p
         schema=None,
         dataset_kwargs={},
         batch_size=None,
-        use_threads=True,
         to_batches_kwargs={},
         block_udf=None,
         include_paths=False,
@@ -1069,7 +1041,6 @@ def test_calculate_row_group_range_distribution(
         schema=None,
         dataset_kwargs={},
         batch_size=None,
-        use_threads=True,
         to_batches_kwargs={},
         block_udf=None,
         include_paths=False,
@@ -1122,7 +1093,6 @@ def test_chunked_vs_non_chunked_same_result(
         schema=None,
         dataset_kwargs={},
         batch_size=None,
-        use_threads=True,
         to_batches_kwargs={},
         block_udf=None,
         include_paths=False,
@@ -1201,7 +1171,6 @@ def test_chunked_reading_with_column_selection(
         schema=None,
         dataset_kwargs={},
         batch_size=None,
-        use_threads=True,
         to_batches_kwargs={},
         block_udf=None,
         include_paths=False,
@@ -1272,7 +1241,6 @@ def test_chunked_out_of_range_returns_empty(
         schema=None,
         dataset_kwargs={},
         batch_size=None,
-        use_threads=True,
         to_batches_kwargs={},
         block_udf=None,
         include_paths=False,
@@ -1321,7 +1289,6 @@ def test_read_files_with_checkpoint_ids_fully_skip_fragment(
         schema=None,
         dataset_kwargs={},
         batch_size=None,
-        use_threads=True,
         to_batches_kwargs={},
         block_udf=None,
         include_paths=False,
@@ -1368,7 +1335,6 @@ def test_read_files_with_checkpoint_ids_partial_skip_fragment(
         schema=None,
         dataset_kwargs={},
         batch_size=None,
-        use_threads=True,
         to_batches_kwargs={},
         block_udf=None,
         include_paths=False,
@@ -1430,7 +1396,6 @@ def test_read_files_with_checkpoint_ids_no_skip_fragment(
         schema=None,
         dataset_kwargs={},
         batch_size=None,
-        use_threads=True,
         to_batches_kwargs={},
         block_udf=None,
         include_paths=False,

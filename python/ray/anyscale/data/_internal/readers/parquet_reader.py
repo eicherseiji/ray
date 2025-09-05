@@ -24,6 +24,7 @@ from ray.data._internal.datasource.parquet_datasource import (
     check_for_legacy_tensor_type,
     emit_file_extensions_future_warning,
     get_parquet_dataset,
+    _read_batches_from,
 )
 from ray.data._internal.util import (
     call_with_retry,
@@ -142,7 +143,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         schema: Optional["pyarrow.Schema"],
         dataset_kwargs: Dict[str, Any],
         batch_size: Optional[int],
-        use_threads: bool,
         to_batches_kwargs: Dict[str, Any],
         block_udf: Optional[Callable[[Block], Block]],
         include_paths: bool,
@@ -158,9 +158,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 when this class creates fragments.
             batch_size: The number of rows to read per batch. If not provided, a default
                 value is used.
-            use_threads: Whether PyArrow should use multiple threads to read batches.
-                Separately from PyArrow, this class always uses multiple threads to read
-                fragments.
             to_batches_kwargs: Additional keyword arguments to pass to
                 `ParquetFileFragment.to_batches`.
             block_udf: A function that takes a `Block` and returns a `Block`. This
@@ -174,7 +171,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self._schema = schema
         self._dataset_kwargs = dataset_kwargs
         self._batch_size = batch_size
-        self._use_threads = use_threads
         self._to_batches_kwargs = to_batches_kwargs
         self._block_udf = block_udf
         self._include_paths = include_paths
@@ -476,81 +472,20 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         checkpoint_ids: Optional[Block] = None,
     ) -> Iterable["pyarrow.Table"]:
         for fragment in fragments:
-            partitions = {}
-            if self._partitioning is not None:
-                parse = PathPartitionParser(self._partitioning)
-                partitions = parse(fragment.path)
-
-            for batch in self._read_batches(
+            for table in self._read_batches(
                 fragment,
-                filter_expr,
-                fragment.path,
-                schema,
-                data_columns,
-                checkpoint_ids,
-            ):
-                if self._include_paths:
-                    batch = batch.append_column(
-                        "path", pa.array([fragment.path] * len(batch))
-                    )
-                for partition, value in partitions.items():
-                    if partition_columns is None or partition in partition_columns:
-                        if partition not in batch.column_names:
-                            batch = batch.append_column(
-                                partition, pa.array([value] * len(batch))
-                            )
-                        elif log_once(f"duplicate_partition_field_{partition}"):
-                            directory = os.path.dirname(fragment.path)
-                            filename = os.path.basename(fragment.path)
-                            logger.warning(
-                                f"The partition field '{partition}' exists in both the "
-                                f"path '{directory}' and in the Parquet file "
-                                f"'{filename}'. Ray Data will default to using the "
-                                "value in the Parquet file."
-                            )
-                if columns_rename is not None:
-                    batch = batch.rename_columns(
-                        [columns_rename.get(col, col) for col in batch.schema.names]
-                    )
-
-                yield batch
-
-    def _get_batch_iterable(
-        self,
-        fragment: pyarrow.dataset.ParquetFileFragment,
-        batch_size: Optional[int],
-        columns: Optional[List[str]],
-        filter_expr: pyarrow.dataset.Expression,
-        schema: pyarrow.Schema,
-    ) -> Iterable[pyarrow.RecordBatch]:
-        """Get an iterable of batches from a parquet fragment."""
-
-        to_batches_kwargs = {**self._to_batches_kwargs}
-
-        if batch_size is not None:
-            to_batches_kwargs.setdefault("batch_size", batch_size)
-
-        try:
-            return fragment.to_batches(
-                use_threads=self._use_threads,
-                columns=columns,
-                filter=filter_expr,
                 schema=schema,
-                **self._to_batches_kwargs,
-            )
-        except pyarrow.lib.ArrowInvalid as e:
-            error_message = str(e)
-            if (
-                "No match for FieldRef.Name" in error_message
-                and filter_expr is not None
+                data_columns=data_columns,
+                partition_columns=partition_columns,
+                filter_expr=filter_expr,
+                checkpoint_ids=checkpoint_ids,
             ):
-                filename = os.path.basename(fragment.path)
-                file_columns = set(fragment.physical_schema.names)
-                raise RuntimeError(
-                    f"Filter expression: '{filter_expr}' failed on parquet "
-                    f"file: '{filename}' with columns: {file_columns}"
-                )
-            raise
+                if columns_rename is not None:
+                    table = table.rename_columns(
+                        [columns_rename.get(col, col) for col in table.schema.names]
+                    )
+
+                yield table
 
     def _calculate_batch_size(self, avg_row_size: float, num_rows: int) -> int:
         """Calculate optimal batch size based on average row size and target block size.
@@ -631,10 +566,11 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     def _read_batches(
         self,
         fragment: pyarrow.dataset.ParquetFileFragment,
-        filter_expr: pyarrow.dataset.Expression,
-        path: str,
+        *,
         schema: pyarrow.Schema,
-        columns: Optional[List[str]],
+        data_columns: Optional[List[str]],
+        partition_columns: Optional[List[str]],
+        filter_expr: pyarrow.dataset.Expression,
         checkpoint_ids: Optional[Block] = None,
     ) -> Iterable[pyarrow.Table]:
         checkpointed_fragment_info: Optional[CheckpointedFragmentInfo] = None
@@ -671,12 +607,13 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         else:
             # Get column indices for projected columns
             target_column_indices = (
-                [fragment.physical_schema.get_field_index(col) for col in columns]
-                if columns is not None
+                [fragment.physical_schema.get_field_index(col) for col in data_columns]
+                if data_columns is not None
                 else list(range(len(fragment.physical_schema)))
             )
 
             # Estimate batch size from first row group stats
+            # TODO replace w/ PDS estimation
             batch_size = self._get_batch_size(fragment, target_column_indices)
 
         # Track the current row offset for the row IDs
@@ -684,18 +621,24 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
 
         # S3 can raise transient errors during iteration, and PyArrow doesn't expose a
         # way to retry specific batches.
-        for batch in iterate_with_retry(
-            lambda: self._get_batch_iterable(
-                fragment, batch_size, columns, filter_expr, schema
+        for table in iterate_with_retry(
+            lambda: _read_batches_from(
+                fragment,
+                schema=schema,
+                data_columns=data_columns,
+                partition_columns=partition_columns,
+                partitioning=self._partitioning,
+                filter_expr=filter_expr,
+                batch_size=batch_size,
+                include_path=self._include_paths,
+                use_threads=True,
+                to_batches_kwargs=self._to_batches_kwargs,
             ),
-            "ParquetReader load batch",
+            "ParquetReader read batches",
             match=self._retried_io_errors,
         ):
-            # TODO: If the table is much larger than the target block size, emit a
-            # warning instructing the user to decrease the batch size.
-            if batch.num_rows == 0:
+            if table.num_rows == 0:
                 continue
-            table = pa.Table.from_batches([batch])
 
             if self._generated_id_column:
                 # Add generated ID column to the table
@@ -703,7 +646,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 table = table.append_column(
                     self._generated_id_column,
                     get_generated_id_column(
-                        path=path,
+                        path=fragment.path,
                         row_group_idx=fragment.row_groups[0].id,
                         total_num_rows=fragment.metadata.row_group(0).num_rows,
                         current_row_offset=current_row_offset,
@@ -757,6 +700,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 # Ideally, we can propagate the sampled batch size back to
                 # the executor and use it for future tasks.
                 self._sampled_batch_size = self._get_sampled_batch_size(table)
+
             yield table
 
     def read_metadata(

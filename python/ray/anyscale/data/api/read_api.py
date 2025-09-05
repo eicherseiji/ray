@@ -158,7 +158,6 @@ def read_parquet(
     dataset_kwargs = arrow_parquet_args.pop("dataset_kwargs", {})
     schema = arrow_parquet_args.pop("schema", None)
     batch_size = arrow_parquet_args.pop("batch_size", None)
-    use_threads = arrow_parquet_args.pop("use_threads", False)
 
     filters = arrow_parquet_args.pop("filter", None)
     filter_expr = None
@@ -205,7 +204,6 @@ def read_parquet(
         schema=schema,
         dataset_kwargs=dataset_kwargs,
         batch_size=batch_size,
-        use_threads=use_threads,
         to_batches_kwargs=to_batches_kwargs,
         block_udf=block_udf,
         include_paths=include_paths,

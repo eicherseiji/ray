@@ -89,20 +89,10 @@ class PredicatePushdown(Rule):
             assert filter_expr_strs_to_pushdown is not None
 
             read_files = op
-
-            # NOTE: We can't simultaneously push projection and filter expression,
-            #       as this produces incorrect results in cases when filter contains
-            #       columns excluded in projection
-            #
-            # See for more details: https://github.com/apache/arrow/issues/47493
-            #
-            # TODO(DATA-1398) fix, once native expressions are used
-            if read_files.columns is None:
-                read_files.pushdown_filter(filter_expr_strs_to_pushdown)
-
-                plan = remove_op(prev_filter, plan)
-                prev_filter = None
-                filter_expr_strs_to_pushdown = None
+            read_files.pushdown_filter(filter_expr_strs_to_pushdown)
+            plan = remove_op(prev_filter, plan)
+            prev_filter = None
+            filter_expr_strs_to_pushdown = None
 
         elif isinstance(op, Union) and prev_filter:
             # For union operations, we need to process each branch independently

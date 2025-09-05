@@ -55,8 +55,6 @@ class ReadFiles(SourceOperator, AbstractMap):
         if columns is not None:
             if not isinstance(columns, list):
                 raise TypeError("`columns` must be a list of strings.")
-            if not columns:
-                raise ValueError("`columns` cannot be an empty list.")
             if not all(isinstance(col, str) for col in columns):
                 raise TypeError("All elements in `columns` must be strings.")
         if columns is not None and columns_rename is not None:
