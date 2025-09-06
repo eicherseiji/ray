@@ -889,7 +889,9 @@ def test_batched_span_attached_to_first_request_trace():
             # We keep a counter so we can assert two unique batches producing two unique spans
             self._batch_idx = 0
 
-        @serve.batch(max_batch_size=3, batch_wait_timeout_s=1.0)
+        @serve.batch(
+            max_batch_size=3, batch_wait_timeout_s=1.0, max_concurrent_batches=2
+        )
         async def handle_batch(self, reqs):
             tracer = trace.get_tracer(__name__)
 
