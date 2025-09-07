@@ -26,9 +26,6 @@ import ray._private.services as services
 from ray.core.generated import autoscaler_pb2
 
 
-@pytest.mark.skip(
-    reason="Temporarily skipped waiting for https://anyscale1.atlassian.net/browse/CORE-2105"
-)
 def test_removed_nodes_not_added_back(ray_start_cluster):
     """Test that a dataset with actor pools can finish, when some
     nodes in the cluster are removed and not added back."""
