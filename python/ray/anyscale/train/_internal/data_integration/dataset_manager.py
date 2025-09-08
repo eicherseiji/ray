@@ -1,17 +1,21 @@
 import asyncio
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import ray
 from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
     RowIDBasedDataIteratorCheckpointer,
     RowIDBasedStateDict,
 )
-from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
+from ray.anyscale.data.checkpoint.interfaces import (
+    CheckpointConfig,
+    TrainingIngestCheckpointConfig,
+)
 from ray.anyscale.train._internal.data_integration.interfaces import (
     DatasetShardMetadata,
 )
 from ray.data import Dataset, DataContext, DataIterator, NodeIdStr
+from ray.data.datasource import PathPartitionFilter, PartitionStyle
 from ray.train.v2._internal.data_integration.interfaces import GenDataset
 
 
@@ -69,6 +73,11 @@ class DatasetManager:
         ):
             return
 
+        state_dict = (
+            RowIDBasedStateDict.from_dict(dataset_info.state_dict)
+            if dataset_info.state_dict
+            else None
+        )
         for rank, dataset_iterator in enumerate(dataset_iterators):
             checkpointer = RowIDBasedDataIteratorCheckpointer(
                 checkpoint_config=self._data_config.dataset_checkpoint_configs[
@@ -76,9 +85,8 @@ class DatasetManager:
                 ],
                 world_rank=rank,
                 world_size=len(dataset_iterators),
+                state_dict=state_dict,
             )
-            if dataset_info.state_dict:
-                checkpointer.load_state_dict(dataset_info.state_dict)
 
             # Checkpointing methods should have been patched onto the DataIterator.
             assert hasattr(dataset_iterator, "_enable_checkpointing")
@@ -115,6 +123,7 @@ class DatasetManager:
                 "or remove the `DataConfig.dataset_checkpoint_configs` key for this dataset. "
             )
 
+        state_dict = None
         if not dataset_info.state_dict:
             logger.info(
                 "Dataset checkpointing is enabled, but no dataset state passed "
@@ -123,29 +132,55 @@ class DatasetManager:
                 "This is expected when starting the run from scratch rather than "
                 "resuming from a checkpoint."
             )
-            return
-
-        state_dict = RowIDBasedStateDict.from_dict(dataset_info.state_dict)
-        if not state_dict.should_restore():
-            return
+        else:
+            state_dict = RowIDBasedStateDict.from_dict(dataset_info.state_dict)
 
         train_ingest_checkpoint_config = data_config.dataset_checkpoint_configs[
             dataset_name
         ]
 
-        # TODO: Default checkpoint_path / override_filesystem to RunConfig settings.
-        # Translate the training ingest checkpoint config to the CheckpointConfig
-        # expected by the base dataset.
-        checkpoint_config = CheckpointConfig(
-            id_column=train_ingest_checkpoint_config.id_column,
-            checkpoint_path=train_ingest_checkpoint_config.checkpoint_path,
-            checkpoint_path_partition_filter=state_dict.restoration_checkpoint_path_filter,
+        base_dataset.context.checkpoint_config = (
+            self._build_restoration_checkpoint_config(
+                train_ingest_checkpoint_config, state_dict
+            )
+        )
+
+    def _build_restoration_checkpoint_config(
+        self,
+        dataset_checkpoint_config: TrainingIngestCheckpointConfig,
+        state_dict: Optional[RowIDBasedStateDict],
+    ) -> CheckpointConfig:
+        """Translate the training ingest checkpoint config to the CheckpointConfig
+        expected by the base dataset for configuring restoration and auto-generating
+        the ID column.
+
+        If there is no state dict provided, disable checkpoint restoration
+        by setting the checkpoint file filter to an empty filter.
+        """
+        checkpoint_path_partition_filter = PathPartitionFilter.of(
+            filter_fn=lambda _: False,
+            style=PartitionStyle.HIVE,
+        )
+        if state_dict and state_dict.should_restore():
+            checkpoint_path_partition_filter = (
+                state_dict.restoration_checkpoint_path_filter
+            )
+
+        id_column, generated_id_column = (
+            (None, dataset_checkpoint_config.id_column)
+            if dataset_checkpoint_config.generate_id_column
+            else (dataset_checkpoint_config.id_column, None)
+        )
+
+        return CheckpointConfig(
+            id_column=id_column,
+            generated_id_column=generated_id_column,
+            checkpoint_path=dataset_checkpoint_config.checkpoint_path,
+            checkpoint_path_partition_filter=checkpoint_path_partition_filter,
             # Do not delete checkpoint files on success, since users may want to
             # restore from checkpoints of previous epochs.
             delete_checkpoint_on_success=False,
         )
-
-        base_dataset.context.checkpoint_config = checkpoint_config
 
     def _create_dataset_iterators(
         self, dataset_info: DatasetShardMetadata, base_dataset: Dataset

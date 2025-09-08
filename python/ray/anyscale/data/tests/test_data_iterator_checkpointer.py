@@ -10,6 +10,7 @@ from ray.data._internal.block_batching.interfaces import Batch
 from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
     RowIDBasedDataIteratorCheckpointer,
     BatchMetadataWithRowIDs,
+    RowIDBasedStateDict,
 )
 from ray.train import DatasetCheckpointConfig
 
@@ -287,9 +288,9 @@ def test_load_state_dict_from_mid_epoch(tmp_path):
     checkpointer = RowIDBasedDataIteratorCheckpointer(
         checkpoint_config=DatasetCheckpointConfig(
             checkpoint_path=str(tmp_path), id_column="id"
-        )
+        ),
+        state_dict=RowIDBasedStateDict(epoch_idx=1, checkpoint_idx=8),
     )
-    checkpointer.load_state_dict({"epoch_idx": 1, "checkpoint_idx": 8})
     assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": 8}
 
     checkpointer.start_epoch()
@@ -321,9 +322,9 @@ def test_load_state_dict_from_start_or_end_of_epoch(tmp_path):
     checkpointer = RowIDBasedDataIteratorCheckpointer(
         checkpoint_config=DatasetCheckpointConfig(
             checkpoint_path=str(tmp_path), id_column="id"
-        )
+        ),
+        state_dict=RowIDBasedStateDict(epoch_idx=1, checkpoint_idx=-1),
     )
-    checkpointer.load_state_dict({"epoch_idx": 1, "checkpoint_idx": -1})
     checkpointer.start_epoch()
 
     assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
@@ -343,9 +344,9 @@ def test_load_state_dict_equivalence(tmp_path, state_dict):
     checkpointer = RowIDBasedDataIteratorCheckpointer(
         checkpoint_config=DatasetCheckpointConfig(
             checkpoint_path=str(tmp_path), id_column="id"
-        )
+        ),
+        state_dict=RowIDBasedStateDict.from_dict(state_dict),
     )
-    checkpointer.load_state_dict(state_dict)
     assert checkpointer.state_dict() == state_dict
 
 

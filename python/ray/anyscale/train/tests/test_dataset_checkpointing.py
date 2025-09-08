@@ -13,7 +13,9 @@ from ray.train.v2.api.data_parallel_trainer import DataParallelTrainer
 from ray.train.tests.util import create_dict_checkpoint, load_dict_checkpoint
 
 
-def _read_checkpoint_files_for_state_dict(state_dict: dict, root_path: Path) -> list:
+def _read_checkpoint_files_for_state_dict(
+    state_dict: dict, root_path: Path, id_column: str = "id"
+) -> list:
     checkpoint_idx = state_dict["checkpoint_idx"]
     epoch = state_dict["epoch_idx"]
     # Get all checkpoints up to and including checkpoint_idx
@@ -23,13 +25,16 @@ def _read_checkpoint_files_for_state_dict(state_dict: dict, root_path: Path) -> 
             checkpoint_path = rank_dir / f"epoch={epoch}" / f"checkpoint={i}"
             for checkpoint_file in checkpoint_path.glob("*.parquet"):
                 checkpointed_row_ids.extend(
-                    pq.read_table(checkpoint_file).column("id").to_pylist()
+                    pq.read_table(checkpoint_file).column(id_column).to_pylist()
                 )
-    return sorted(checkpointed_row_ids)
+    return checkpointed_row_ids
 
 
-@pytest.mark.parametrize("restore_from_end_of_epoch", [False, True])
-def test_e2e_with_ray_train(ray_start_4_cpus, tmp_path, restore_from_end_of_epoch):
+@pytest.mark.parametrize("restore_from_end_of_epoch", [True, False])
+@pytest.mark.parametrize("generate_id_column", [True, False])
+def test_e2e_with_ray_train(
+    ray_start_4_cpus, tmp_path, restore_from_end_of_epoch, generate_id_column
+):
     """Test that the checkpointing works end-to-end with Ray Train.
 
     Run for 2 epochs.
@@ -59,6 +64,14 @@ def test_e2e_with_ray_train(ray_start_4_cpus, tmp_path, restore_from_end_of_epoc
     end_of_epoch_error_at = [0] if restore_from_end_of_epoch else []
     total_rows = num_batches_per_worker * world_size * batch_size
     ds = ray.data.range(total_rows)
+
+    ctx = ray.data.DataContext.get_current()
+    ctx.default_hash_shuffle_parallelism = 1
+
+    id_column = "generated_id" if generate_id_column else "id"
+    if generate_id_column:
+        ds.write_parquet(str(tmp_path / "parquet"))
+        ds = ray.data.read_parquet(str(tmp_path / "parquet"))
 
     def train_fn(config):
         rank = ray.train.get_context().get_world_rank()
@@ -110,15 +123,16 @@ def test_e2e_with_ray_train(ray_start_4_cpus, tmp_path, restore_from_end_of_epoc
                     assert rank_0_state_dict == state_dict
 
                     checkpointed_row_ids = _read_checkpoint_files_for_state_dict(
-                        state_dict, data_checkpoint_path
+                        state_dict, data_checkpoint_path, id_column
                     )
                     assert (
                         len(checkpointed_row_ids)
                         == consumed_batches_this_epoch * batch_size * world_size
                     )
 
-                    # Check that the checkpointed row ids contains all seen batches from workers.
-                    assert set(seen_ids) <= set(checkpointed_row_ids)
+                    if not generate_id_column:
+                        # Check that the checkpointed row ids contains all seen batches from workers.
+                        assert set(seen_ids) <= set(checkpointed_row_ids)
 
                     with create_dict_checkpoint(
                         {
@@ -150,7 +164,7 @@ def test_e2e_with_ray_train(ray_start_4_cpus, tmp_path, restore_from_end_of_epoc
                 "checkpoint_idx": -1,
             }
             checkpointed_row_ids = _read_checkpoint_files_for_state_dict(
-                state_dict, data_checkpoint_path
+                state_dict, data_checkpoint_path, id_column
             )
             assert checkpointed_row_ids == []
 
@@ -187,7 +201,9 @@ def test_e2e_with_ray_train(ray_start_4_cpus, tmp_path, restore_from_end_of_epoc
         dataset_config=ray.train.DataConfig(
             dataset_checkpoint_configs={
                 "train": DatasetCheckpointConfig(
-                    checkpoint_path=str(data_checkpoint_path), id_column="id"
+                    checkpoint_path=str(data_checkpoint_path),
+                    id_column=id_column,
+                    generate_id_column=generate_id_column,
                 )
             }
         ),

@@ -57,14 +57,6 @@ class DataIteratorCheckpointer(abc.ABC):
         """Returns the current data iterator state."""
         ...
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """Loads the data iterator state from a checkpoint.
-
-        Args:
-            state_dict: The state dictionary to load.
-        """
-        ...
-
     def record_yielded_batch(self, batch: Batch) -> None:
         """Record that the iterator yielded a batch.
 
@@ -248,6 +240,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
             setting (e.g. with Ray Train).
         world_size: The world size of the current distributed setting if running in a
             distributed setting (e.g. with Ray Train).
+        state_dict: The state dict to initialize the checkpointer from.
     """
 
     TARGET_CHECKPOINT_SIZE_BYTES = 128 * 1024 * 1024  # 128 MB
@@ -257,6 +250,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         checkpoint_config: TrainingIngestCheckpointConfig,
         world_rank: int = 0,
         world_size: int = 1,
+        state_dict: Optional[RowIDBasedStateDict] = None,
     ):
         super().__init__(world_rank=world_rank, world_size=world_size)
 
@@ -286,6 +280,11 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         self._flush_exception: Optional[Exception] = None
         # Whether the flush thread attributes have been initialized.
         self._flush_thread_initialized = False
+
+        # Load state dict
+        if state_dict:
+            self._epoch_idx = state_dict.epoch_idx
+            self._latest_committed_checkpoint_idx = state_dict.checkpoint_idx
 
     def _init_flush_thread(self):
         """Initialize a background thread that flushes row IDs to checkpoint files.
@@ -515,12 +514,3 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
             _delete_fs_path(self._fs, new_checkpoint_dir)
 
         _create_directory(self._fs, new_checkpoint_dir)
-
-    def load_state_dict(self, state_dict: Dict[str, Any]):
-        if self._epoch_running:
-            raise RuntimeError(
-                "Cannot load state dict while iterating through the dataset mid-epoch."
-            )
-
-        self._epoch_idx = state_dict["epoch_idx"]
-        self._latest_committed_checkpoint_idx = state_dict["checkpoint_idx"]

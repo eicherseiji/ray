@@ -190,15 +190,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self._retried_io_errors = ctx.retried_io_errors
         self._sampled_batch_size = None
 
-        # Check if ID generation is requested via checkpoint config
-        self._generated_id_column = None
-        if (
-            ctx.checkpoint_config
-            and ctx.checkpoint_config.generated_id_column
-            and not ctx.checkpoint_enabled_override
-        ):
-            self._generated_id_column = ctx.checkpoint_config.generated_id_column
-
     def read_files(
         self,
         file_manifest: FileManifest,
@@ -215,6 +206,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 f"Invalid keys: {set(columns_rename.keys()) - set(columns)}"
             )
 
+        generated_id_column = self._generated_id_column
+
         paths = list(file_manifest.paths)
         for path in paths:
             if not _has_file_extension(
@@ -227,39 +220,39 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         chunk_metadatas = list(file_manifest.file_chunk_metadatas)
 
         fragments = self._create_fragments(
-            paths, chunk_metadatas, filesystem=filesystem
+            paths, chunk_metadatas, generated_id_column, filesystem=filesystem
         )
 
         if len(fragments) == 0:
             return
 
         # Check for column name collision with generated_id_column
-        if self._generated_id_column:
+        if generated_id_column:
             # Check collision with columns_rename mapping
             if columns_rename is not None:
-                if self._generated_id_column in columns_rename:
+                if generated_id_column in columns_rename:
                     raise ValueError(
-                        f"generated_id_column='{self._generated_id_column}' conflicts with a column "
+                        f"generated_id_column='{generated_id_column}' conflicts with a column "
                         f"that will be renamed (original name)"
                     )
-                if self._generated_id_column in columns_rename.values():
+                if generated_id_column in columns_rename.values():
                     raise ValueError(
-                        f"generated_id_column='{self._generated_id_column}' conflicts with a renamed "
+                        f"generated_id_column='{generated_id_column}' conflicts with a renamed "
                         f"column (target name)"
                     )
 
             # Check collision with existing columns
             field_index = fragments[0].physical_schema.get_field_index(
-                self._generated_id_column
+                generated_id_column
             )
             if field_index >= 0:
-                if columns is not None and self._generated_id_column in columns:
+                if columns is not None and generated_id_column in columns:
                     raise ValueError(
-                        f"generated_id_column='{self._generated_id_column}' conflicts with a column in the columns list"
+                        f"generated_id_column='{generated_id_column}' conflicts with a column in the columns list"
                     )
                 else:
                     raise ValueError(
-                        f"generated_id_column='{self._generated_id_column}' conflicts with an existing column"
+                        f"generated_id_column='{generated_id_column}' conflicts with an existing column"
                     )
 
         # Users can pass both data columns and partition columns in the 'columns'
@@ -294,6 +287,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                     partition_columns=partition_columns,
                     columns_rename=columns_rename,
                     checkpoint_ids=checkpoint_ids,
+                    generated_id_column=generated_id_column,
                 ),
                 # NOTE: It's crucial for the sequence to have preserved (deterministic)
                 #       ordering so that that tasks could be safely retried (when
@@ -310,7 +304,20 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 partition_columns=partition_columns,
                 columns_rename=columns_rename,
                 checkpoint_ids=checkpoint_ids,
+                generated_id_column=generated_id_column,
             )
+
+    @property
+    def _generated_id_column(self) -> Optional[str]:
+        """Get the generated id column from the checkpoint config if it is set."""
+        ctx = DataContext.get_current()
+        if (
+            ctx.checkpoint_config
+            and ctx.checkpoint_config.generated_id_column
+            and not ctx.checkpoint_enabled_override
+        ):
+            return ctx.checkpoint_config.generated_id_column
+        return None
 
     def _calculate_row_group_range(
         self, chunk_idx: int, total_num_chunks: int, total_row_groups: int
@@ -403,6 +410,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self,
         paths: List[str],
         chunk_metadatas: List[ParquetFileChunkMetadata],
+        generated_id_column: Optional[str],
         *,
         filesystem: pa.fs.FileSystem,
     ) -> List[pyarrow.dataset.ParquetFileFragment]:
@@ -421,7 +429,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         for path, chunk_metadata in zip(paths, chunk_metadatas):
             fragment = path_to_fragment[path]
             if chunk_metadata is None:
-                if self._generated_id_column:
+                if generated_id_column:
                     # For checkpointing, we need to create a fragment for each row group.
                     for row_group_index in range(fragment.metadata.num_row_groups):
                         fragments.append(
@@ -430,7 +438,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 else:
                     fragments.append(fragment)
             else:
-                if self._generated_id_column:
+                if generated_id_column:
                     for fragment_item in self._fragments_from_chunk_metadata(
                         fragment, chunk_metadata
                     ):
@@ -470,6 +478,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         partition_columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
         checkpoint_ids: Optional[Block] = None,
+        generated_id_column: Optional[str] = None,
     ) -> Iterable["pyarrow.Table"]:
         for fragment in fragments:
             for table in self._read_batches(
@@ -479,6 +488,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 partition_columns=partition_columns,
                 filter_expr=filter_expr,
                 checkpoint_ids=checkpoint_ids,
+                generated_id_column=generated_id_column,
             ):
                 if columns_rename is not None:
                     table = table.rename_columns(
@@ -572,10 +582,11 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         data_columns: Optional[List[str]],
         partition_columns: Optional[List[str]],
         filter_expr: pyarrow.dataset.Expression,
-        checkpoint_ids: Optional[Block] = None,
+        checkpoint_ids: Optional[Block],
+        generated_id_column: Optional[str],
     ) -> Iterable[pyarrow.Table]:
         checkpointed_fragment_info: Optional[CheckpointedFragmentInfo] = None
-        if self._generated_id_column and checkpoint_ids is not None:
+        if generated_id_column and checkpoint_ids is not None:
             assert len(fragment.row_groups) == 1
             row_group_idx = fragment.row_groups[0].id
             checkpointed_fragment_info = get_checkpointed_fragment_info(
@@ -642,12 +653,12 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             if table.num_rows == 0:
                 continue
 
-            if self._generated_id_column:
+            if generated_id_column:
                 # Add generated ID column to the table
                 assert len(fragment.row_groups) == 1
                 row_group_idx = fragment.row_groups[0].id
                 table = table.append_column(
-                    self._generated_id_column,
+                    generated_id_column,
                     get_generated_id_column(
                         path=fragment.path,
                         row_group_idx=row_group_idx,
@@ -776,8 +787,9 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             )
 
         # Add row ID column to schema if requested
-        if self._generated_id_column:
-            row_id_field = pa.field(self._generated_id_column, GENERATED_ID_COLUMN_TYPE)
+        generated_id_column = self._generated_id_column
+        if generated_id_column:
+            row_id_field = pa.field(generated_id_column, GENERATED_ID_COLUMN_TYPE)
             schema = pa.schema(list(schema) + [row_id_field])
 
         return schema

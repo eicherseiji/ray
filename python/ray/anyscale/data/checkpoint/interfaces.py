@@ -246,39 +246,19 @@ class TrainingIngestCheckpointConfig:
             configured on the `ray.train` trainer.
         id_column: Name of the ID column in the input dataset.
             ID values must be unique across all rows in the dataset and must persist
-            during all operators. Either `id_column` or `generated_id_column` must be
-            provided.
-        generated_id_column: Name of the ID column to generate a row ID for each row.
-            Use this when you don't have an `id_column` in the input dataset.
+            during all operators.
+        generate_id_column: Whether to generate the `id_column` for each row.
+            Use this when you don't have a pre-existing `id_column` in the input dataset.
             Currently, only Parquet files based data sources are supported for
             auto-generated row IDs feature.
     """
 
     # TODO: Set default checkpoint path to `RunConfig.storage_path/name`.
     checkpoint_path: str
-    id_column: Optional[str] = None
-    generated_id_column: Optional[str] = None
+    id_column: str
+    generate_id_column: bool = False
 
     def __post_init__(self):
-        # Validate that we don't have both `id_column` and `generated_id_column`
-        # explicitly specified
-        if self.id_column is not None and self.generated_id_column is not None:
-            raise InvalidCheckpointingConfig(
-                "Cannot specify both `id_column` and `generated_id_column`. "
-                "Use `id_column` when you have an existing ID column in your dataset, "
-                "or use `generated_id_column` when you want to generate row IDs "
-                "automatically."
-            )
-
-        # If no `id_column` is provided, use the generated row ID column
-        elif self.id_column is None and self.generated_id_column is None:
-            raise InvalidCheckpointingConfig(
-                "Either `id_column` or `generated_id_column` must be provided. "
-                "Use `id_column` when you have an existing ID column in your dataset, "
-                "or use `generated_id_column` when you want to generate row IDs "
-                "automatically."
-            )
-
         if not isinstance(self.id_column, str) or len(self.id_column) == 0:
             raise InvalidCheckpointingConfig(
                 "Checkpoint ID column must be a non-empty string, "
