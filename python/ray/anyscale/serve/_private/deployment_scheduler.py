@@ -23,7 +23,8 @@ from ray.serve._private.deployment_scheduler import (
     DeploymentDownscaleRequest,
     DeploymentScheduler,
     ReplicaSchedulingRequest,
-    Resources,
+    AvailableNodeResources,
+    RequestedResources,
 )
 from ray.serve._private.usage import ServeUsageTag
 from ray.util.scheduling_strategies import In
@@ -138,14 +139,14 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
                     for replicas in self._pending_replicas.values()
                     for scheduling_request in replicas.values()
                 ],
-                key=lambda r: r.required_resources,
+                key=lambda r: r.requested_resources,
                 reverse=True,
             )
 
             # Schedule each replica
             for scheduling_request in all_scheduling_requests:
                 target_node = self._find_best_available_node(
-                    scheduling_request.required_resources,
+                    scheduling_request.requested_resources,
                     self._get_available_resources_per_node(),
                 )
 
@@ -299,8 +300,8 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
 
     def _find_best_available_node(
         self,
-        required_resources: Resources,
-        available_resources_per_node: Dict[str, Resources],
+        required_resources: RequestedResources,
+        available_resources_per_node: Dict[str, AvailableNodeResources],
     ) -> Optional[str]:
         """Chooses best available node to schedule the required resources.
 
@@ -308,7 +309,6 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
         available node, minimizing fragmentation. Prefers non-idle nodes
         over idle nodes.
         """
-
         node_to_running_replicas = self._get_node_to_running_replicas()
 
         target_compact = None
@@ -531,7 +531,7 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
 
         available_resources_per_node = self._get_available_resources_per_node()
         total_resources_per_node = {
-            node_id: Resources(resources_dict)
+            node_id: AvailableNodeResources(resources_dict)
             for node_id, resources_dict in (
                 self._cluster_node_info_cache.get_total_resources_per_node().items()
             )
@@ -588,14 +588,18 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
                 #    choose the one that has the least number of
                 #    replicas that require migrating.
                 if not node_with_min_replicas or total_resources_per_node.get(
-                    target_node_id, Resources()
-                ) > total_resources_per_node.get(node_with_min_replicas, Resources()):
+                    target_node_id, AvailableNodeResources()
+                ) > total_resources_per_node.get(
+                    node_with_min_replicas, AvailableNodeResources()
+                ):
                     node_with_min_replicas = target_node_id
                     optimal_assignment = assigned_replicas
 
                 elif not node_with_min_replicas or total_resources_per_node.get(
-                    target_node_id, Resources()
-                ) == total_resources_per_node.get(node_with_min_replicas, Resources()):
+                    target_node_id, AvailableNodeResources()
+                ) == total_resources_per_node.get(
+                    node_with_min_replicas, AvailableNodeResources()
+                ):
                     if len(assigned_replicas) < len(
                         self._running_replicas_on_node_id(node_with_min_replicas)
                     ):
