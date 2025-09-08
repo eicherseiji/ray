@@ -534,7 +534,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             # Fallback to default batch size
             return None
 
-        row_group_meta = fragment.metadata.row_group(0)
+        row_group_idx = fragment.row_groups[0].id
+        row_group_meta = fragment.metadata.row_group(row_group_idx)
         row_group_num_rows = row_group_meta.num_rows
 
         if row_group_num_rows == 0:
@@ -576,9 +577,10 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         checkpointed_fragment_info: Optional[CheckpointedFragmentInfo] = None
         if self._generated_id_column and checkpoint_ids is not None:
             assert len(fragment.row_groups) == 1
+            row_group_idx = fragment.row_groups[0].id
             checkpointed_fragment_info = get_checkpointed_fragment_info(
                 fragment=fragment,
-                row_group_idx=fragment.row_groups[0].id,
+                row_group_idx=row_group_idx,
                 checkpointed_ids=checkpoint_ids,
             )
             if checkpointed_fragment_info.fully_checkpointed:
@@ -586,7 +588,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 logger.debug(
                     "Skipping reading fragment %s row group %d because all rows are checkpointed",
                     fragment.path,
-                    fragment.row_groups[0].id,
+                    row_group_idx,
                 )
                 return
             else:
@@ -595,8 +597,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                     "Exclude checkpointed rows from fragment %s, row group %d, "
                     "row count %d, checkpointed row count %d",
                     fragment.path,
-                    fragment.row_groups[0].id,
-                    fragment.metadata.row_group(0).num_rows,
+                    row_group_idx,
+                    fragment.metadata.row_group(row_group_idx).num_rows,
                     checkpointed_fragment_info.checkpointed_row_count,
                 )
 
@@ -643,12 +645,15 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             if self._generated_id_column:
                 # Add generated ID column to the table
                 assert len(fragment.row_groups) == 1
+                row_group_idx = fragment.row_groups[0].id
                 table = table.append_column(
                     self._generated_id_column,
                     get_generated_id_column(
                         path=fragment.path,
-                        row_group_idx=fragment.row_groups[0].id,
-                        total_num_rows=fragment.metadata.row_group(0).num_rows,
+                        row_group_idx=row_group_idx,
+                        total_num_rows=fragment.metadata.row_group(
+                            row_group_idx
+                        ).num_rows,
                         current_row_offset=current_row_offset,
                         current_num_rows=table.num_rows,
                     ),
@@ -678,7 +683,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                         "Excluded %d checkpointed rows from fragment %s, row group %d, range [%d, %d]",
                         num_rows_before_exclude - table.num_rows,
                         fragment.path,
-                        fragment.row_groups[0].id,
+                        row_group_idx,
                         original_offset,
                         original_offset + num_rows_before_exclude - 1,
                     )

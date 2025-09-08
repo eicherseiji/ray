@@ -20,6 +20,7 @@ import numpy as np
 
 import ray
 import ray.cloudpickle as cloudpickle
+from ray._private.ray_constants import env_integer
 from ray.data._internal.arrow_block import ArrowBlockAccessor
 from ray.data._internal.progress_bar import ProgressBar
 from ray.data._internal.remote_fn import cached_remote_fn
@@ -99,6 +100,12 @@ PARQUET_ENCODING_RATIO_ESTIMATE_MAX_NUM_SAMPLES = 10
 # The number of rows to read from each file for sampling. Try to keep it low to avoid
 # reading too much data into memory.
 PARQUET_ENCODING_RATIO_ESTIMATE_NUM_ROWS = 1024
+
+# Set pyarrow.dataset.Fragment.to_batches  batch read ahead to 1 by default. Note that
+# arrow default for to_batches batch read ahead is 16 and has significant memory overhead.
+PARQUET_FRAGMENT_BATCH_READAHEAD = env_integer(
+    "RAY_DATA_PARQUET_FRAGMENT_BATCH_READAHEAD", 1
+)
 
 
 _BATCH_SIZE_PRESERVING_STUB_COL_NAME = "__bsp_stub"
@@ -513,6 +520,7 @@ def _read_batches_from(
     """Get an iterable of batches from a parquet fragment."""
 
     import pyarrow as pa
+    from packaging.version import parse as parse_version
 
     # Copy to avoid modifying passed in arg
     to_batches_kwargs = dict(to_batches_kwargs or {})
@@ -524,6 +532,11 @@ def _read_batches_from(
     # NOTE: Arrow's ``to_batches`` expects ``batch_size`` as an int
     if batch_size is not None:
         to_batches_kwargs.setdefault("batch_size", batch_size)
+
+    if parse_version(pa.__version__) >= parse_version("12.0.0"):
+        to_batches_kwargs.setdefault(
+            "batch_readahead", PARQUET_FRAGMENT_BATCH_READAHEAD
+        )
 
     partition_col_values = _parse_partition_column_values(
         fragment, partition_columns, partitioning
