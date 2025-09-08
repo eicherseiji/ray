@@ -285,7 +285,7 @@ class gRPCReplicaResult(ReplicaResult):
     async def get_async(self):
         if self._fut is None:
             if self._calling_from_same_loop:
-                self._fut = asyncio.create_task(self._get_internal())
+                return await self._get_internal()
             else:
                 self._fut = run_coroutine_threadsafe(
                     self._get_internal(), self._grpc_call_loop
