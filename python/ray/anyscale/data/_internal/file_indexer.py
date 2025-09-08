@@ -1,6 +1,6 @@
 import abc
 import logging
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 from typing import TypedDict, Type, get_type_hints
 
 import math
@@ -10,7 +10,7 @@ from pyarrow.fs import FileSelector, FileSystem, FileType
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
-from ray.data.block import BlockAccessor, BlockColumn
+from ray.data.block import BlockColumn
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
 from ray.data.datasource.partitioning import PathPartitionFilter
 from ray.data.datasource.path_util import (
@@ -18,6 +18,8 @@ from ray.data.datasource.path_util import (
     _resolve_paths_and_filesystem,
 )
 from ray.anyscale.data._internal.util.compression import infer_compression
+from ray._private.ray_constants import env_integer
+
 
 logger = logging.getLogger(__name__)
 
@@ -134,13 +136,20 @@ class LineDelimitedFileChunker(FileChunker):
 class FileIndexer(abc.ABC):
     @abc.abstractmethod
     def list_files(
-        self, paths: "BlockColumn", *, filesystem: "FileSystem"
+        self,
+        paths: "BlockColumn",
+        *,
+        filesystem: "FileSystem",
+        file_extensions: Optional[List[str]] = None,
+        partition_filter: Optional[PathPartitionFilter] = None,
     ) -> Iterable[FileManifest]:
         """List files and their on-disk sizes for the given path.
 
         Args:
             paths: A column of paths pointing to files or directories.
             filesystem: A PyArrow filesystem object.
+            file_extensions: A list of file extensions to filter by.
+            partition_filter: A partition filter to filter by.
 
         Returns:
             An iterator of `FileManifest` objects, each of which contains a file path
@@ -159,7 +168,9 @@ class NonSamplingFileIndexer(FileIndexer):
 
     # This number was chosen because it's the maximum number of paths returned by S3
     # per page when listing a single directory.
-    _MAX_PATHS_PER_LIST_FILES_OUTPUT = 1000
+    _MAX_PATHS_PER_LIST_FILES_OUTPUT = env_integer(
+        "RAY_DATA_MAX_PATHS_PER_LIST_FILES_OUTPUT", 1000
+    )
 
     def __init__(
         self, *, ignore_missing_paths: bool, file_chunker: Optional[FileChunker] = None
@@ -170,11 +181,19 @@ class NonSamplingFileIndexer(FileIndexer):
         )
 
     def list_files(
-        self, paths: "BlockColumn", *, filesystem: "FileSystem"
+        self,
+        paths: "BlockColumn",
+        *,
+        filesystem: "FileSystem",
+        file_extensions: Optional[List[str]] = None,
+        partition_filter: Optional[PathPartitionFilter] = None,
     ) -> Iterable[FileManifest]:
         running_paths = []
         running_file_sizes = []
         running_file_chunk_metadatas = []
+        manifests_count = 0
+        filtered_paths_count = 0
+        file_chunks_count = 0
         for input_path in paths.to_pylist():
             resolved_paths, _ = _resolve_paths_and_filesystem(input_path, filesystem)
             assert len(resolved_paths) == 1
@@ -188,14 +207,20 @@ class NonSamplingFileIndexer(FileIndexer):
                     logger.warning(f"Skipping zero-size file: {path!r}")
                     continue
 
+                # Skip if path doesn't match file extensions or partition filter
+                if filter_file_path(path, file_extensions, partition_filter):
+                    filtered_paths_count += 1
+                    continue
+
                 for chunk_metadata, size in self._file_chunker.generate_chunk_metadatas(
                     path, file_size
                 ):
                     running_paths.append(path)
                     running_file_sizes.append(size)
                     running_file_chunk_metadatas.append(chunk_metadata)
-
+                    file_chunks_count += 1
                     if len(running_paths) >= self._MAX_PATHS_PER_LIST_FILES_OUTPUT:
+                        manifests_count += 1
                         yield FileManifest.construct_manifest(
                             running_paths,
                             running_file_sizes,
@@ -204,11 +229,16 @@ class NonSamplingFileIndexer(FileIndexer):
                         running_paths = []
                         running_file_sizes = []
                         running_file_chunk_metadatas = []
-
         if running_paths:
+            manifests_count += 1
             yield FileManifest.construct_manifest(
-                running_paths, running_file_sizes, running_file_chunk_metadatas
+                running_paths,
+                running_file_sizes,
+                running_file_chunk_metadatas,
             )
+        logger.debug(
+            f"Listing files: filtered {filtered_paths_count} paths, constructed manifests {manifests_count} with {file_chunks_count} file chunks"
+        )
 
 
 def _get_file_infos(
@@ -266,50 +296,23 @@ def _expand_directory(
             raise FileNotFoundError(file_.path)
 
 
-# TODO: Maybe push these down to the `FileIndexer` interface so that `FileIndexer`
-#       implementations can more efficiently filter paths.
-def filter_paths(
-    manifest: FileManifest, filter_fn: Callable[[str], bool]
-) -> FileManifest:
-    """Return a new manifest with only the paths that match the filter.
-
-    Args:
-        manifest: The manifest to filter.
-        filter_fn: A function that takes a path and returns `True` if the path should be
-            included in the new manifest.
-
-    Returns:
-        A new manifest with only the paths that match the filter.
-    """
-    indices = []
-    for i, path in enumerate(manifest.paths):
-        if filter_fn(path):
-            indices.append(i)
-
-    if not indices:
-        # `Table.take` doesn't work if `indices` is empty. So, we explicitly return an
-        # empty manifest.
-        return FileManifest.construct_manifest([], [], [])
-    else:
-        filtered_block = BlockAccessor.for_block(manifest.as_block()).take(indices)
-        return FileManifest(filtered_block)
-
-
-def filter_file_manifest(
-    file_manifest: FileManifest,
+def filter_file_path(
+    path: str,
     file_extensions: Optional[List[str]],
     partition_filter: Optional[PathPartitionFilter],
-) -> FileManifest:
-    # Apply `file_extensions` parameter.
-    if file_extensions is not None:
-        file_manifest = filter_paths(
-            file_manifest,
-            lambda path: _has_file_extension(path, file_extensions),
-        )
+) -> bool:
+    """Checks if a file should be filtered out by file extensions or partition filter.
+    Args:
+        path: The path of the file to check.
+        file_extensions: The file extensions to filter by.
+        partition_filter: The partition filter to filter by.
 
-    # Apply `partition_filter` parameter.
-    if partition_filter is not None:
-        file_manifest = filter_paths(
-            file_manifest, lambda path: partition_filter([path])
-        )
-    return file_manifest
+    Returns:
+        True if the file should be filtered out, False otherwise.
+    """
+    if file_extensions is not None and not _has_file_extension(path, file_extensions):
+        return True
+
+    if partition_filter is not None and not partition_filter([path]):
+        return True
+    return False

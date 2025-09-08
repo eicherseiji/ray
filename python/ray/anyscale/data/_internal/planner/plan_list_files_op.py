@@ -10,7 +10,6 @@ import ray
 from ray.anyscale.data._internal.file_indexer import (
     FileIndexer,
     FileManifest,
-    filter_file_manifest,
 )
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     PATH_COLUMN_NAME,
@@ -149,16 +148,15 @@ def list_files_for_each_block(
 ) -> Iterable[Block]:
     for block in blocks:
         for file_manifest in indexer.list_files(
-            block[PATH_COLUMN_NAME], filesystem=filesystem
+            block[PATH_COLUMN_NAME],
+            filesystem=filesystem,
+            file_extensions=file_extensions,
+            partition_filter=partition_filter,
         ):
-            file_manifest = filter_file_manifest(
-                file_manifest, file_extensions, partition_filter
-            )
-
-            # Don't yield empty manifests. This can happen if rows get filtered out for
-            # `file_extensions` or `partition_filter`.
-            if len(file_manifest) > 0:
-                yield file_manifest.as_block()
+            assert (
+                len(file_manifest) > 0
+            ), "list_files is guaranteed to not return an empty block."
+            yield file_manifest.as_block()
 
 
 def shuffle_files(

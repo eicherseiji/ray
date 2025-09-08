@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
 
-from ray.anyscale.data._internal.file_indexer import filter_file_manifest
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
     ListFiles,
@@ -101,15 +100,13 @@ class ReadFiles(SourceOperator, AbstractMap):
         ):
             paths = pa.array(self.input_dependency.paths)
             gen = self.input_dependency.file_indexer.list_files(
-                paths, filesystem=self.filesystem
+                paths,
+                filesystem=self.filesystem,
+                file_extensions=self.input_dependency.file_extensions,
+                partition_filter=self.input_dependency.partition_filter,
             )
             first_file_manifest = next(gen)
             if first_file_manifest and len(first_file_manifest) > 0:
-                first_file_manifest = filter_file_manifest(
-                    first_file_manifest,
-                    self.input_dependency.file_extensions,
-                    self.input_dependency.partition_filter,
-                )
                 first_file_manifest = FileManifest(
                     BlockAccessor.for_block(first_file_manifest.as_block()).slice(0, 1)
                 )
