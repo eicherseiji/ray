@@ -1,16 +1,16 @@
 import os
-import tempfile
 import subprocess
+import tempfile
 from typing import Tuple
 
 import click
+
 import anyscale
-from anyscale.job.models import JobConfig
 from anyscale.compute_config.models import (
     ComputeConfig,
     HeadNodeConfig,
 )
-
+from anyscale.job.models import JobConfig
 
 _CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
