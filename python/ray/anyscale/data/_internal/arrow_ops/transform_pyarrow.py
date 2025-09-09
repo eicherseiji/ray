@@ -2,10 +2,9 @@ import logging
 from typing import Dict, List, Tuple
 
 import numpy as np
-from polars.exceptions import PolarsError
 import pyarrow as pa
+from polars.exceptions import PolarsError
 
-from ray.util.debug import log_once
 from ray.data._internal.arrow_ops.transform_pyarrow import _hash_partition
 
 logger = logging.getLogger(__name__)
@@ -14,16 +13,11 @@ logger = logging.getLogger(__name__)
 # Try to import numba, fallback to non-JIT implementation if not available
 try:
     import numba as nb
-    from numba import types, int64
+    from numba import int64, types
 
     _NUMBA_AVAILABLE = True
 except ImportError:
     _NUMBA_AVAILABLE = False
-    if log_once("numba_not_available"):
-        logger.warning(
-            "Numba is not available. Falling back to slower Python implementation "
-            "for hash partitioning operations."
-        )
 
 
 def _hash_partition_vectorized(
