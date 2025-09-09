@@ -316,14 +316,6 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
             self._is_direct_ingress and self._autoscaling_config
         ) or super().should_collect_metrics()
 
-    def _filter_tags(
-        self, metric: metrics.Metric, tags: Dict[str, str]
-    ) -> Dict[str, str]:
-        """
-        Filters the tags to only include the ones that are present in the metric's tag_keys.
-        """
-        return {tag: val for tag, val in tags.items() if tag in metric.info["tag_keys"]}
-
     def record_ingress_request_metrics(
         self,
         *,
@@ -340,14 +332,6 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
         if not self._is_direct_ingress:
             return
 
-        tags = {
-            "method": method,
-            "route": route,
-            "application": app_name,
-            "status_code": status_code,
-            "error_code": status_code,
-            "deployment": deployment_name,
-        }
         if protocol == RequestProtocol.HTTP:
             latency_tracker = self.ingress_http_processing_latency_tracker
             request_error_counter = self.ingress_http_request_error_counter
@@ -358,10 +342,26 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
             # https://anyscale1.atlassian.net/browse/SERVE-872
             return
 
-        request_tags = self._filter_tags(request_counter, tags)
-        latency_tags = self._filter_tags(latency_tracker, tags)
-        request_error_tags = self._filter_tags(request_error_counter, tags)
-        deployment_error_tags = self._filter_tags(deployment_error_counter, tags)
+        request_tags = {
+            "route": route,
+            "method": method,
+            "application": app_name,
+            "status_code": status_code,
+        }
+        latency_tags = request_tags
+        request_error_tags = {
+            "route": route,
+            "method": method,
+            "application": app_name,
+            "error_code": status_code,
+        }
+        deployment_error_tags = {
+            "route": route,
+            "method": method,
+            "application": app_name,
+            "error_code": status_code,
+            "deployment": deployment_name,
+        }
 
         if self._cached_metrics_enabled:
             self._cached_ingress_request_counter[protocol][
