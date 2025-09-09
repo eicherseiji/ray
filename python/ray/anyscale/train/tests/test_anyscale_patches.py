@@ -66,7 +66,7 @@ def test_dataset_setup_callback_patch(num_workers, excluded_resources):
         num_workers=num_workers, resources_per_worker={"CPU": 1}
     )
     train_run_context = create_dummy_run_context(
-        datasets={}, dataset_config=None, scaling_config=scaling_config
+        datasets={}, scaling_config=scaling_config
     )
     callback = DatasetsSetupCallback(train_run_context=train_run_context)
     assert callback.get_train_total_resources(scaling_config) == excluded_resources

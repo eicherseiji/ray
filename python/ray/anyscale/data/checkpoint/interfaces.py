@@ -238,12 +238,6 @@ class TrainingIngestCheckpointConfig:
     """Configuration for training ingest checkpointing.
 
     Args:
-        checkpoint_path: Path to store the checkpoint data. It can be a path to a cloud
-            object storage (e.g. `s3://bucket/path`) or a file system path.
-            If the latter, the path must be a network-mounted file system (e.g.
-            `/mnt/cluster_storage/`) that is accessible to the entire cluster.
-            If not set, defaults to `{RunConfig.storage_path}/{RunConfig.name}`
-            configured on the `ray.train` trainer.
         id_column: Name of the ID column in the input dataset.
             ID values must be unique across all rows in the dataset and must persist
             during all operators.
@@ -251,12 +245,22 @@ class TrainingIngestCheckpointConfig:
             Use this when you don't have a pre-existing `id_column` in the input dataset.
             Currently, only Parquet files based data sources are supported for
             auto-generated row IDs feature.
+        checkpoint_path: Path to store the checkpoint data. It can be a path to a cloud
+            object storage (e.g. `s3://bucket/path`) or a file system path.
+            If the latter, the path must be a network-mounted file system (e.g.
+            `/mnt/cluster_storage/`) that is accessible to the entire cluster.
+            If not set, defaults to `{RunConfig.storage_path}/{RunConfig.name}`
+            configured on the `ray.train` trainer.
+        override_filesystem: Override the :class:`pyarrow.fs.FileSystem` object used to
+            read/write checkpoint data. Use this when you want to use custom credentials.
+            If unset, this defaults to the filesystem configured in the `ray.train.RunConfig`
+            passed to the trainer.
     """
 
-    # TODO: Set default checkpoint path to `RunConfig.storage_path/name`.
-    checkpoint_path: str
     id_column: str
     generate_id_column: bool = False
+    checkpoint_path: Optional[str] = None
+    override_filesystem: Optional["pyarrow.fs.FileSystem"] = None
 
     def __post_init__(self):
         if not isinstance(self.id_column, str) or len(self.id_column) == 0:

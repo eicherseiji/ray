@@ -177,6 +177,7 @@ class DatasetManager:
             generated_id_column=generated_id_column,
             checkpoint_path=dataset_checkpoint_config.checkpoint_path,
             checkpoint_path_partition_filter=checkpoint_path_partition_filter,
+            override_filesystem=dataset_checkpoint_config.override_filesystem,
             # Do not delete checkpoint files on success, since users may want to
             # restore from checkpoints of previous epochs.
             delete_checkpoint_on_success=False,

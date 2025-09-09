@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Dict, List
 
 import ray
@@ -11,6 +12,7 @@ from ray.train.v2._internal.data_integration.interfaces import (
     DatasetShardMetadata,
     GenDataset,
 )
+from ray.train.v2._internal.execution.context import TrainRunContext
 from ray.train.v2._internal.execution.worker_group import Worker
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
@@ -73,6 +75,25 @@ class AnyscaleDatasetShardProvider:
 
 
 class DatasetsSetupCallback(RayDatasetsSetupCallback):
+    def __init__(self, train_run_context: TrainRunContext):
+        super().__init__(train_run_context)
+
+        storage_context = train_run_context.run_config.storage_context
+
+        # Update default dataset checkpoint paths/filesystem to the RunConfig settings.
+        dataset_checkpoint_configs = self._data_config.dataset_checkpoint_configs
+        if dataset_checkpoint_configs:
+            for checkpoint_config in dataset_checkpoint_configs.values():
+                if not checkpoint_config.checkpoint_path:
+                    checkpoint_config.checkpoint_path = Path(
+                        storage_context.experiment_fs_path,
+                        "ray_data_checkpoints",
+                    ).as_posix()
+                if not checkpoint_config.override_filesystem:
+                    checkpoint_config.override_filesystem = (
+                        storage_context.storage_filesystem
+                    )
+
     def get_train_total_resources(
         self, scaling_config: ray.train.ScalingConfig
     ) -> Dict[str, float]:

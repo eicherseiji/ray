@@ -1,9 +1,11 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from pyarrow.fs import LocalFileSystem
 import pyarrow.parquet as pq
 import pytest
 
+from ray.anyscale.train._internal.callbacks.datasets import DatasetsSetupCallback
 import ray.data
 import ray.train
 from ray.train import DataConfig, DatasetCheckpointConfig
@@ -11,6 +13,7 @@ import ray.train.collective
 from ray.train.v2.api.data_parallel_trainer import DataParallelTrainer
 
 from ray.train.tests.util import create_dict_checkpoint, load_dict_checkpoint
+from ray.train.v2.tests.util import create_dummy_run_context
 
 
 def _read_checkpoint_files_for_state_dict(
@@ -209,6 +212,64 @@ def test_e2e_with_ray_train(
         ),
     )
     trainer.fit()
+
+
+def test_default_checkpoint_path(tmp_path):
+    """Test that the default checkpoint path is updated to `storage_path/name/ray_data_checkpoints`.
+    The RunConfig(filesystem) should also be taken as the default."""
+    original_ds_ckpt_config = DatasetCheckpointConfig(
+        id_column="id", checkpoint_path=None, override_filesystem=None
+    )
+    fs = LocalFileSystem()
+
+    callback = DatasetsSetupCallback(
+        train_run_context=create_dummy_run_context(
+            run_config=ray.train.RunConfig(
+                storage_path=str(tmp_path), name="test", storage_filesystem=fs
+            ),
+            datasets={"train": MagicMock()},
+            dataset_config=DataConfig(
+                dataset_checkpoint_configs={"train": original_ds_ckpt_config}
+            ),
+        )
+    )
+    updated_ckpt_config = callback._data_config.dataset_checkpoint_configs["train"]
+
+    assert updated_ckpt_config.checkpoint_path == str(
+        tmp_path / "test" / "ray_data_checkpoints"
+    )
+    assert updated_ckpt_config.override_filesystem is fs
+
+    # Original user provided config should not be modified.
+    assert original_ds_ckpt_config.checkpoint_path is None
+    assert original_ds_ckpt_config.override_filesystem is None
+
+
+def test_override_filesystem(tmp_path):
+    """Test that the override_filesystem is taken over the RunConfig(filesystem)."""
+    mock_fs = MagicMock()
+    mock_fs._marker = "dummy"
+
+    original_ds_ckpt_config = DatasetCheckpointConfig(
+        id_column="id", checkpoint_path=None, override_filesystem=mock_fs
+    )
+
+    callback = DatasetsSetupCallback(
+        train_run_context=create_dummy_run_context(
+            run_config=ray.train.RunConfig(storage_path=str(tmp_path), name="test"),
+            datasets={"train": MagicMock()},
+            dataset_config=DataConfig(
+                dataset_checkpoint_configs={"train": original_ds_ckpt_config}
+            ),
+        )
+    )
+    updated_ckpt_config = callback._data_config.dataset_checkpoint_configs["train"]
+
+    # Default checkpoint path should still be set.
+    assert updated_ckpt_config.checkpoint_path == str(
+        tmp_path / "test" / "ray_data_checkpoints"
+    )
+    assert updated_ckpt_config.override_filesystem._marker == "dummy"
 
 
 def test_data_config_validation():

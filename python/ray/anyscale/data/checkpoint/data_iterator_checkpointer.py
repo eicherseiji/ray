@@ -255,10 +255,13 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         super().__init__(world_rank=world_rank, world_size=world_size)
 
         self._id_column = checkpoint_config.id_column
-        # TODO: Handle custom filesystems.
-        self._fs, self._checkpoint_path_unwrapped = pyarrow.fs.FileSystem.from_uri(
-            checkpoint_config.checkpoint_path
-        )
+        if checkpoint_config.override_filesystem:
+            self._fs = checkpoint_config.override_filesystem
+            self._checkpoint_path_unwrapped = checkpoint_config.checkpoint_path
+        else:
+            self._fs, self._checkpoint_path_unwrapped = pyarrow.fs.FileSystem.from_uri(
+                checkpoint_config.checkpoint_path
+            )
 
         self._epoch_idx = 0
         self._latest_committed_checkpoint_idx = -1
