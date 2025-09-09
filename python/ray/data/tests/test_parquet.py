@@ -1146,7 +1146,7 @@ def test_parquet_read_spread(ray_start_cluster, tmp_path, restore_data_context):
 
     # Minimize the block size to prevent Ray Data from reading multiple fragments in a
     # single task.
-    ray.data.DataContext.get_current().target_max_block_size = 1
+    ray.data.DataContext.get_current().max_read_partition_size = 1
     ds = ray.data.read_parquet(data_path)
 
     # Force reads.

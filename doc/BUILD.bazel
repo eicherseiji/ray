@@ -492,6 +492,7 @@ doctest_each(
             "source/data/transforming-data.rst",
             # These tests are currently failing.
             "source/data/working-with-llms.rst",
+            "source/data/working-with-pytorch.rst",
             # These don't contain code snippets.
             "source/data/api/**/*.rst",
         ],

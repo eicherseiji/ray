@@ -22,6 +22,7 @@ from packaging.version import parse as parse_version
 
 import ray
 from ray._private.arrow_utils import get_pyarrow_version
+from ray._private.ray_constants import env_integer
 from ray.data._internal.arrow_block import ArrowBlockAccessor
 from ray.data._internal.progress_bar import ProgressBar
 from ray.data._internal.remote_fn import cached_remote_fn
@@ -102,6 +103,15 @@ PARQUET_ENCODING_RATIO_ESTIMATE_MAX_NUM_SAMPLES = 10
 # The number of rows to read from each file for sampling. Try to keep it low to avoid
 # reading too much data into memory.
 PARQUET_ENCODING_RATIO_ESTIMATE_NUM_ROWS = 1024
+
+# Set pyarrow.dataset.Fragment.to_batches  batch read ahead to 1 by default. Note that
+# arrow default for to_batches batch read ahead is 16 and has significant memory overhead.
+PARQUET_FRAGMENT_BATCH_READAHEAD = env_integer(
+    "RAY_DATA_PARQUET_FRAGMENT_BATCH_READAHEAD", 1
+)
+
+
+_BATCH_SIZE_PRESERVING_STUB_COL_NAME = "__bsp_stub"
 
 
 _BATCH_SIZE_PRESERVING_STUB_COL_NAME = "__bsp_stub"

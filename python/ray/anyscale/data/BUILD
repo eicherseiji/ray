@@ -1,0 +1,121 @@
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//bazel:python.bzl", "py_test_module_list")
+
+py_test_module_list(
+    size = "medium",
+    files = glob(
+        [
+            "tests/test_*.py",
+            "tests/*/test_*.py",
+        ],
+        exclude = [
+            "tests/test_checkpoint.py",
+            "tests/test_snowflake.py",
+            "tests/test_delta.py",
+            "tests/test_cache.py",
+            "tests/test_checkpoint_iter_batches.py",
+            "tests/test_data_iterator_checkpointer.py",
+        ],
+    ),
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
+    name = "test_snowflake",
+    size = "medium",
+    srcs = ["tests/test_snowflake.py"],
+    tags = [
+        "exclusive",
+        "manual",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
+    name = "test_checkpoint",
+    size = "large",
+    srcs = ["tests/test_checkpoint.py"],
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_library(
+    name = "conftest",
+    srcs = ["tests/conftest.py"],
+)
+
+py_test(
+    name = "test_delta",
+    size = "small",
+    srcs = ["tests/test_delta.py"],
+    tags = [
+        "exclusive",
+        "manual",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
+    name = "test_cache",
+    size = "small",
+    srcs = ["tests/test_cache.py"],
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
+    name = "test_checkpoint_iter_batches",
+    size = "medium",
+    srcs = ["tests/test_checkpoint_iter_batches.py"],
+    env = {"RAY_TRAIN_V2_ENABLED": "1"},
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
+    name = "test_data_iterator_checkpointer",
+    size = "small",
+    srcs = ["tests/test_data_iterator_checkpointer.py"],
+    env = {"RAY_TRAIN_V2_ENABLED": "1"},
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)

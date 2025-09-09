@@ -1,10 +1,12 @@
 import abc
 import functools
+import importlib.util
 import itertools
 import logging
 import math
 import threading
 import time
+import warnings
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import (
@@ -158,7 +160,7 @@ class Concat(StatefulShuffleAggregation):
     def finalize(self, partition_id: int) -> Block:
         block = self._partition_block_builders[partition_id].build()
 
-        if self._should_sort:
+        if self._should_sort and len(block) > 0:
             block = block.sort_by([(k, "ascending") for k in self._key_columns])
 
         return block
@@ -429,6 +431,8 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
             target_max_block_size=None,
         )
 
+        self._emit_warning_if_numba_unavailable()
+
         if shuffle_progress_bar_name is None:
             shuffle_progress_bar_name = "Shuffle"
         if finalize_progress_bar_name is None:
@@ -517,6 +521,19 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
         self._health_monitoring_started: bool = False
         self._health_monitoring_start_time: float = 0.0
         self._pending_aggregators_refs: Optional[List[ObjectRef[ActorHandle]]] = None
+
+    def _emit_warning_if_numba_unavailable(self):
+        # NOTE: Ray workers perform the hash partitioning. So, if we emit a warning
+        #       in the hash partitioning code, each worker would repeat the same
+        #       warning, and the output becomes extremely spammy. To avoid this,
+        #       we emit the warning on the driver, even though it's not where the
+        #       fallback occurs.
+        if importlib.util.find_spec("numba") is None:
+            warnings.warn(
+                "Numba isn't available. Install numba>=0.61 to get better performance. "
+                "Falling back to slower Python implementation for hash partitioning "
+                "operations."
+            )
 
     def start(self, options: ExecutionOptions) -> None:
         super().start(options)
