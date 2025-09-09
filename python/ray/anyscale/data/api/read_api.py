@@ -53,8 +53,7 @@ from ray.data._internal.plan import ExecutionPlan
 from ray.data._internal.stats import DatasetStats
 from ray.data._internal.util import RetryingPyFileSystem, _is_local_scheme
 from ray.data.dataset import Dataset
-from ray.data.datasource import Partitioning, PathPartitionFilter
-from ray.data.datasource.parquet_meta_provider import ParquetMetadataProvider
+from ray.data.datasource import Partitioning, PathPartitionFilter, FileMetadataProvider
 from ray.data.datasource.path_util import _resolve_paths_and_filesystem
 from ray.data.read_api import _resolve_parquet_args, _validate_shuffle_arg
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
@@ -869,7 +868,7 @@ def read_delta(
     columns: Optional[List[str]] = None,
     parallelism: int = -1,
     ray_remote_args: Dict[str, Any] = None,
-    meta_provider: Optional[ParquetMetadataProvider] = None,
+    meta_provider: Optional[FileMetadataProvider] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
     partitioning: Optional[Partitioning] = Partitioning("hive"),
     shuffle: Union[Literal["files"], None] = None,
