@@ -79,7 +79,7 @@ ID_COL = "id"
 GENERATED_ID_COL = "row_id"
 
 # Number of rows in the sample data
-SAMPLE_DATA_NUM_ROWS = 5
+SAMPLE_DATA_NUM_ROWS = 10
 
 # Auto-use `restore_data_context` for each test and apply 300-second timeout to all tests.
 pytestmark = [
@@ -129,7 +129,8 @@ def generate_sample_data_parquet(tmp_path):
         )
 
         f_path = os.path.join(f_dir, "sample_data.parquet")
-        df.to_parquet(f_path, row_group_size=SAMPLE_DATA_NUM_ROWS)
+        # Write 3 row groups per file with uneven distribution of rows per row group
+        df.to_parquet(f_path, row_group_size=SAMPLE_DATA_NUM_ROWS // 3)
         return f_dir
 
     return _generate
@@ -694,7 +695,7 @@ def test_recovery_skips_checkpointed_rows(
                 # Extract numeric ID - handle both dict and integer cases
                 if isinstance(id, dict):
                     # Dict case: extract row_id from dict
-                    numeric_id = id["row_id"]
+                    numeric_id = id[ROW_ID_FIELD]
                 else:
                     # Integer case: already a number
                     numeric_id = int(id)
@@ -755,13 +756,45 @@ def test_recovery_skips_checkpointed_rows(
 
     # Handle both integer and dict ID cases
     if generated_id_column is not None:
-        # For generated_id_column, expect dict IDs
-        # Get the actual dicts from the dataset and extract row_ids for comparison
-        actual_row_ids = sorted(
-            [row[id_col]["row_id"] for row in ds_readback.iter_rows()]
+        # For generated_id_column, expect complete dict IDs
+        # Get the actual complete dicts from the dataset
+        actual_dicts = sorted(
+            [row[id_col] for row in ds_readback.iter_rows()],
+            key=lambda d: (d[ROW_GROUP_FIELD], d[ROW_ID_FIELD]),
         )
-        expected_row_ids = sorted(range(max_num_items))
-        assert actual_row_ids == expected_row_ids
+
+        # With multiple row groups, generate expected complete dicts
+        # With SAMPLE_DATA_NUM_ROWS=10 and row_group_size=3,
+        # we get 4 row groups: [3,3,3,1]
+        rows_per_group = SAMPLE_DATA_NUM_ROWS // 3
+        last_group_rows = SAMPLE_DATA_NUM_ROWS % 3
+
+        actual_path_prefix = actual_dicts[0][PATH_PREFIX_FIELD]
+        actual_file_name = actual_dicts[0][FILE_NAME_FIELD]
+
+        # Build list of (row_group_idx, num_rows_in_group) for all row groups
+        row_groups = [(i, rows_per_group) for i in range(rows_per_group)]
+        if last_group_rows > 0:
+            row_groups.append((rows_per_group, last_group_rows))
+
+        # Generate all expected dicts
+        expected_dicts = [
+            {
+                PATH_PREFIX_FIELD: actual_path_prefix,
+                FILE_NAME_FIELD: actual_file_name,
+                ROW_GROUP_FIELD: row_group_idx,
+                NUM_ROWS_FIELD: num_rows_in_group,
+                ROW_ID_FIELD: row_id,
+            }
+            for row_group_idx, num_rows_in_group in row_groups
+            for row_id in range(num_rows_in_group)
+        ]
+
+        expected_dicts = sorted(
+            expected_dicts, key=lambda d: (d[ROW_GROUP_FIELD], d[ROW_ID_FIELD])
+        )
+
+        assert actual_dicts == expected_dicts
     else:
         # For existing id column, expect integer IDs
         actual_output = sorted([row[id_col] for row in ds_readback.iter_rows()])

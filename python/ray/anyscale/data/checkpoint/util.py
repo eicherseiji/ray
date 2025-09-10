@@ -276,9 +276,9 @@ def get_checkpointed_fragment_info(
 
     # Extract the fragment row count
     fragment_row_count = checkpointed_ids_fragment[NUM_ROWS_FIELD][0].as_py()
-    assert fragment_row_count == fragment.metadata.row_group(0).num_rows, (
+    assert fragment_row_count == fragment.metadata.row_group(row_group_idx).num_rows, (
         f"Fragment row count {fragment_row_count} is not equal to the fragment metadata "
-        f"num_rows {fragment.metadata.row_group(0).num_rows}"
+        f"num_rows {fragment.metadata.row_group(row_group_idx).num_rows}"
     )
 
     if checkpointed_row_count == fragment_row_count:
