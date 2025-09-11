@@ -19,7 +19,7 @@ def create_cluster_autoscaler(
         )
 
         return RateBasedClusterAutoscaler.create(
-            topology, resource_manager, execution_id
+            topology, resource_manager, execution_id=execution_id
         )
     elif env_bool("RAY_DATA_ENABLE_RAYTURBO_CLUSTER_AUTOSCALER", True):
         from ray.anyscale.data._internal.cluster_autoscaler import (
