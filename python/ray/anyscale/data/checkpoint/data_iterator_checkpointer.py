@@ -254,6 +254,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
     ):
         super().__init__(world_rank=world_rank, world_size=world_size)
 
+        self._checkpoint_config = checkpoint_config
         self._id_column = checkpoint_config.id_column
         if checkpoint_config.override_filesystem:
             self._fs = checkpoint_config.override_filesystem

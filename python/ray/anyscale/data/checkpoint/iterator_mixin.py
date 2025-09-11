@@ -8,8 +8,9 @@ from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
     RowIDBasedDataIteratorCheckpointer,
 )
 from ray.data._internal.block_batching.iter_batches import BatchIterator
-from ray.data._internal.execution.interfaces import RefBundle
 from ray.data._internal.block_batching.interfaces import Batch
+from ray.data._internal.execution.interfaces import RefBundle
+from ray.data._internal.table_block import TableBlockAccessor
 from ray.data.block import Block, BlockAccessor
 from ray.util.annotations import PublicAPI
 
@@ -59,19 +60,50 @@ class CheckpointingBatchIterator(BatchIterator):
         super().__init__(ref_bundles_iter, **kwargs)
         self._checkpointer = checkpointer
 
+    def _update_batch_with_checkpoint_metadata(self, batch: Batch) -> Batch:
+        """Update the batch with checkpoint metadata.
+
+        Args:
+            batch: The batch to update with checkpoint metadata.
+
+        Returns:
+            An updated batch with the row IDs as metadata and a filtered view of the data
+            without the id column if it was auto-generated.
+        """
+        assert self._checkpointer
+
+        block_accessor = BlockAccessor.for_block(batch.data)
+        assert isinstance(block_accessor, TableBlockAccessor)
+        row_ids = block_accessor.select(columns=[self._checkpointer._id_column])
+
+        # Only filter out the id column if it was auto-generated.
+        filter_id_column = self._checkpointer._checkpoint_config.generate_id_column
+
+        block_data = batch.data
+        if filter_id_column:
+            block_data = block_accessor.select(
+                columns=[
+                    col
+                    for col in block_accessor.column_names()
+                    if col != self._checkpointer._id_column
+                ]
+            )
+
+        batch = dataclasses.replace(
+            batch,
+            data=block_data,
+            metadata=BatchMetadataWithRowIDs(
+                batch_idx=batch.metadata.batch_idx, row_ids=row_ids
+            ),
+        )
+        return batch
+
     def _blocks_to_batches(self, blocks: Iterator[Block]) -> Iterator[Batch]:
         for batch in super()._blocks_to_batches(blocks):
             if self._checkpointer:
-                row_ids = BlockAccessor.for_block(batch.data).select(
-                    columns=[self._checkpointer._id_column]
-                )
-                batch = dataclasses.replace(
-                    batch,
-                    metadata=BatchMetadataWithRowIDs(
-                        batch_idx=batch.metadata.batch_idx, row_ids=row_ids
-                    ),
-                )
-            yield batch
+                yield self._update_batch_with_checkpoint_metadata(batch)
+            else:
+                yield batch
 
     def before_epoch_start(self):
         super().before_epoch_start()

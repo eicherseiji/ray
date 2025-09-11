@@ -112,6 +112,10 @@ def test_e2e_with_ray_train(
 
             seen_ids = []
             for batch in ds_iter.iter_batches(batch_size=batch_size):
+                if generate_id_column:
+                    # The generated id column should be auto-filtered out of the batch.
+                    assert "generated_id" not in batch.keys()
+
                 seen_ids.extend(batch["id"].tolist())
 
                 consumed_batches_this_epoch += 1
