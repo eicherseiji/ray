@@ -5,6 +5,7 @@ import pyarrow as pa
 from ray.anyscale.data._internal.arrow_ops.transform_pyarrow import (
     _hash_partition_vectorized,
     hash_partition_optimized,
+    deepcopy_array,
 )
 
 
@@ -185,3 +186,41 @@ def test_hash_partition_optimized_partition_counts(num_partitions):
     # Total rows should be preserved
     total_rows = sum(partition_table.num_rows for partition_table in result.values())
     assert total_rows == table.num_rows
+
+
+@pytest.mark.parametrize(
+    "chunked",
+    [
+        True,
+        False,
+    ],
+)
+def test_deepcopy_array(chunked):
+    """Test that deepcopy_array creates a new copy of the array
+    and that the original array buffers are not referenced by the copy."""
+    array = (
+        pa.array([1, 2, 3, 4, 5])
+        if chunked
+        else pa.chunked_array([pa.array([1, 2]), pa.array([3, 4, 5])])
+    )
+    copy = deepcopy_array(array)
+
+    def _get_buffer_addresses(array):
+        copy_buffer_addresses = []
+        if isinstance(array, pa.ChunkedArray):
+            for chunk in array.chunks:
+                copy_buffer_addresses.extend(
+                    [buf.address for buf in chunk.buffers() if buf is not None]
+                )
+        else:
+            copy_buffer_addresses = [
+                buf.address for buf in array.buffers() if buf is not None
+            ]
+        return copy_buffer_addresses
+
+    copy_buffer_addresses = _get_buffer_addresses(copy)
+    original_buffer_addresses = _get_buffer_addresses(array)
+
+    # Make sure that none of the original buffer addresses are referenced by the copy.
+    for original_buffer_address in original_buffer_addresses:
+        assert original_buffer_address not in copy_buffer_addresses

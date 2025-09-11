@@ -351,13 +351,18 @@ def test_load_state_dict_equivalence(tmp_path, state_dict):
 
 
 @patch("pyarrow.parquet.write_table", side_effect=RuntimeError("mock error"))
-def test_flush_exception(mock_write_table, tmp_path):
+@pytest.mark.parametrize("when_to_raise", ["periodic", "forced"])
+def test_flush_exception(mock_write_table, tmp_path, when_to_raise):
     """Test that the checkpointer raises an exception if a flush operation fails."""
     checkpointer = RowIDBasedDataIteratorCheckpointer(
         checkpoint_config=DatasetCheckpointConfig(
             checkpoint_path=str(tmp_path), id_column="id"
         )
     )
+    if when_to_raise == "periodic":
+        # Immediately trigger a periodic flush.
+        checkpointer.TARGET_CHECKPOINT_SIZE_BYTES = 0
+
     checkpointer.start_epoch()
 
     checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))

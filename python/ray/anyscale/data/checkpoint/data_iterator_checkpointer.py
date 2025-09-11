@@ -13,6 +13,7 @@ import pyarrow.parquet as pq
 from ray.anyscale.data.checkpoint.interfaces import TrainingIngestCheckpointConfig
 from ray.data.block import Block, BlockAccessor
 from ray.data.context import DataContext
+from ray.anyscale.data._internal.arrow_ops.transform_pyarrow import deepcopy_array
 from ray.data._internal.block_batching.interfaces import Batch, BatchMetadata
 from ray.data._internal.util import call_with_retry
 from ray.data.datasource import PathPartitionFilter, PartitionStyle
@@ -386,31 +387,42 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         staged_row_ids_size_bytes = 0
         staged_row_id_batches: List[pa.Array] = []
 
-        while True:
-            row_ids = self._row_ids_staging_queue.get()
-            if row_ids is None:
-                # Sentinel value `None` indicates that we should force flush any
-                # staged row IDs.
-                if staged_row_id_batches:
+        try:
+            while True:
+                row_ids = self._row_ids_staging_queue.get()
+                if row_ids is None:
+                    # Sentinel value `None` indicates that we should force flush any
+                    # staged row IDs.
+                    if staged_row_id_batches:
+                        self._flush_row_ids(staged_row_id_batches)
+                    staged_row_ids_size_bytes = 0
+                    staged_row_id_batches = []
+                    # Notify the main thread that the flush is complete.
+                    self._flush_completed_event.set()
+                    continue
+
+                row_ids_accessor = BlockAccessor.for_block(row_ids)
+                row_ids_array: pa.ChunkedArray = row_ids_accessor.to_arrow().column(
+                    self._id_column
+                )
+                # Create an independent copy of the row IDs array to allow
+                # garbage collection of the original table.
+                # Without this copy, the original table would be kept
+                # in memory until all batches of row IDs pointing to it are flushed.
+                row_ids_array: pa.Array = deepcopy_array(row_ids_array)
+                size_bytes = row_ids_accessor.size_bytes()
+
+                staged_row_ids_size_bytes += size_bytes
+                staged_row_id_batches.append(row_ids_array)
+                if staged_row_ids_size_bytes >= self.TARGET_CHECKPOINT_SIZE_BYTES:
                     self._flush_row_ids(staged_row_id_batches)
-                staged_row_ids_size_bytes = 0
-                staged_row_id_batches = []
-                # Notify the main thread that the flush is complete.
-                self._flush_completed_event.set()
-                continue
-
-            row_ids_accessor = BlockAccessor.for_block(row_ids)
-            row_ids_array: pa.ChunkedArray = row_ids_accessor.to_arrow().column(
-                self._id_column
-            )
-            size_bytes = row_ids_accessor.size_bytes()
-
-            staged_row_ids_size_bytes += size_bytes
-            staged_row_id_batches.extend(row_ids_array.chunks)
-            if staged_row_ids_size_bytes >= self.TARGET_CHECKPOINT_SIZE_BYTES:
-                self._flush_row_ids(staged_row_id_batches)
-                staged_row_ids_size_bytes = 0
-                staged_row_id_batches = []
+                    staged_row_ids_size_bytes = 0
+                    staged_row_id_batches = []
+        except Exception as e:
+            logger.exception("Internal error in background flush thread:")
+            self._flush_exception = e
+            self._flush_completed_event.set()
+            raise
 
     def _raise_if_flush_failed(self):
         if self._flush_exception:
@@ -427,10 +439,14 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         """
         assert self._flush_thread_initialized, "Flush thread not initialized."
 
+        # The flush thread may have failed from a periodic flush.
+        self._raise_if_flush_failed()
+
         self._flush_completed_event.clear()
         self._row_ids_staging_queue.put(None)
         self._flush_completed_event.wait()
 
+        # The flush thread may have failed from the latest forced flush.
         self._raise_if_flush_failed()
 
     def record_yielded_batch(self, batch: Batch):
@@ -515,6 +531,10 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         )
 
         if _exists_at_fs_path(self._fs, new_checkpoint_dir):
+            logger.info(
+                f"Found an existing directory at {new_checkpoint_dir}. "
+                "Deleting this directory before writing new checkpoint files."
+            )
             _delete_fs_path(self._fs, new_checkpoint_dir)
 
         _create_directory(self._fs, new_checkpoint_dir)

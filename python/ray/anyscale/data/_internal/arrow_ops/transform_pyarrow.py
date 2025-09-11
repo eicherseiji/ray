@@ -1,9 +1,8 @@
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import pyarrow as pa
-from polars.exceptions import PolarsError
 
 from ray.data._internal.arrow_ops.transform_pyarrow import _hash_partition
 
@@ -34,6 +33,7 @@ def _hash_partition_vectorized(
         np.ndarray: Array of hashed values for each row.
     """
     import polars as pl
+    from polars.exceptions import PolarsError
 
     df: pl.DataFrame = pl.from_arrow(
         projected_table, rechunk=False
@@ -165,3 +165,24 @@ def hash_partition_optimized(
     result = {p: reordered.slice(start_offsets[p], int(counts[p])) for p in nz}
 
     return result
+
+
+def deepcopy_array(array: Union[pa.ChunkedArray, pa.Array]) -> pa.Array:
+    """Deepcopy an Arrow array.
+
+    `pa.concat_arrays` copies the input arrays into a new array buffer.
+
+    This utility can be used to sever references to the original buffers
+    and allows them to be freed. See https://github.com/apache/arrow/issues/38806.
+
+    For example, consider a pyarrow table in shared memory that contains many columns.
+    If we keep a column view of the table around as metadata, even though all
+    other columns are no longer referenced, the table would not be freed.
+    If we deepcopy the column instead, the original table can be freed earlier.
+    """
+    chunks = array.chunks if isinstance(array, pa.ChunkedArray) else [array]
+
+    if len(chunks) == 0:
+        return pa.array([], type=array.type)
+
+    return pa.concat_arrays(chunks)
