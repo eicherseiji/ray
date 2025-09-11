@@ -6,7 +6,7 @@ from typing import Dict, List, Set
 from dataclasses import dataclass
 
 import ray
-from ray.data.expressions import col, udf
+from ray.data.expressions import DataType, col, udf
 from ray.data._internal.logical.operators.map_operator import Project
 from ray.data._internal.logical.operators.input_data_operator import InputData
 from ray.data._internal.logical.interfaces import LogicalPlan
@@ -46,15 +46,15 @@ class TestProjectionPushdownTopoSort:
         self.context = DataContext.get_current()
 
         # Create UDFs for testing
-        @udf()
+        @udf(return_dtype=DataType.int64())
         def multiply_by_two(x: pa.Array) -> pa.Array:
             return pc.multiply(x, 2)
 
-        @udf()
+        @udf(return_dtype=DataType.int64())
         def add_one(x: pa.Array) -> pa.Array:
             return pc.add(x, 1)
 
-        @udf()
+        @udf(return_dtype=DataType.float64())
         def divide_by_three(x: pa.Array) -> pa.Array:
             # Convert to float to ensure floating point division
             return pc.divide(pc.cast(x, pa.float64()), 3.0)

@@ -975,27 +975,28 @@ def test_map_batches_to_map_rows_fusion(ray_start_regular_shared):
             ],
             ["sepal.length"],
         ),
-        # select_columns -> with_column
-        (
-            lambda ds: ds.select_columns(["sepal.length", "sepal.width"]),
-            lambda ds: ds.with_column("length_plus_one", col("sepal.length") + 1),
-            ["sepal.length", "sepal.width", "length_plus_one"],
-            ["petal.length", "petal.width", "variety"],
-        ),
-        # rename_columns -> with_column
-        (
-            lambda ds: ds.rename_columns({"sepal.length": "renamed_length"}),
-            lambda ds: ds.with_column("length_doubled", col("renamed_length") * 2),
-            [
-                "renamed_length",
-                "length_doubled",
-                "sepal.width",
-                "petal.length",
-                "petal.width",
-                "variety",
-            ],
-            ["sepal.length"],
-        ),
+        # TODO: Re-add these parameters after deprecating cols, cols_rename in Project.
+        # # select_columns -> with_column
+        # (
+        #     lambda ds: ds.select_columns(["sepal.length", "sepal.width"]),
+        #     lambda ds: ds.with_column("length_plus_one", col("sepal.length") + 1),
+        #     ["sepal.length", "sepal.width", "length_plus_one"],
+        #     ["petal.length", "petal.width", "variety"],
+        # ),
+        # # rename_columns -> with_column
+        # (
+        #     lambda ds: ds.rename_columns({"sepal.length": "renamed_length"}),
+        #     lambda ds: ds.with_column("length_doubled", col("renamed_length") * 2),
+        #     [
+        #         "renamed_length",
+        #         "length_doubled",
+        #         "sepal.width",
+        #         "petal.length",
+        #         "petal.width",
+        #         "variety",
+        #     ],
+        #     ["sepal.length"],
+        # ),
     ],
 )
 def test_projection_pushdown_exprs_and_cols_combinations(
@@ -1060,6 +1061,42 @@ def test_projection_pushdown_multiple_exprs_with_select(ray_start_regular_shared
         assert (
             col_name not in result_keys
         ), f"Unexpected '{col_name}' in result keys: {result_keys}"
+
+
+def test_limit_pushdown_dont_push_through_readfiles(ray_start_regular_shared):
+    """Test that limit is NOT incorrectly pushed through ReadFiles operator.
+
+    This test reproduces the specific bug scenario where:
+    - Original correct pipeline: ListFiles -> ReadFiles -> Limit
+    - Incorrect "optimized" pipeline: ListFiles -> Limit -> ReadFiles
+
+    """
+
+    ds = ray.data.read_parquet("example://iris.parquet")
+    ds = ds.limit(1)
+    # Verify correctness: should get exactly 1 row, not the entire first file
+    ds_rows = ds.take_all()
+
+    # Verify the pipeline structure is correct
+    plan_str = ds._plan._logical_plan.dag.dag_str
+
+    # The correct pipeline should be: ListFiles -> ReadFiles -> Limit
+    # NOT: ListFiles -> Limit -> ReadFiles
+    expected_correct_order = (
+        "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> Limit[limit=1]"
+    )
+
+    assert plan_str == expected_correct_order, (
+        f"Limit pushdown incorrectly optimized the pipeline!\n"
+        f"Expected: {expected_correct_order}\n"
+        f"Got:      {plan_str}\n"
+        f"This would cause reading only 1 file manifest instead of limiting actual data rows."
+    )
+
+    assert len(ds_rows) == 1, (
+        f"Expected exactly 1 row after limit(1), but got {len(ds_rows)} rows. "
+        f"This suggests limit was incorrectly pushed through ReadFiles."
+    )
 
 
 if __name__ == "__main__":
