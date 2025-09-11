@@ -1,6 +1,7 @@
 from dataclasses import fields
-import ray
 
+import ray
+import ray.data.preprocessors as preproc_module
 from ray._private.arrow_utils import get_pyarrow_version
 from ray._private.ray_constants import env_bool
 from ray.anyscale.data._internal.execution.callbacks.insert_issue_detectors import (
@@ -8,7 +9,6 @@ from ray.anyscale.data._internal.execution.callbacks.insert_issue_detectors impo
 )
 from ray.anyscale.data._internal.logging import configure_anyscale_logging
 from ray.anyscale.data._internal.logical.rules import (
-    ApplyLocalLimitRule,
     FuseRepartitionOutputBlocks,
     PredicatePushdown,
     ProjectionPushdown,
@@ -29,14 +29,14 @@ from ray.anyscale.data.api.context_mixin import DataContextMixin
 from ray.anyscale.data.api.dataset_mixin import DatasetMixin
 from ray.anyscale.data.checkpoint.iterator_mixin import DataIteratorMixin
 from ray.anyscale.data.preprocessors import (
+    Categorizer,
     Chain,
+    LabelEncoder,
+    MultiHotEncoder,
+    OneHotEncoder,
     OrdinalEncoder,
     SimpleImputer,
     StandardScaler,
-    OneHotEncoder,
-    MultiHotEncoder,
-    LabelEncoder,
-    Categorizer,
 )
 from ray.data._internal.execution.execution_callback import add_execution_callback
 from ray.data._internal.execution.interfaces.op_runtime_metrics import (
@@ -51,16 +51,12 @@ from ray.data._internal.logical.optimizers import (
 from ray.data._internal.logical.rules.configure_map_task_memory import (
     ConfigureMapTaskMemoryUsingOutputSize,
 )
-import ray.data.preprocessors as preproc_module
-
 
 ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS = env_bool(
     "ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS", True
 )
 
-ANYSCALE_LOCAL_LIMIT_MAP_OPERATOR_ENABLED = env_bool(
-    "ANYSCALE_LOCAL_LIMIT_MAP_OPERATOR_ENABLED", False
-)
+
 ANYSCALE_MAP_TASK_MEMORY_CONFIGURATION_ENABLED = env_bool(
     "ANYSCALE_MAP_TASK_MEMORY_CONFIGURATION_ENABLED", False
 )
@@ -197,8 +193,6 @@ def apply_anyscale_patches():
     logical_ruleset.add(CombineRepartitions)
 
     physical_ruleset = get_physical_ruleset()
-    if ANYSCALE_LOCAL_LIMIT_MAP_OPERATOR_ENABLED:
-        physical_ruleset.add(ApplyLocalLimitRule)
     physical_ruleset.add(RedundantMapTransformPruning)
     physical_ruleset.add(FuseRepartitionOutputBlocks)
     physical_ruleset.add(BatchesToRowsMapTransformPrunning)
