@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Uni
 
 import numpy as np
 
-from ray.anyscale.data._internal.readers.orjson_jsonl_reader import OrjsonJSONLReader
 import ray
 import ray.data.read_api as oss_read_api
 from ray._private.auto_init_hook import wrap_auto_init
@@ -18,7 +17,6 @@ from ray.anyscale.data._internal.file_indexer import (
     LineDelimitedFileChunker,
     NonSamplingFileIndexer,
 )
-from ray.anyscale.data._internal.readers.parquet_reader import ParquetFileChunker
 from ray.anyscale.data._internal.logical.operators.list_files_operator import ListFiles
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
 from ray.anyscale.data._internal.partitioners import (
@@ -43,26 +41,31 @@ from ray.anyscale.data._internal.readers import (
     VideoReader,
     WebDatasetReader,
 )
+from ray.anyscale.data._internal.readers.orjson_jsonl_reader import OrjsonJSONLReader
+from ray.anyscale.data._internal.readers.parquet_reader import ParquetFileChunker
 from ray.anyscale.data.datasource.snowflake_datasource import SnowflakeDatasource
 from ray.data import DataContext, FileShuffleConfig
 from ray.data._internal.datasource.image_datasource import ImageDatasource
 from ray.data._internal.datasource.json_datasource import JSON_FILE_EXTENSIONS
 from ray.data._internal.datasource.numpy_datasource import NumpyDatasource
+from ray.data._internal.datasource.parquet_datasource import (
+    ParquetDatasource,
+    emit_file_extensions_future_warning,
+)
 from ray.data._internal.logical.interfaces import LogicalPlan
 from ray.data._internal.plan import ExecutionPlan
 from ray.data._internal.stats import DatasetStats
 from ray.data._internal.util import RetryingPyFileSystem, _is_local_scheme
 from ray.data.dataset import Dataset
-from ray.data.datasource import Partitioning, PathPartitionFilter, FileMetadataProvider
-from ray.data.datasource.path_util import _resolve_paths_and_filesystem
-from ray.data.read_api import _resolve_parquet_args, _validate_shuffle_arg
-from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
-from ray.util.debug import log_once
-from ray.data.datasource.path_util import _has_file_extension
-from ray.data._internal.datasource.parquet_datasource import (
-    ParquetDatasource,
-    emit_file_extensions_future_warning,
+from ray.data.datasource import FileMetadataProvider, Partitioning, PathPartitionFilter
+from ray.data.datasource.file_meta_provider import _handle_read_os_error
+from ray.data.datasource.path_util import (
+    _has_file_extension,
+    _resolve_paths_and_filesystem,
 )
+from ray.data.read_api import _resolve_parquet_args, _validate_shuffle_arg
+from ray.util.debug import log_once
+from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 if TYPE_CHECKING:
     import pyarrow
@@ -793,7 +796,6 @@ def read_files(
     ray_remote_args: Optional[Dict[str, Any]],
     file_chunker: Optional[FileChunker] = None,
 ) -> Dataset:
-
     if ray_remote_args is None:
         ray_remote_args = {}
 
@@ -803,6 +805,8 @@ def read_files(
     filesystem = RetryingPyFileSystem.wrap(
         filesystem, retryable_errors=DataContext.get_current().retried_io_errors
     )
+
+    _ensure_paths_accessible(paths, filesystem)
 
     if in_memory_size_estimator is None:
         in_memory_size_estimator = SamplingInMemorySizeEstimator(
@@ -972,3 +976,19 @@ def read_delta(
         override_num_blocks=override_num_blocks,
         **arrow_parquet_args,
     )
+
+
+def _ensure_paths_accessible(
+    paths: List[str], filesystem: Optional["pyarrow.fs.FileSystem"] = None
+) -> None:
+    """Validate that the user-provided paths are accessible.
+
+    This runs early to surface clearer errors to the user.
+    """
+    # In the worst case, `paths` is a long list. To ensure this check is efficient,
+    # we only check the first path.
+    path = paths[0]
+    try:
+        filesystem.get_file_info(path)
+    except OSError as e:
+        _handle_read_os_error(e, path)

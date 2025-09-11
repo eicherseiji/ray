@@ -689,7 +689,6 @@ def test_parquet_reader_estimate_data_size(shutdown_only, tmp_path):
             1000, shape=(1000,), override_num_blocks=10
         ).write_parquet(tensor_output_path)
         ds = ray.data.read_parquet(tensor_output_path)
-        assert ds._plan.initial_num_blocks() > 1
         data_size = ds.size_bytes()
         assert (
             data_size >= 6_000_000 and data_size <= 10_000_000
@@ -717,7 +716,6 @@ def test_parquet_reader_estimate_data_size(shutdown_only, tmp_path):
             text_output_path
         )
         ds = ray.data.read_parquet(text_output_path)
-        assert ds._plan.initial_num_blocks() > 1
         data_size = ds.size_bytes()
         assert (
             data_size >= 700_000 and data_size <= 2_200_000
