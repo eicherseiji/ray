@@ -528,6 +528,7 @@ def test_full_dataset_executed_for_non_write(
     """
 
     ctx = ray.data.DataContext.get_current()
+    ctx.default_hash_shuffle_parallelism = 1
     ckpt_path = os.path.join(data_path, "test_checkpoint_output_files")
 
     if generated_id_column is not None:
@@ -1933,6 +1934,7 @@ class TestLoadCheckpointAndProcessGeneratedId:
         )
 
         # load_checkpoint
+        ray.data.DataContext.get_current().default_hash_shuffle_parallelism = 1
         result = filter_instance.load_checkpoint()
         checkpoint_block = ray.get(result)
         assert checkpoint_block.num_rows > 0
@@ -1977,6 +1979,7 @@ class TestLoadCheckpointAndProcessGeneratedId:
         )
 
         # load_checkpoint
+        ray.data.DataContext.get_current().default_hash_shuffle_parallelism = 1
         result = filter_instance.load_checkpoint()
 
         # Verify the checkpoint block structure and sorting
@@ -2009,6 +2012,7 @@ class TestLoadCheckpointAndProcessGeneratedId:
         )
 
         # load_checkpoint
+        ray.data.DataContext.get_current().default_hash_shuffle_parallelism = 1
         result = filter_instance.load_checkpoint()
 
         # Verify the checkpoint block structure and sorting
@@ -2061,6 +2065,7 @@ class TestLoadCheckpointAndProcessGeneratedId:
         )
 
         # load_checkpoint
+        ray.data.DataContext.get_current().default_hash_shuffle_parallelism = 1
         result = filter_instance.load_checkpoint()
 
         # Verify the checkpoint block structure and sorting
@@ -2077,6 +2082,7 @@ class TestLoadCheckpointAndProcessGeneratedId:
         filter_instance = self._create_checkpoint_filter(checkpoint_path, ID_COL, False)
 
         # load_checkpoint
+        ray.data.DataContext.get_current().default_hash_shuffle_parallelism = 1
         result = filter_instance.load_checkpoint()
 
         # Verify the checkpoint block structure and sorting
@@ -2091,6 +2097,7 @@ class TestLoadCheckpointAndProcessGeneratedId:
         )
 
         # load checkpoint
+        ray.data.DataContext.get_current().default_hash_shuffle_parallelism = 1
         result = filter_instance.load_checkpoint()
 
         # Verify the checkpoint block structure and sorting

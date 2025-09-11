@@ -54,6 +54,7 @@ GENERATED_ID_COLUMN_FIELD_NAMES = [
     ROW_ID_FIELD,
 ]
 
+
 # Field indices for GENERATED_ID_COLUMN_TYPE struct
 class GeneratedIdFieldIndex(IntEnum):
     PATH_PREFIX = 0

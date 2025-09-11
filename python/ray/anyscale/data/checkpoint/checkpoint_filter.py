@@ -389,16 +389,14 @@ class GeneratedIdColumnCheckpointLoader(CheckpointLoader):
         Returns:
             The pre-processed checkpoint dataset
         """
-        # Set shuffle strategy to hash shuffle for groupby
-        data_context = DataContext.get_current()
-        data_context._shuffle_strategy = ShuffleStrategy.HASH_SHUFFLE
-
         # Map batches to extract grouping fields.
         checkpoint_ds = checkpoint_ds.map_batches(
             self._extract_grouping_fields,
             batch_format="pyarrow",
             batch_size=None,
         )
+        # Set shuffle strategy to hash shuffle for groupby
+        checkpoint_ds.context._shuffle_strategy = ShuffleStrategy.HASH_SHUFFLE
 
         # Group by path_prefix, file_name, and row_group
         checkpoint_ds = checkpoint_ds.groupby(
