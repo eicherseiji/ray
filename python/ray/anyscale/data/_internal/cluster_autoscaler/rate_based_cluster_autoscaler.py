@@ -29,7 +29,8 @@ from ray.data._internal.execution.operators.hash_shuffle import (
 from ray.util.metrics import Gauge
 
 if TYPE_CHECKING:
-    from ray.data._internal.execution.streaming_executor import StreamingExecutor
+    from ray.data._internal.execution.resource_manager import ResourceManager
+    from ray.data._internal.execution.streaming_executor_state import Topology
 
 logger = getLogger(__name__)
 
@@ -163,25 +164,27 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         self._send_resource_request([])
 
     @classmethod
-    def for_executor(
-        cls, executor: "StreamingExecutor"
+    def create(
+        cls,
+        topology: "Topology",
+        resource_manager: "ResourceManager",
+        *,
+        execution_id: str,
     ) -> "RateBasedClusterAutoscaler":
-        """Create a cluster autoscaler for an executor.
+        """Create a cluster autoscaler.
 
         This logic is defined here to minimize the risk of merge conflicts in the
         streaming executor, and keep the `ray.data._internal.cluster_autoscaler`
         `__init__` file small.
         """
-        scalable_ops = [
-            op for op in executor._topology if cls._is_eligible_for_scaling(op)
-        ]
+        scalable_ops = [op for op in topology if cls._is_eligible_for_scaling(op)]
         productivity_calculator = NormalizedThroughputCalculator(
             scalable_ops,
-            executor._resource_manager,
+            resource_manager,
         )
         return RateBasedClusterAutoscaler(
             scalable_ops,
-            execution_id=executor._dataset_id,
+            execution_id=execution_id,
             productivity_calculator=productivity_calculator,
         )
 
