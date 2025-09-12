@@ -120,6 +120,10 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
                 for op in valid_ops
             ]
         )
+        assert np.isfinite(rate_per_op).all() and np.all(rate_per_op > 0), (
+            op,
+            rate_per_op,
+        )
         num_cpus_per_op = np.array(
             [op.per_task_resource_allocation().cpu for op in valid_ops]
         )
@@ -147,7 +151,20 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
         # Overall max throughput (bottleneck).
         optimal_rate: float = min(max_cpu_rate, max_gpu_rate)
 
+        # If all operators don't use any logical resources, or if there aren't enough
+        # resources to run the pipeline, then split the processor resources equally.
+        # These edge cases are unlikely.
+        if math.isinf(optimal_rate) or optimal_rate == 0:
+            global_processor_limits = global_limits.copy(
+                memory=0, object_store_memory=0
+            )
+            return global_processor_limits.scale(1 / len(valid_ops))
+
         optimal_num_tasks_per_op = optimal_rate / rate_per_op
+        assert np.isfinite(optimal_num_tasks_per_op).all(), (
+            op,
+            optimal_num_tasks_per_op,
+        )
 
         # Calculate what percent of resources each operator would use assuming each
         # operator uses only their optimal number of tasks.
@@ -181,7 +198,6 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
             max_gpu_num_tasks = float("inf")
 
         max_num_tasks = min(max_cpu_num_tasks, max_gpu_num_tasks)
-        assert not math.isinf(max_num_tasks), (op, allocation, per_task_resources)
 
         # Some operators enforce a maximum number of concurrent tasks. For example, if
         # the user specifies `concurrency` in `map_batches`.

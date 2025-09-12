@@ -1,5 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+from unittest.mock import MagicMock
+
+import pytest
 
 from ray.anyscale.air._internal.autoscaling_coordinator import (
     FakeAutoscalingCoordinator,
@@ -10,10 +13,17 @@ from ray.anyscale.data._internal.cluster_autoscaler import (
     NormalizedThroughputCalculator,
     ProductivityCalculator,
     RateBasedClusterAutoscaler,
+    RayTurboClusterAutoscaler,
     SupportsClusterAutoscaling,
+)
+from ray.data._internal.cluster_autoscaler import (
+    CLUSTER_AUTOSCALER_ENV_KEY,
+    DefaultClusterAutoscaler,
+    create_cluster_autoscaler,
 )
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.execution_options import ExecutionResources
+from ray.data._internal.execution.resource_manager import ResourceManager
 
 
 class StubProductivityCalculator(ProductivityCalculator):
@@ -166,3 +176,42 @@ class TestNormalizedThroughputCalculator:
             productivity1,
             productivity2,
         )
+
+
+def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):
+    monkeypatch.setenv(CLUSTER_AUTOSCALER_ENV_KEY, "invalid")
+
+    with pytest.raises(ValueError):
+        create_cluster_autoscaler(
+            topology={},
+            resource_manager=MagicMock(spec=ResourceManager),
+            execution_id="test",
+        )
+
+
+@pytest.mark.parametrize(
+    "cluster_autoscaler_env_value, expected_autoscaler_type",
+    [
+        ("RAYTURBO", RateBasedClusterAutoscaler),
+        ("RAYTURBO_LEGACY", RayTurboClusterAutoscaler),
+        ("OSS", DefaultClusterAutoscaler),
+    ],
+)
+def test_cluster_autoscaler_env_value_creates_correct_autoscaler(
+    monkeypatch, cluster_autoscaler_env_value, expected_autoscaler_type
+):
+    monkeypatch.setenv(CLUSTER_AUTOSCALER_ENV_KEY, cluster_autoscaler_env_value)
+
+    autoscaler = create_cluster_autoscaler(
+        topology={},
+        resource_manager=MagicMock(spec=ResourceManager),
+        execution_id="test",
+    )
+
+    assert isinstance(autoscaler, expected_autoscaler_type)
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(pytest.main(["-sv", __file__]))
