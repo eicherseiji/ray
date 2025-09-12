@@ -1205,6 +1205,8 @@ class AnyscaleReplica(ReplicaBase):
         )
 
         if not self._can_accept_request(request_metadata):
+            # NOTE(abrar): its possible that we drop more requests than actual max_queued_requests
+            # because between incrementing and decrementing the queued requests, we yield to the event loop.
             for msg in convert_object_to_asgi_messages(
                 "Request dropped due to backpressure",
                 status_code=503,

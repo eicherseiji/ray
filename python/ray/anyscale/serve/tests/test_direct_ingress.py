@@ -1106,7 +1106,7 @@ class TestDirectIngressBackpressure:
         for _do_request in [self._do_grpc_request, self._do_http_request]:
             url = grpc_url if _do_request == self._do_grpc_request else http_url
             num_requests = 5
-            with ThreadPoolExecutor(num_requests) as tpe:
+            with ThreadPoolExecutor(num_requests + 5) as tpe:
                 # Submit `max_ongoing_requests` blocking requests.
                 futures = [tpe.submit(_do_request, url) for _ in range(num_requests)]
                 wait_for_condition(
@@ -1119,6 +1119,11 @@ class TestDirectIngressBackpressure:
                 queued_requests = [
                     tpe.submit(_do_request, url) for _ in range(num_requests + 5)
                 ]
+                wait_for_condition(
+                    lambda: ray.get(wait_signal.cur_num_waiters.remote())
+                    == num_requests
+                )
+                assert all(not f.done() for f in queued_requests)
 
                 # Unblock the requests, check they finish successfully.
                 ray.get(wait_signal.send.remote())
@@ -1147,9 +1152,12 @@ class TestDirectIngressBackpressure:
             url = grpc_url if _do_request == self._do_grpc_request else http_url
             num_requests = 1000
             with ThreadPoolExecutor(num_requests) as tpe:
-                futures = [tpe.submit(_do_request, url) for _ in range(num_requests)]
+                futures = [tpe.submit(_do_request, url) for _ in range(1)]
                 wait_for_condition(
                     lambda: ray.get(signal.cur_num_waiters.remote()) == 1
+                )
+                futures.extend(
+                    [tpe.submit(_do_request, url) for _ in range(num_requests - 1)]
                 )
                 ray.get(signal.send.remote())
                 wait_for_condition(
@@ -1176,9 +1184,12 @@ class TestDirectIngressBackpressure:
             url = grpc_url if _do_request == self._do_grpc_request else http_url
             num_requests = 1000
             with ThreadPoolExecutor(num_requests) as tpe:
-                futures = [tpe.submit(_do_request, url) for _ in range(num_requests)]
+                futures = [tpe.submit(_do_request, url) for _ in range(10)]
                 wait_for_condition(
                     lambda: ray.get(signal.cur_num_waiters.remote()) == 10
+                )
+                futures.extend(
+                    [tpe.submit(_do_request, url) for _ in range(num_requests - 10)]
                 )
 
                 def _func():
@@ -1218,20 +1229,27 @@ class TestDirectIngressBackpressure:
             http_futures = []
             grpc_futures = []
             http_futures.extend(
+                [tpe.submit(self._do_http_request, http_url) for _ in range(5)]
+            )
+            grpc_futures.extend(
+                [tpe.submit(self._do_grpc_request, grpc_url) for _ in range(5)]
+            )
+
+            # Wait for ongoing requests to block (should be 10 total across both protocols)
+            wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 5)
+
+            http_futures.extend(
                 [
                     tpe.submit(self._do_http_request, http_url)
-                    for _ in range(num_requests // 2)
+                    for _ in range((num_requests // 2) - 5)
                 ]
             )
             grpc_futures.extend(
                 [
                     tpe.submit(self._do_grpc_request, grpc_url)
-                    for _ in range(num_requests // 2)
+                    for _ in range((num_requests // 2) - 5)
                 ]
             )
-
-            # Wait for ongoing requests to block (should be 10 total across both protocols)
-            wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 5)
 
             def _func():
                 # Only check results for futures that are actually done
@@ -1278,12 +1296,17 @@ class TestDirectIngressBackpressure:
         num_requests = 100
         with ThreadPoolExecutor(num_requests) as tpe:
             # Submit requests to create backpressure
-            futures = [
-                tpe.submit(self._do_http_request, http_url) for _ in range(num_requests)
-            ]
+            futures = [tpe.submit(self._do_http_request, http_url) for _ in range(1)]
 
             # Wait for backpressure
             wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 1)
+
+            futures.extend(
+                [
+                    tpe.submit(self._do_http_request, http_url)
+                    for _ in range(num_requests - 1)
+                ]
+            )
 
             # Health check should still pass during backpressure
             hc_response = httpx.get(f"{http_url}/-/healthz")
@@ -1374,31 +1397,22 @@ class TestDirectIngressBackpressure:
             url1 = http_url_1 if do_request == self._do_http_request else grpc_url_1
             url2 = http_url_2 if do_request == self._do_http_request else grpc_url_2
             num_requests = 20
-            is_grpc = do_request == self._do_grpc_request
             with ThreadPoolExecutor(num_requests) as tpe:
                 # Saturate deployment-1 (should cause backpressure)
-                futures_1 = [
-                    tpe.submit(do_request, url1)
-                    if not is_grpc
-                    else tpe.submit(do_request, url1)
-                    for _ in range(num_requests // 2)
-                ]
-
-                # Submit to deployment-2 (should not be affected by deployment-1's backpressure)
-                futures_2 = [
-                    tpe.submit(do_request, url2)
-                    if not is_grpc
-                    else tpe.submit(do_request, url2)
-                    for _ in range(num_requests // 2)
-                ]
+                futures_1 = [tpe.submit(do_request, url1) for _ in range(1)]
 
                 # Wait for both to have ongoing requests
                 wait_for_condition(
                     lambda: ray.get(signal1.cur_num_waiters.remote()) == 1
                 )
+                futures_1.extend([tpe.submit(do_request, url1) for _ in range(9)])
+
+                # Submit to deployment-2 (should not be affected by deployment-1's backpressure)
+                futures_2 = [tpe.submit(do_request, url2) for _ in range(5)]
                 wait_for_condition(
                     lambda: ray.get(signal2.cur_num_waiters.remote()) == 5
                 )
+                futures_2.extend([tpe.submit(do_request, url2) for _ in range(5)])
 
                 def _func():
                     # deployment-1 should have rejected requests
@@ -1526,12 +1540,16 @@ class TestDirectIngressBackpressure:
 
         num_requests = 100
         with ThreadPoolExecutor(num_requests) as tpe:
-            futures = [
-                tpe.submit(httpx.get, http_url, timeout=0.5)
-                for _ in range(num_requests)
-            ]
+            futures = [tpe.submit(httpx.get, http_url, timeout=0.5) for _ in range(1)]
 
             wait_for_condition(lambda: ray.get(signal.cur_num_waiters.remote()) == 1)
+
+            futures.extend(
+                [
+                    tpe.submit(httpx.get, http_url, timeout=0.5)
+                    for _ in range(num_requests - 1)
+                ]
+            )
 
             # wait for all futures to fail with a timeout
             def _func():
@@ -1570,20 +1588,16 @@ class TestDirectIngressBackpressure:
 
         num_requests = 20
         with ThreadPoolExecutor(num_requests) as tpe:
-            futures = [
-                tpe.submit(httpx.get, http_url, timeout=None)
-                for _ in range(num_requests)
-            ]
+            futures = [tpe.submit(httpx.get, http_url, timeout=10) for _ in range(10)]
+            wait_for_condition(
+                lambda: ray.get(signal.cur_num_waiters.remote()) == 10, timeout=10
+            )
 
-            def _func():
-                count = ray.get(signal.cur_num_waiters.remote())
-                assert count == 10
-                return True
-
-            wait_for_condition(_func, timeout=10)
+            # Submit the remaining requests
+            futures = [tpe.submit(httpx.get, http_url, timeout=10) for _ in range(10)]
 
             serve.delete("app-1", _blocking=False)
-            # send the signal
+            # send the signal to unblock all requests
             ray.get(signal.send.remote())
 
             # wait for all requests to finish

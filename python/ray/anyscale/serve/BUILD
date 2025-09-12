@@ -2,7 +2,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load("//bazel:python.bzl", "py_test_module_list")
 
 py_test_module_list(
-    size = "medium",
+    size = "large",
     data = glob(["tests/fixtures/*.*"]),
     env = {"ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S": "1"},
     files = glob(
@@ -70,7 +70,7 @@ py_test_module_list(
 )
 
 py_test_module_list(
-    size = "medium",
+    size = "large",
     data = glob(["tests/fixtures/*.*"]),
     files = [
         "tests/test_direct_ingress.py",
@@ -104,7 +104,7 @@ py_test_module_list(
 )
 
 py_test_module_list(
-    size = "medium",
+    size = "large",
     data = glob(["tests/fixtures/*.*"]),
     env = {"ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT": "1"},
     files = [
