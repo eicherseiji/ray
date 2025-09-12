@@ -48,7 +48,7 @@ class TextReader(NativeFileReader):
         metadata: Any = None,
     ) -> Iterable[DataBatch]:
         builder = BlockOutputBuffer(
-            OutputBlockSizeOption(target_max_block_size=self._target_max_block_size)
+            OutputBlockSizeOption.of(target_max_block_size=self._target_max_block_size)
         )
 
         buffer = bytearray()

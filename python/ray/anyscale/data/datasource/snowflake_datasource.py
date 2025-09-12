@@ -90,7 +90,7 @@ def _create_read_fn(
     def read_fn() -> Iterable[Block]:
         ctx = DataContext.get_current()
         output_buffer = BlockOutputBuffer(
-            OutputBlockSizeOption(target_max_block_size=ctx.target_max_block_size)
+            OutputBlockSizeOption.of(target_max_block_size=ctx.target_max_block_size)
         )
         for result_batch in result_batches_split:
             block = result_batch.to_arrow()

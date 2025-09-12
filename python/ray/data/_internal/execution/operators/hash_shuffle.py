@@ -428,7 +428,6 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
             name=name,
             input_dependencies=input_ops,
             data_context=data_context,
-            target_max_block_size=None,
         )
 
         self._emit_warning_if_numba_unavailable()

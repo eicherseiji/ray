@@ -26,7 +26,7 @@ def _read_complete_file(
     """Read the entire file as a stream. This is a fallback for when the file is not seekable."""
     ctx = DataContext.get_current()
     builder = BlockOutputBuffer(
-        OutputBlockSizeOption(target_max_block_size=ctx.target_max_block_size)
+        OutputBlockSizeOption.of(target_max_block_size=ctx.target_max_block_size)
     )
 
     buffer = bytearray()
@@ -118,7 +118,7 @@ def _read_file_chunk(
     assert f.seekable(), "File must be seekable to be read in chunks."
     ctx = DataContext.get_current()
     buf = BlockOutputBuffer(
-        OutputBlockSizeOption(target_max_block_size=ctx.target_max_block_size)
+        OutputBlockSizeOption.of(target_max_block_size=ctx.target_max_block_size)
     )
 
     chunk_byte_start_idx, chunk_byte_end_idx = (

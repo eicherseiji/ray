@@ -7,13 +7,11 @@ from ray.anyscale.data.checkpoint.util import (
 )
 from ray.data import DataContext
 from ray.data._internal.execution.interfaces import PhysicalOperator
-from ray.data._internal.execution.operators.map_operator import MapOperator
 from ray.data._internal.execution.operators.map_transformer import (
     BlockMapTransformFn,
-    MapTransformFn,
-    MapTransformFnDataType,
 )
 from ray.data._internal.logical.operators.read_operator import Read
+from ray.data._internal.output_buffer import OutputBlockSizeOption
 from ray.data._internal.planner.plan_read_op import plan_read_op
 from ray.anyscale.data._internal.readers.parquet_reader import ParquetReader
 from ray import ObjectRef
@@ -35,37 +33,25 @@ def plan_read_op_with_checkpoint_filter(
         )
 
     physical_op = plan_read_op(op, physical_children, data_context)
-    _insert_filter_transform_fn(physical_op, data_context, load_checkpoint)
-    return physical_op
 
-
-def _insert_filter_transform_fn(
-    physical_op: MapOperator,
-    data_context: DataContext,
-    load_checkpoint: Optional[Callable[[], ObjectRef]],
-) -> MapOperator:
-    transform_fns: List[
-        MapTransformFn
-    ] = physical_op._map_transformer.get_transform_fns().copy()
-    assert transform_fns[0].output_type == MapTransformFnDataType.Block
-    assert transform_fns[1].input_type == MapTransformFnDataType.Block
-
-    # Insert the MapTransform directly after read transform:
-    # BlockMapTransformFn(do_read)
-    # -> BlockMapTransformFn(filter_checkpointed_rows_for_blocks)
-    # -> BlocksToBatchesMapTransformFn() -> ...
-    transform_fns.insert(
-        1,
-        BlockMapTransformFn(
-            functools.partial(
-                filter_checkpointed_rows_for_blocks,
-                checkpoint_config=data_context.checkpoint_config,
-            )
-        ),
+    # TODO avoid modifying in-place
+    physical_op._map_transformer.add_transform_fns(
+        [
+            BlockMapTransformFn(
+                functools.partial(
+                    filter_checkpointed_rows_for_blocks,
+                    checkpoint_config=data_context.checkpoint_config,
+                ),
+                output_block_size_option=OutputBlockSizeOption.of(
+                    target_max_block_size=data_context.target_max_block_size,
+                ),
+            ),
+        ]
     )
-    physical_op._map_transformer.set_transform_fns(transform_fns)
 
     if load_checkpoint is not None:
         physical_op.add_map_task_kwargs_fn(
             lambda: {CHECKPOINTED_IDS_KWARG_NAME: load_checkpoint()}
         )
+
+    return physical_op

@@ -62,7 +62,10 @@ class PushdownCountFiles(Rule):
         list_files.file_indexer._file_chunker = WholeFileChunker()
 
         def count_rows(batch: DataBatch) -> DataBatch:
+            import pyarrow as pa
+
             assert PATH_COLUMN_NAME in batch.column_names, batch.column_names
+
             block_metadata_generator = read_files.reader.read_metadata(
                 FileManifest(batch),
                 filesystem=read_files.filesystem,
@@ -70,7 +73,8 @@ class PushdownCountFiles(Rule):
             total_rows = 0
             for block_metadata in block_metadata_generator:
                 total_rows += block_metadata.num_rows
-            return {Count.COLUMN_NAME: [total_rows]}
+
+            return pa.table({Count.COLUMN_NAME: pa.array([total_rows])})
 
         count_rows_op = MapBatches(
             list_files,

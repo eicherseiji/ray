@@ -7,17 +7,10 @@ import pytest
 
 import ray
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
-from ray.anyscale.data._internal.logical.rules.map_fusion import (
-    BatchesToRowsTransformFn,
-    BatchesToBlocksMapTransformFn,
-)
 from ray.data import Dataset, DataContext
 from ray.data._internal.execution.operators.map_transformer import (
     BatchMapTransformFn,
     BlockMapTransformFn,
-    BlocksToBatchesMapTransformFn,
-    BlocksToRowsMapTransformFn,
-    BuildOutputBlocksMapTransformFn,
     MapTransformFn,
     RowMapTransformFn,
 )
@@ -610,7 +603,8 @@ def match_transform_fns(
 
 def match_ds_result(ds: Dataset, expected_output: List[int]) -> bool:
     output = [item["id"] for item in ds.take_all()]
-    return output == expected_output
+    assert output == expected_output, f"{output} == {expected_output}"
+    return True
 
 
 def test_pushdown_rename_filter(ray_start_regular_shared):
@@ -736,7 +730,7 @@ def test_pushdown_rename_filter_rename_filter_rename(ray_start_regular_shared):
 
 
 def test_map_batches_transformer_fusion(ray_start_regular_shared):
-    """Test removal of redundant Batch to Block transformations."""
+    """Test fusion of multiple map_batches transformations."""
     ds = (
         ray.data.range(5)
         .map_batches(column_udf("id", lambda x: x + 1))
@@ -747,22 +741,17 @@ def test_map_batches_transformer_fusion(ray_start_regular_shared):
     )
     plan = get_execution_plan(ds._plan._logical_plan)
     fns = plan.dag.get_map_transformer().get_transform_fns()
+    # With the new fusion architecture, all BatchMapTransformFn are fused into one
     expected_fns = [
         BlockMapTransformFn,
-        BlocksToBatchesMapTransformFn,
-        BatchMapTransformFn,
-        BatchMapTransformFn,
-        BatchMapTransformFn,
-        BatchMapTransformFn,
-        BatchMapTransformFn,
-        BuildOutputBlocksMapTransformFn,
+        BatchMapTransformFn,  # All 5 batch transforms fused into one
     ]
     assert match_transform_fns(expected_fns, fns)
     assert match_ds_result(ds, [15, 16, 17, 18, 19])
 
 
 def test_repartition_build_output(ray_start_regular_shared):
-    """Test repartition emitting BuildOutputBlocksMapTransformFn with target_num_rows_per_block"""
+    """Test repartition with target_num_rows_per_block"""
     target_num_rows_per_block = 4
     ds = ray.data.range(20).repartition(
         target_num_rows_per_block=target_num_rows_per_block
@@ -770,19 +759,16 @@ def test_repartition_build_output(ray_start_regular_shared):
     plan = get_execution_plan(ds._plan._logical_plan)
     fns = plan.dag.get_map_transformer().get_transform_fns()
     expected_fns = [
-        BuildOutputBlocksMapTransformFn,
+        BlockMapTransformFn,
     ]
     assert match_transform_fns(expected_fns, fns)
-    repartition_build_output_fn = fns[-1]
-    assert (
-        repartition_build_output_fn.target_num_rows_per_block
-        == target_num_rows_per_block
-    )
+    repartition_fn = fns[-1]
+    assert repartition_fn.target_num_rows_per_block == target_num_rows_per_block
     assert match_ds_result(ds, list(range(20)))
 
 
 def test_repartition_fusion_build_output(ray_start_regular_shared):
-    """Test repartition fusion of BuildOutputBlocksMapTransformFn for target_num_rows_per_block"""
+    """Test repartition fusion with target_num_rows_per_block"""
     target_num_rows_per_block = 20
     ds = (
         ray.data.range(20)
@@ -804,19 +790,16 @@ def test_repartition_fusion_build_output(ray_start_regular_shared):
 
     fns = plan.dag.get_map_transformer().get_transform_fns()
     expected_fns = [
-        BuildOutputBlocksMapTransformFn,
+        BlockMapTransformFn,
     ]
     assert match_transform_fns(expected_fns, fns)
-    repartition_build_output_fn = fns[-1]
-    assert (
-        repartition_build_output_fn.target_num_rows_per_block
-        == target_num_rows_per_block
-    )
+    repartition_fn = fns[-1]
+    assert repartition_fn.target_num_rows_per_block == target_num_rows_per_block
     assert match_ds_result(ds, list(range(20)))
 
 
 def test_map_batches_transformer_non_fusion(ray_start_regular_shared):
-    """Test non-removal of redundant Batch to Block transformations."""
+    """Test that map_batches with different batch sizes are not fused."""
     ds = (
         ray.data.range(5)
         .map_batches(column_udf("id", lambda x: x + 1), batch_size=1)
@@ -837,29 +820,20 @@ def test_map_batches_transformer_non_fusion(ray_start_regular_shared):
 
     fns = plan.dag.input_dependencies[0].get_map_transformer().get_transform_fns()
 
+    # With new architecture, BatchMapTransformFn with different batch_sizes cannot fuse
     expected_fns = [
-        BlocksToBatchesMapTransformFn,
-        BatchMapTransformFn,
-        BatchesToBlocksMapTransformFn,
-        BlocksToBatchesMapTransformFn,
-        BatchMapTransformFn,
-        BatchesToBlocksMapTransformFn,
-        BlocksToBatchesMapTransformFn,
-        BatchMapTransformFn,
-        BatchesToBlocksMapTransformFn,
-        BlocksToBatchesMapTransformFn,
-        BatchMapTransformFn,
-        BatchesToBlocksMapTransformFn,
-        BlocksToBatchesMapTransformFn,
-        BatchMapTransformFn,
-        BuildOutputBlocksMapTransformFn,
+        BatchMapTransformFn,  # batch_size=1
+        BatchMapTransformFn,  # batch_size=2
+        BatchMapTransformFn,  # batch_size=1
+        BatchMapTransformFn,  # batch_size=2
+        BatchMapTransformFn,  # batch_size=1
     ]
     assert match_transform_fns(expected_fns, fns)
     assert match_ds_result(ds, [15, 16, 17, 18, 19])
 
 
 def test_map_rows_transformer_fusion(ray_start_regular_shared):
-    """Test removal of redundant Row to Block transformations."""
+    """Test fusion of multiple map row transformations."""
 
     ds = (
         ray.data.range(5)
@@ -872,15 +846,10 @@ def test_map_rows_transformer_fusion(ray_start_regular_shared):
 
     plan = get_execution_plan(ds._plan._logical_plan)
     fns = plan.dag.get_map_transformer().get_transform_fns()
+    # With new architecture, all RowMapTransformFn are fused into one
     expected_fns = [
-        BlockMapTransformFn,
-        BlocksToRowsMapTransformFn,
-        RowMapTransformFn,
-        RowMapTransformFn,
-        RowMapTransformFn,
-        RowMapTransformFn,
-        RowMapTransformFn,
-        BuildOutputBlocksMapTransformFn,
+        BlockMapTransformFn,  # ReadRange
+        RowMapTransformFn,  # All 5 row transforms fused into one
     ]
     assert match_transform_fns(expected_fns, fns)
     assert match_ds_result(ds, [15, 16, 17, 18, 19])
@@ -934,18 +903,16 @@ def test_read_files_fusion(ray_start_regular_shared, data_context_override):
 
 
 def test_map_batches_to_map_rows_fusion(ray_start_regular_shared):
-    """Test removing unnecessary BuildOutputBlocksMapTransformFn when fusing
-    map_batches() and map()."""
+    """Test fusion of map_batches() and map() operations."""
     ds = ray.data.range(5).map_batches(lambda x: x, batch_size=2).map(lambda x: x)
 
     plan = get_execution_plan(ds._plan._logical_plan)
     fns = plan.dag.get_map_transformer().get_transform_fns()
+    # With new architecture: BatchMapTransformFn handles blocks->batches internally,
+    # RowMapTransformFn handles blocks->rows internally
     expected_fns = [
-        BlocksToBatchesMapTransformFn,
         BatchMapTransformFn,
-        BatchesToRowsTransformFn,
         RowMapTransformFn,
-        BuildOutputBlocksMapTransformFn,
     ]
     assert match_transform_fns(expected_fns, fns)
     assert match_ds_result(ds, list(range(5)))

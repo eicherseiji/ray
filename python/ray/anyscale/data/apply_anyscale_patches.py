@@ -9,21 +9,15 @@ from ray.anyscale.data._internal.execution.callbacks.insert_issue_detectors impo
 )
 from ray.anyscale.data._internal.logging import configure_anyscale_logging
 from ray.anyscale.data._internal.logical.rules import (
-    FuseRepartitionOutputBlocks,
     PredicatePushdown,
     ProjectionPushdown,
     PushdownCountFiles,
-    RedundantMapTransformPruning,
 )
 from ray.anyscale.data._internal.logical.rules.combine_repartitions import (
     CombineRepartitions,
 )
 from ray.anyscale.data._internal.logical.rules.configure_map_task_memory import (
     ConfigureMapTaskMemoryWithProfiling,
-)
-from ray.anyscale.data._internal.logical.rules.map_fusion import (
-    BatchesToBatchesMapTransformTuning,
-    BatchesToRowsMapTransformPrunning,
 )
 from ray.anyscale.data.api.context_mixin import DataContextMixin
 from ray.anyscale.data.api.dataset_mixin import DatasetMixin
@@ -193,10 +187,6 @@ def apply_anyscale_patches():
     logical_ruleset.add(CombineRepartitions)
 
     physical_ruleset = get_physical_ruleset()
-    physical_ruleset.add(RedundantMapTransformPruning)
-    physical_ruleset.add(FuseRepartitionOutputBlocks)
-    physical_ruleset.add(BatchesToRowsMapTransformPrunning)
-    physical_ruleset.add(BatchesToBatchesMapTransformTuning)
     if ANYSCALE_MAP_TASK_MEMORY_CONFIGURATION_ENABLED:
         physical_ruleset.remove(ConfigureMapTaskMemoryUsingOutputSize)
         physical_ruleset.add(ConfigureMapTaskMemoryWithProfiling)

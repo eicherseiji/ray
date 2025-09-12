@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -9,46 +9,20 @@ from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data._internal.execution.operators.map_operator import MapOperator
 from ray.data._internal.execution.operators.map_transformer import (
-    BatchMapTransformFn,
-    BlocksToBatchesMapTransformFn,
-    BuildOutputBlocksMapTransformFn,
     MapTransformer,
     MapTransformFn,
-    MapTransformFnCategory,
-    MapTransformFnDataType,
+    BlockMapTransformFn,
+    BatchMapTransformFn,
 )
+from ray.data._internal.output_buffer import OutputBlockSizeOption
 from ray.data._internal.table_block import TableBlockAccessor
-from ray.data.block import Block, BlockType, DataBatch
+from ray.data.block import Block, BlockType, DataBatch, BatchFormat
 from ray.data.context import DataContext
 from ray.anyscale.data.checkpoint.util import CHECKPOINTED_IDS_KWARG_NAME
 from ray import ObjectRef
 
-if TYPE_CHECKING:
-    import pyarrow.dataset
 
 logger = logging.getLogger(__name__)
-
-
-class FilterMapTransformFn(MapTransformFn):
-    """A MapTransformFn that filters input blocks."""
-
-    def __init__(self, filter_expr: "pyarrow.dataset.Expression"):
-        self._filter_expr = filter_expr
-        super().__init__(
-            MapTransformFnDataType.Block,
-            MapTransformFnDataType.Block,
-            MapTransformFnCategory.DataProcess,
-        )
-
-    def __call__(self, blocks: Iterable[Block], ctx: TaskContext) -> Iterable[Block]:
-        for block in blocks:
-            block = TableBlockAccessor.normalize_block_types([block], BlockType.ARROW)[
-                0
-            ]
-            yield block.filter(self._filter_expr)
-
-    def __repr__(self) -> str:
-        return f"FilterMapTransformFn(filter_expr={self._filter_expr})"
 
 
 def plan_read_files_op(
@@ -88,24 +62,45 @@ def plan_read_files_op(
             )
 
     transform_fns: List[MapTransformFn] = [
-        BlocksToBatchesMapTransformFn(batch_format=None),
-        BatchMapTransformFn(read_files),
-        BuildOutputBlocksMapTransformFn.for_batches(),
+        BatchMapTransformFn(
+            read_files,
+            batch_size=None,
+            batch_format=BatchFormat.ARROW,
+            zero_copy_batch=True,
+            output_block_size_option=OutputBlockSizeOption.of(
+                target_max_block_size=data_context.target_max_block_size
+            ),
+        ),
     ]
 
     # Operator fusion *should* take care of the in-memory filtering
     # instead - but needs https://github.com/anyscale/rayturbo/pull/881
     if op.filter_expr is not None and not op.reader.supports_predicate_pushdown():
-        transform_fns.append(FilterMapTransformFn(op.filter_expr))
 
-    map_transformer = MapTransformer(transform_fns)
+        def _apply_predicate(
+            blocks: Iterable[Block], ctx: TaskContext
+        ) -> Iterable[Block]:
+            for block in blocks:
+                block = TableBlockAccessor.normalize_block_types(
+                    [block], BlockType.ARROW
+                )[0]
+
+                yield block.filter(op.filter_expr)
+
+        transform_fns.append(BlockMapTransformFn(_apply_predicate))
+
+    map_transformer = MapTransformer(
+        transform_fns,
+        output_block_size_option_override=OutputBlockSizeOption.of(
+            target_max_block_size=data_context.target_max_block_size,
+        ),
+    )
 
     map_operator = MapOperator.create(
         map_transformer,
         input_op,
         data_context,
         name="ReadFiles",
-        target_max_block_size=None,
         compute_strategy=op._compute,
         supports_fusion=(
             # NOTE: By default fusion of the Read ops is turned off for now

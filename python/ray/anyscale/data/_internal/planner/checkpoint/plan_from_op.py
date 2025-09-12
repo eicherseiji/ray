@@ -10,11 +10,11 @@ from ray.data._internal.execution.operators.input_data_buffer import InputDataBu
 from ray.data._internal.execution.operators.map_operator import MapOperator
 from ray.data._internal.execution.operators.map_transformer import (
     BlockMapTransformFn,
-    BuildOutputBlocksMapTransformFn,
     MapTransformer,
 )
 from ray import ObjectRef
 from ray.data._internal.logical.operators.from_operators import AbstractFrom
+from ray.data._internal.output_buffer import OutputBlockSizeOption
 from ray.data.context import DataContext
 
 
@@ -32,11 +32,13 @@ def plan_from_op_with_checkpoint_filter(
             functools.partial(
                 filter_checkpointed_rows_for_blocks,
                 checkpoint_config=data_context.checkpoint_config,
-            )
+            ),
+            output_block_size_option=OutputBlockSizeOption.of(
+                target_max_block_size=data_context.target_max_block_size,
+            ),
         ),
-        BuildOutputBlocksMapTransformFn.for_blocks(),
     ]
-    map_transformer = MapTransformer(transform_fns, init_fn=None)
+    map_transformer = MapTransformer(transform_fns)
     map_operator = MapOperator.create(
         map_transformer=map_transformer,
         input_op=input_operator,

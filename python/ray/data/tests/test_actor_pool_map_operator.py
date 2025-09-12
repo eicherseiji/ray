@@ -597,7 +597,6 @@ def test_min_max_resource_requirements(restore_data_context):
         map_transformer=MagicMock(),
         input_op=InputDataBuffer(data_context, input_data=MagicMock()),
         data_context=data_context,
-        target_max_block_size=None,
         compute_strategy=ray.data.ActorPoolStrategy(
             min_size=1,
             max_size=2,

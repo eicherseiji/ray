@@ -8,14 +8,14 @@ from ray.anyscale.data.checkpoint.interfaces import (
 from ray.data import DataContext
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.task_context import TaskContext
-from ray.data._internal.execution.operators.map_operator import MapOperator
 from ray.data._internal.execution.operators.map_transformer import (
     BlockMapTransformFn,
-    MapTransformFn,
-    MapTransformFnDataType,
 )
 from ray.data._internal.logical.operators.write_operator import Write
-from ray.data._internal.planner.plan_write_op import plan_write_op
+from ray.data._internal.planner.plan_write_op import (
+    generate_collect_write_stats_fn,
+    _plan_write_op_internal,
+)
 from ray.data.block import Block, BlockAccessor
 from ray.data.datasource.datasink import Datasink
 
@@ -24,14 +24,28 @@ def plan_write_op_with_checkpoint_writer(
     op: Write, physical_children: List[PhysicalOperator], data_context: DataContext
 ) -> PhysicalOperator:
     assert data_context.checkpoint_config is not None
-    map_operator = plan_write_op(op, physical_children, data_context)
-    _insert_write_checkpoint_transform_fn(op, map_operator, data_context)
-    return map_operator
+
+    collect_stats_fn = generate_collect_write_stats_fn()
+    write_checkpoint_for_block_fn = _generate_checkpoint_writing_transform(
+        data_context, op
+    )
+
+    physical_op = _plan_write_op_internal(
+        op,
+        physical_children,
+        data_context,
+        extra_transformations=[
+            write_checkpoint_for_block_fn,
+            collect_stats_fn,
+        ],
+    )
+
+    return physical_op
 
 
-def _insert_write_checkpoint_transform_fn(
-    logical_op: Write, physical_op: MapOperator, data_context: DataContext
-) -> MapOperator:
+def _generate_checkpoint_writing_transform(
+    data_context: DataContext, logical_op: Write
+) -> BlockMapTransformFn:
     datasink = logical_op._datasink_or_legacy_datasource
     if not isinstance(datasink, Datasink):
         raise InvalidCheckpointingOperators(
@@ -60,21 +74,9 @@ def _insert_write_checkpoint_transform_fn(
 
         return list(it2)
 
-    # Insert the MapTransformFn into the physical MapOperator
-    # created from logical Write op.
-    assert isinstance(physical_op, MapOperator), type(physical_op)
-    transform_fns: List[
-        MapTransformFn
-    ] = physical_op._map_transformer.get_transform_fns().copy()
-
-    # Check that `transform_fns` are compatible with `write_checkpoint_for_block`.
-    assert len(transform_fns) >= 2, transform_fns
-    assert transform_fns[0].output_type == MapTransformFnDataType.Block
-    assert transform_fns[1].input_type == MapTransformFnDataType.Block
-
-    # Insert the MapTransform directly after write transform:
-    # BlockMapTransformFn(write_fn)
-    # -> BlockMaptransformFn(write_checkpoint_for_block)
-    # -> BlockMaptransformFn(write_stats_fn)
-    transform_fns.insert(1, BlockMapTransformFn(write_checkpoint_for_block))
-    physical_op._map_transformer.set_transform_fns(transform_fns)
+    return BlockMapTransformFn(
+        write_checkpoint_for_block,
+        is_udf=False,
+        # NOTE: No need for block-shaping
+        disable_block_shaping=True,
+    )

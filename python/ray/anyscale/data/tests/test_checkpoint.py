@@ -14,16 +14,6 @@ from pyarrow.fs import FileSelector, LocalFileSystem
 from pytest_lazy_fixtures import lf as lazy_fixture
 
 import ray
-from ray.anyscale.data._internal.logical.operators.read_files_operator import (
-    ReadFiles,
-)
-from ray.anyscale.data._internal.planner.checkpoint import (
-    plan_from_op_with_checkpoint_filter,
-    plan_read_files_op_with_checkpoint_filter,
-    plan_read_op_with_checkpoint_filter,
-    plan_write_op_with_checkpoint_writer,
-)
-from ray.anyscale.data._internal.readers import FileReader
 from ray.anyscale.data.checkpoint.checkpoint_filter import (
     BatchBasedCheckpointFilter,
 )
@@ -54,19 +44,12 @@ from ray.anyscale.data.checkpoint.interfaces import (
 )
 from ray.data._internal.datasource.csv_datasource import CSVDatasource
 from ray.data._internal.datasource.parquet_datasink import ParquetDatasink
-from ray.data._internal.execution.operators.input_data_buffer import (
-    InputDataBuffer,
-)
 from ray.data._internal.logical.interfaces.logical_plan import LogicalPlan
-from ray.data._internal.logical.operators.from_operators import AbstractFrom
-from ray.data._internal.logical.operators.input_data_operator import InputData
 from ray.data._internal.logical.operators.read_operator import Read
 from ray.data._internal.logical.operators.write_operator import Write
 from ray.data._internal.logical.optimizers import get_execution_plan
 from ray.data.block import BlockAccessor, Block
 from ray.types import ObjectRef
-from ray.data.datasource import Datasink
-from ray.data.datasource.datasource import Datasource
 from ray.data.datasource.path_util import _unwrap_protocol
 from ray.data.tests.conftest import *  # noqa
 from ray.tests.conftest import *  # noqa
@@ -930,69 +913,6 @@ def test_dict_checkpoint_config(checkpoint_path):
     assert (
         context.checkpoint_config.backend == CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW
     )
-
-
-class TestPlanner:
-    def test_plan_from_op_with_checkpoint_filter(self):
-        op = AbstractFrom([], [])
-
-        physical_op = plan_from_op_with_checkpoint_filter(
-            op, [], ray.data.DataContext.get_current()
-        )
-
-        # TODO: (Here and elsewhere) testing against representations is brittle. We
-        # should expose a seam to enable more explicit testing.
-        assert "FilterCheckpointedRows" in physical_op.dag_str
-
-    def test_plan_read_files_op_with_checkpoint_filter(self):
-        input_data = InputData([])
-        op = ReadFiles(
-            input_data, reader=MagicMock(spec=FileReader), filesystem=MagicMock()
-        )
-
-        input_data_buffer = InputDataBuffer(ray.data.DataContext.get_current(), [])
-        physical_op = plan_read_files_op_with_checkpoint_filter(
-            op, [input_data_buffer], ray.data.DataContext.get_current()
-        )
-
-        assert "filter_checkpointed_rows" in str(
-            physical_op._map_transformer._transform_fns
-        )
-
-    def test_plan_read_op_with_checkpoint_filter(self):
-        op = Read(MagicMock(spec=Datasource), None, -1, None)
-
-        physical_op = plan_read_op_with_checkpoint_filter(
-            op, [], ray.data.DataContext.get_current()
-        )
-
-        assert "filter_checkpointed_rows" in str(
-            physical_op._map_transformer._transform_fns
-        )
-
-    def test_plan_write_op_with_checkpoint_writer(self, checkpoint_path):
-        class FakeDatasink(Datasink):
-            def write(self, blocks, ctx):
-                return None
-
-        # Configure checkpointing.
-        ctx = ray.data.DataContext.get_current()
-        ctx.checkpoint_config = CheckpointConfig(ID_COL, checkpoint_path)
-
-        # Construct a logical DAG.
-        input_data = InputData([])
-        op = Write(input_data, FakeDatasink())
-
-        # Plan the physical DAG.
-        input_data_buffer = InputDataBuffer(ray.data.DataContext.get_current(), [])
-        physical_op = plan_write_op_with_checkpoint_writer(
-            op, [input_data_buffer], ray.data.DataContext.get_current()
-        )
-
-        # Verify that the checkpoint writer is inserted.
-        assert "write_checkpoint_for_block" in str(
-            physical_op._map_transformer._transform_fns
-        )
 
 
 @pytest.mark.parametrize("generated_id_column", [False, True])

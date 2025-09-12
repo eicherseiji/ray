@@ -195,7 +195,6 @@ class StreamingHashAggregate(PhysicalOperator):
             name=name,
             input_dependencies=[input_op],
             data_context=data_context,
-            target_max_block_size=None,
         )
         self._key = key
         self._agg_fn = agg_fn

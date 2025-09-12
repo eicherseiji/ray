@@ -67,17 +67,27 @@ def plan_list_files_op(
                 file_extensions=file_extensions,
                 partition_filter=partition_filter,
             ),
+            # NOTE: Disable block-shaping to produce blocks as is
+            disable_block_shaping=True,
         ),
     ]
 
     if shuffle_config is not None:
         transform_fns.append(
-            BlockMapTransformFn(partial(shuffle_files, shuffle_config=shuffle_config))
+            BlockMapTransformFn(
+                partial(shuffle_files, shuffle_config=shuffle_config),
+                # NOTE: Disable block-shaping to produce blocks as is
+                disable_block_shaping=True,
+            )
         )
 
     if partitioner is not None:
         transform_fns.append(
-            BlockMapTransformFn(partial(partition_files, partitioner=partitioner))
+            BlockMapTransformFn(
+                partial(partition_files, partitioner=partitioner),
+                # NOTE: Disable block-shaping to produce blocks as is
+                disable_block_shaping=True,
+            )
         )
 
     map_transformer = MapTransformer(transform_fns)
