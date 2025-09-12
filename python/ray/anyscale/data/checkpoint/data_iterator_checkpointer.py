@@ -10,6 +10,7 @@ import pyarrow as pa
 import pyarrow.fs
 import pyarrow.parquet as pq
 
+import ray
 from ray.anyscale.data.checkpoint.interfaces import TrainingIngestCheckpointConfig
 from ray.data.block import Block, BlockAccessor
 from ray.data.context import DataContext
@@ -119,18 +120,26 @@ class BatchMetadataWithRowIDs(BatchMetadata):
 @dataclass
 class RowIDBasedStateDict:
     """State dict for a row-based data iterator checkpointer.
+
     Attributes:
         epoch_idx: The index of the current epoch.
         checkpoint_idx: The index of the current checkpoint.
+        root_checkpoint_path: The path to the root checkpoint directory.
+        id_column: The ID column name.
     """
 
     epoch_idx: int
     checkpoint_idx: int
+    root_checkpoint_path: str
+    id_column: str
 
     # Hive-style partition keys.
     EPOCH_PATH_KEY: ClassVar[str] = "epoch"
     CHECKPOINT_IDX_PATH_KEY: ClassVar[str] = "checkpoint"
     RANK_PATH_KEY: ClassVar[str] = "rank"
+
+    STATE_DICT_TYPE: ClassVar[str] = "row_id_based"
+    STATE_DICT_VERSION: ClassVar[int] = 0
 
     def should_restore(self) -> bool:
         """Whether the state dict was captured mid-epoch and warrants restoring.
@@ -169,6 +178,15 @@ class RowIDBasedStateDict:
         return {
             "epoch_idx": self.epoch_idx,
             "checkpoint_idx": self.checkpoint_idx,
+            "root_checkpoint_path": self.root_checkpoint_path,
+            "id_column": self.id_column,
+            # Also include some checkpoint metadata for backwards compatibility.
+            "metadata": {
+                "state_dict_type": self.STATE_DICT_TYPE,
+                "state_dict_version": self.STATE_DICT_VERSION,
+                "ray_commit": ray.__commit__,
+                "ray_version": ray.__version__,
+            },
         }
 
 
@@ -516,6 +534,8 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         state_dict = RowIDBasedStateDict(
             epoch_idx=self._epoch_idx,
             checkpoint_idx=self._latest_committed_checkpoint_idx,
+            root_checkpoint_path=self._checkpoint_path_unwrapped,
+            id_column=self._id_column,
         ).to_dict()
         return state_dict
 

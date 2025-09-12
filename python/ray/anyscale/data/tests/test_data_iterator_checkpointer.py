@@ -1,11 +1,12 @@
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+import ray
 from ray.data._internal.block_batching.interfaces import Batch
 from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
     RowIDBasedDataIteratorCheckpointer,
@@ -15,6 +16,7 @@ from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
 from ray.train import DatasetCheckpointConfig
 
 from ray._common.test_utils import wait_for_condition
+from ray.tests.conftest import *  # noqa
 
 
 def _create_batch(row_ids: List[int]) -> Batch:
@@ -23,6 +25,28 @@ def _create_batch(row_ids: List[int]) -> Batch:
         metadata=BatchMetadataWithRowIDs(batch_idx=0, row_ids=table),
         data=table,
     )
+
+
+def filter_state_dict(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Filter out metadata from the state dict and constant fields."""
+    return {k: v for k, v in state_dict.items() if k in ["epoch_idx", "checkpoint_idx"]}
+
+
+def read_checkpoint_files_for_state_dict(
+    state_dict: dict, root_path: Path, id_column: str = "id"
+) -> list:
+    checkpoint_idx = state_dict["checkpoint_idx"]
+    epoch = state_dict["epoch_idx"]
+    # Get all checkpoints up to and including checkpoint_idx
+    checkpointed_row_ids = []
+    for rank_dir in root_path.glob("rank=*"):
+        for i in range(checkpoint_idx + 1):
+            checkpoint_path = rank_dir / f"epoch={epoch}" / f"checkpoint={i}"
+            for checkpoint_file in checkpoint_path.glob("*.parquet"):
+                checkpointed_row_ids.extend(
+                    pq.read_table(checkpoint_file).column(id_column).to_pylist()
+                )
+    return checkpointed_row_ids
 
 
 def _read_checkpoint_files(root_path: Path) -> List[int]:
@@ -44,7 +68,10 @@ def test_basic(tmp_path):
     checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
     checkpointer.record_yielded_batch(_create_batch([4, 5, 6]))
 
-    assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 0,
+        "checkpoint_idx": 0,
+    }
     checkpoint_path = tmp_path.joinpath(
         "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
     )
@@ -126,7 +153,10 @@ def test_multi_worker_checkpoint_commit(tmp_path):
         checkpointer.record_yielded_batch(_create_batch([i * 3, i * 3 + 1, i * 3 + 2]))
 
     for i, checkpointer in enumerate(checkpointers):
-        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
+        assert filter_state_dict(checkpointer.state_dict()) == {
+            "epoch_idx": 0,
+            "checkpoint_idx": 0,
+        }
 
     for rank in range(world_size):
         checkpoint_path = tmp_path.joinpath(
@@ -154,18 +184,27 @@ def test_state_dict_across_epoch_lifecycle(tmp_path):
     # Before starting an epoch, `state_dict` returns a dummy state dict.
     # NOTE: These for loops check `state_dict` idempotency.
     for _ in range(2):
-        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": -1}
+        assert filter_state_dict(checkpointer.state_dict()) == {
+            "epoch_idx": 0,
+            "checkpoint_idx": -1,
+        }
 
     checkpointer.start_epoch()
 
     # Start of epoch.
     for _ in range(2):
-        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": -1}
+        assert filter_state_dict(checkpointer.state_dict()) == {
+            "epoch_idx": 0,
+            "checkpoint_idx": -1,
+        }
 
     # First checkpoint.
     checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
     for _ in range(2):
-        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
+        assert filter_state_dict(checkpointer.state_dict()) == {
+            "epoch_idx": 0,
+            "checkpoint_idx": 0,
+        }
     assert tmp_path.joinpath("rank=0", "epoch=0", "checkpoint=0").is_dir()
     assert _read_checkpoint_files(tmp_path.joinpath("rank=0", "epoch=0")) == list(
         range(1, 4)
@@ -176,7 +215,10 @@ def test_state_dict_across_epoch_lifecycle(tmp_path):
     checkpointer.record_yielded_batch(_create_batch([7, 8, 9]))
     checkpointer.record_yielded_batch(_create_batch([10, 11, 12]))
     for _ in range(2):
-        assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 1}
+        assert filter_state_dict(checkpointer.state_dict()) == {
+            "epoch_idx": 0,
+            "checkpoint_idx": 1,
+        }
     assert tmp_path.joinpath("rank=0", "epoch=0", "checkpoint=1").is_dir()
     assert _read_checkpoint_files(tmp_path.joinpath("rank=0", "epoch=0")) == list(
         range(1, 13)
@@ -184,11 +226,17 @@ def test_state_dict_across_epoch_lifecycle(tmp_path):
 
     # End of epoch.
     checkpointer.end_epoch()
-    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 1,
+        "checkpoint_idx": -1,
+    }
 
     # Start of new epoch.
     checkpointer.start_epoch()
-    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 1,
+        "checkpoint_idx": -1,
+    }
     # No directory should be created at this epoch boundary.
     assert not tmp_path.joinpath("rank=0", "epoch=1", "checkpoint=-1").is_dir()
 
@@ -213,7 +261,10 @@ def test_end_epoch(tmp_path):
     assert checkpoint_path.is_file()
     assert pq.read_table(checkpoint_path).column("id").to_pylist() == [1, 2, 3]
 
-    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 1,
+        "checkpoint_idx": -1,
+    }
 
 
 def test_unfinished_epoch(tmp_path):
@@ -239,11 +290,17 @@ def test_unfinished_epoch(tmp_path):
     checkpointer.start_epoch()
     checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
 
-    assert checkpointer.state_dict() == {"epoch_idx": 0, "checkpoint_idx": 0}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 0,
+        "checkpoint_idx": 0,
+    }
 
     # Start of new epoch, before finishing the previous one.
     checkpointer.start_epoch()
-    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 1,
+        "checkpoint_idx": -1,
+    }
 
 
 def test_checkpoint_path(tmp_path):
@@ -289,19 +346,36 @@ def test_load_state_dict_from_mid_epoch(tmp_path):
         checkpoint_config=DatasetCheckpointConfig(
             checkpoint_path=str(tmp_path), id_column="id"
         ),
-        state_dict=RowIDBasedStateDict(epoch_idx=1, checkpoint_idx=8),
+        state_dict=RowIDBasedStateDict(
+            epoch_idx=1,
+            checkpoint_idx=8,
+            root_checkpoint_path=str(tmp_path),
+            id_column="id",
+        ),
     )
-    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": 8}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 1,
+        "checkpoint_idx": 8,
+    }
 
     checkpointer.start_epoch()
 
-    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": 8}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 1,
+        "checkpoint_idx": 8,
+    }
 
     checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
-    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": 9}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 1,
+        "checkpoint_idx": 9,
+    }
 
     checkpointer.end_epoch()
-    assert checkpointer.state_dict() == {"epoch_idx": 2, "checkpoint_idx": -1}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 2,
+        "checkpoint_idx": -1,
+    }
 
 
 def test_load_state_dict_from_start_or_end_of_epoch(tmp_path):
@@ -323,18 +397,36 @@ def test_load_state_dict_from_start_or_end_of_epoch(tmp_path):
         checkpoint_config=DatasetCheckpointConfig(
             checkpoint_path=str(tmp_path), id_column="id"
         ),
-        state_dict=RowIDBasedStateDict(epoch_idx=1, checkpoint_idx=-1),
+        state_dict=RowIDBasedStateDict(
+            epoch_idx=1,
+            checkpoint_idx=-1,
+            root_checkpoint_path=str(tmp_path),
+            id_column="id",
+        ),
     )
     checkpointer.start_epoch()
 
-    assert checkpointer.state_dict() == {"epoch_idx": 1, "checkpoint_idx": -1}
+    assert filter_state_dict(checkpointer.state_dict()) == {
+        "epoch_idx": 1,
+        "checkpoint_idx": -1,
+    }
 
 
 @pytest.mark.parametrize(
     "state_dict",
     [
-        {"epoch_idx": 1, "checkpoint_idx": 8},
-        {"epoch_idx": 2, "checkpoint_idx": -1},
+        {
+            "epoch_idx": 1,
+            "checkpoint_idx": 8,
+            "root_checkpoint_path": "dummy",
+            "id_column": "id",
+        },
+        {
+            "epoch_idx": 2,
+            "checkpoint_idx": -1,
+            "root_checkpoint_path": "dummy",
+            "id_column": "id",
+        },
     ],
 )
 def test_load_state_dict_equivalence(tmp_path, state_dict):
@@ -347,7 +439,7 @@ def test_load_state_dict_equivalence(tmp_path, state_dict):
         ),
         state_dict=RowIDBasedStateDict.from_dict(state_dict),
     )
-    assert checkpointer.state_dict() == state_dict
+    assert filter_state_dict(checkpointer.state_dict()) == filter_state_dict(state_dict)
 
 
 @patch("pyarrow.parquet.write_table", side_effect=RuntimeError("mock error"))
@@ -368,10 +460,77 @@ def test_flush_exception(mock_write_table, tmp_path, when_to_raise):
     checkpointer.record_yielded_batch(_create_batch([1, 2, 3]))
 
     with pytest.raises(RuntimeError, match="Failed to flush"):
-        checkpointer.state_dict()
+        filter_state_dict(checkpointer.state_dict())
 
     with pytest.raises(RuntimeError, match="Failed to flush"):
         checkpointer.record_yielded_batch(_create_batch([4, 5, 6]))
+
+
+@pytest.mark.parametrize("reinit_iter", [True, False])
+def test_iter_batches_with_checkpointing(ray_start_10_cpus, tmp_path, reinit_iter):
+    """Test that iter_batches with checkpointing works correctly.
+
+    Create multiple checkpoints per epoch, for several epochs.
+    Create checkpoints at 1/3 and 2/3 way through each epoch.
+    A checkpoint is also created at the end of each epoch.
+    """
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path), id_column="id"
+        )
+    )
+
+    num_epochs = 2
+    num_batches = 120
+    batch_size = 10
+    num_mid_epoch_checkpoints = 2
+    checkpoint_at_batches = [
+        i * (num_batches // (num_mid_epoch_checkpoints + 1))
+        for i in range(1, num_mid_epoch_checkpoints + 1)
+    ]
+
+    ds = ray.data.range(num_batches * batch_size)
+    ds_iter = ds.iterator()
+    ds_iter._enable_checkpointing(checkpointer)
+
+    state_dict = ds_iter.state_dict()
+    assert filter_state_dict(state_dict) == {
+        "epoch_idx": 0,
+        "checkpoint_idx": -1,
+    }
+    # There should be no row_ids associated with a state dict initially.
+    assert read_checkpoint_files_for_state_dict(state_dict, tmp_path) == []
+
+    batch_iter = None
+    for epoch in range(num_epochs):
+        checkpoint_idx = 0
+        consumed_batches = 0
+        if batch_iter is None or reinit_iter:
+            batch_iter = ds_iter.iter_batches(batch_size=batch_size)
+
+        seen_ids = []
+        for batch in batch_iter:
+            consumed_batches += 1
+            seen_ids.extend(batch["id"])
+            if consumed_batches in checkpoint_at_batches:
+                state_dict = ds_iter.state_dict()
+                assert filter_state_dict(state_dict) == {
+                    "epoch_idx": epoch,
+                    "checkpoint_idx": checkpoint_idx,
+                }
+                assert set(seen_ids) == set(
+                    read_checkpoint_files_for_state_dict(state_dict, tmp_path)
+                )
+                checkpoint_idx += 1
+
+        assert filter_state_dict(ds_iter.state_dict()) == {
+            "epoch_idx": epoch + 1,
+            "checkpoint_idx": -1,
+        }
+        # There should be no row_ids associated with a state dict at an epoch boundary.
+        assert (
+            read_checkpoint_files_for_state_dict(ds_iter.state_dict(), tmp_path) == []
+        )
 
 
 if __name__ == "__main__":

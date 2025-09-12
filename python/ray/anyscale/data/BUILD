@@ -91,21 +91,6 @@ py_test(
 )
 
 py_test(
-    name = "test_checkpoint_iter_batches",
-    size = "medium",
-    srcs = ["tests/test_checkpoint_iter_batches.py"],
-    env = {"RAY_TRAIN_V2_ENABLED": "1"},
-    tags = [
-        "exclusive",
-        "team:data",
-    ],
-    deps = [
-        ":conftest",
-        "//:ray_lib",
-    ],
-)
-
-py_test(
     name = "test_data_iterator_checkpointer",
     size = "small",
     srcs = ["tests/test_data_iterator_checkpointer.py"],

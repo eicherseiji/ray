@@ -1,8 +1,6 @@
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from pyarrow.fs import LocalFileSystem
-import pyarrow.parquet as pq
 import pytest
 
 from ray.anyscale.train._internal.callbacks.datasets import DatasetsSetupCallback
@@ -12,25 +10,12 @@ from ray.train import DataConfig, DatasetCheckpointConfig
 import ray.train.collective
 from ray.train.v2.api.data_parallel_trainer import DataParallelTrainer
 
+from ray.anyscale.data.tests.test_data_iterator_checkpointer import (
+    filter_state_dict,
+    read_checkpoint_files_for_state_dict,
+)
 from ray.train.tests.util import create_dict_checkpoint, load_dict_checkpoint
 from ray.train.v2.tests.util import create_dummy_run_context
-
-
-def _read_checkpoint_files_for_state_dict(
-    state_dict: dict, root_path: Path, id_column: str = "id"
-) -> list:
-    checkpoint_idx = state_dict["checkpoint_idx"]
-    epoch = state_dict["epoch_idx"]
-    # Get all checkpoints up to and including checkpoint_idx
-    checkpointed_row_ids = []
-    for rank_dir in root_path.glob("rank=*"):
-        for i in range(checkpoint_idx + 1):
-            checkpoint_path = rank_dir / f"epoch={epoch}" / f"checkpoint={i}"
-            for checkpoint_file in checkpoint_path.glob("*.parquet"):
-                checkpointed_row_ids.extend(
-                    pq.read_table(checkpoint_file).column(id_column).to_pylist()
-                )
-    return checkpointed_row_ids
 
 
 @pytest.mark.parametrize("restore_from_end_of_epoch", [True, False])
@@ -129,7 +114,7 @@ def test_e2e_with_ray_train(
                     )
                     assert rank_0_state_dict == state_dict
 
-                    checkpointed_row_ids = _read_checkpoint_files_for_state_dict(
+                    checkpointed_row_ids = read_checkpoint_files_for_state_dict(
                         state_dict, data_checkpoint_path, id_column
                     )
                     assert (
@@ -166,11 +151,11 @@ def test_e2e_with_ray_train(
                 state_dict
             )
             assert rank_0_state_dict == state_dict
-            assert state_dict == {
+            assert filter_state_dict(state_dict) == {
                 "epoch_idx": epoch + 1,
                 "checkpoint_idx": -1,
             }
-            checkpointed_row_ids = _read_checkpoint_files_for_state_dict(
+            checkpointed_row_ids = read_checkpoint_files_for_state_dict(
                 state_dict, data_checkpoint_path, id_column
             )
             assert checkpointed_row_ids == []
