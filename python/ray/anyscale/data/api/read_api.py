@@ -16,6 +16,7 @@ from ray.anyscale.data._internal.file_indexer import (
     FileChunker,
     LineDelimitedFileChunker,
     NonSamplingFileIndexer,
+    WholeFileChunker,
 )
 from ray.anyscale.data._internal.logical.operators.list_files_operator import ListFiles
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
@@ -799,11 +800,13 @@ def read_files(
     if ray_remote_args is None:
         ray_remote_args = {}
 
+    current_ctx = DataContext.get_current().copy()
+
     _validate_shuffle_arg(shuffle)
 
     paths, filesystem = _resolve_paths_and_filesystem(paths, filesystem)
     filesystem = RetryingPyFileSystem.wrap(
-        filesystem, retryable_errors=DataContext.get_current().retried_io_errors
+        filesystem, retryable_errors=current_ctx.retried_io_errors
     )
 
     _ensure_paths_accessible(paths, filesystem)
@@ -822,19 +825,22 @@ def read_files(
             else shuffle
         )
 
+    if current_ctx.disable_large_file_chunking:
+        file_chunker = WholeFileChunker()
+
     file_indexer = NonSamplingFileIndexer(
         ignore_missing_paths=ignore_missing_paths,
         file_chunker=file_chunker,
     )
     file_partitioner = RoundRobinPartitioner(
         in_memory_size_estimator=in_memory_size_estimator,
-        min_bucket_size=DataContext.get_current().min_read_partition_size,
-        max_bucket_size=DataContext.get_current().max_read_partition_size,
+        min_bucket_size=current_ctx.min_read_partition_size,
+        max_bucket_size=current_ctx.max_read_partition_size,
         # We default to `read_op_min_num_blocks` buckets for consistency with the OSS
         # implementation.
         # TODO: Replace `read_op_min_num_blocks` with the maximum number of CPUs in the
         # cluster once we have access to that information.
-        num_buckets=DataContext.get_current().read_op_min_num_blocks,
+        num_buckets=current_ctx.read_op_min_num_blocks,
     )
     list_files_op = ListFiles(
         paths=paths,
@@ -858,7 +864,7 @@ def read_files(
 
     execution_plan = ExecutionPlan(
         DatasetStats(metadata={"ReadFiles": []}, parent=None),
-        DataContext.get_current().copy(),
+        current_ctx,
     )
     logical_plan = LogicalPlan(read_files_op, execution_plan._context)
     return Dataset(plan=execution_plan, logical_plan=logical_plan)

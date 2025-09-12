@@ -8,6 +8,7 @@ from ray.anyscale.data.issue_detection.issue_detector_configuration import (
 from ray.data.context import (
     DEFAULT_TARGET_MAX_BLOCK_SIZE,
     DEFAULT_TARGET_MIN_BLOCK_SIZE,
+    env_bool,
 )
 
 if TYPE_CHECKING:
@@ -16,6 +17,10 @@ if TYPE_CHECKING:
     )
 
 DEFAULT_NUM_BLOCKS_PER_READ_TASK = 8
+
+DEFAULT_DISABLE_LARGE_FILE_CHUNKING = env_bool(
+    "RAY_TURBO_DISABLE_LARGE_FILE_CHUNKING", False
+)
 
 
 def _issue_detectors_config_factory() -> "IssueDetectorsConfiguration":
@@ -54,6 +59,10 @@ class DataContextMixin:
     )
 
     use_polars_join: bool = True
+
+    # Controls whether large file chunking is disabled
+    # When True, uses WholeFileChunker instead of more granular chunking strategies
+    disable_large_file_chunking: bool = DEFAULT_DISABLE_LARGE_FILE_CHUNKING
 
     @property
     def checkpoint_config(self) -> Optional[CheckpointConfig]:

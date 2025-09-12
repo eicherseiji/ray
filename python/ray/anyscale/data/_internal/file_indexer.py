@@ -173,7 +173,10 @@ class NonSamplingFileIndexer(FileIndexer):
     )
 
     def __init__(
-        self, *, ignore_missing_paths: bool, file_chunker: Optional[FileChunker] = None
+        self,
+        *,
+        ignore_missing_paths: bool,
+        file_chunker: Optional[FileChunker] = None,
     ):
         self._ignore_missing_paths = ignore_missing_paths
         self._file_chunker = (

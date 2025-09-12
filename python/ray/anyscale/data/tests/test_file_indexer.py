@@ -1,7 +1,10 @@
 import math
+import os
+from unittest.mock import MagicMock, patch
 import pytest
 import pyarrow as pa
 
+from ray.data import DataContext
 from ray.anyscale.data._internal.file_indexer import (
     LineDelimitedFileChunker,
     WholeFileChunker,
@@ -206,6 +209,93 @@ class TestNonSamplingFileIndexerWithChunking:
         assert len(all_paths) == 1
         assert str(regular_file) in all_paths
         assert str(zero_file) not in all_paths
+
+    @patch("ray.anyscale.data.api.read_api.NonSamplingFileIndexer")
+    def test_disable_large_file_chunking(
+        self, mock_file_indexer_class, restore_data_context
+    ):
+        """Test that disable_large_file_chunking forces WholeFileChunker."""
+        mock_file_indexer = MagicMock()
+        mock_file_indexer_class.return_value = mock_file_indexer
+
+        from ray.anyscale.data._internal.readers import LineDelimitedFileReader
+        from ray.anyscale.data.api.read_api import read_files
+
+        def mock_call_read_files():
+            read_files(
+                paths=["test.txt"],
+                reader=LineDelimitedFileReader(),
+                file_chunker=LineDelimitedFileChunker(),
+                filesystem=None,
+                columns=None,
+                partition_filter=None,
+                ignore_missing_paths=False,
+                file_extensions=None,
+                shuffle=None,
+                concurrency=None,
+                ray_remote_args=None,
+            )
+
+        # Test with no context, - should use passed LineDelimitedFileChunker
+        mock_call_read_files()
+        assert (
+            type(mock_file_indexer_class.call_args.kwargs["file_chunker"])
+            is LineDelimitedFileChunker
+        )
+
+        # Test with disable_large_file_chunking=True - should use WholeFileChunker
+        ctx = DataContext.get_current()
+        ctx.disable_large_file_chunking = True
+        mock_call_read_files()
+        assert (
+            type(mock_file_indexer_class.call_args.kwargs["file_chunker"])
+            is WholeFileChunker
+        )
+
+        # Test with disable_large_file_chunking=False - should use passed LineDelimitedFileChunker
+        ctx.disable_large_file_chunking = False
+        mock_call_read_files()
+        assert (
+            type(mock_file_indexer_class.call_args.kwargs["file_chunker"])
+            is LineDelimitedFileChunker
+        )
+
+    @patch("ray.anyscale.data.api.read_api.NonSamplingFileIndexer")
+    @pytest.mark.parametrize("env_var_value", ["0", "1"])
+    def test_disable_large_file_chunking_with_env_var(
+        self, mock_file_indexer_class, env_var_value
+    ):
+        mock_file_indexer = MagicMock()
+        mock_file_indexer_class.return_value = mock_file_indexer
+
+        from ray.anyscale.data._internal.readers import LineDelimitedFileReader
+        from ray.anyscale.data.api.read_api import read_files
+
+        def mock_call_read_files():
+            read_files(
+                paths=["test.txt"],
+                reader=LineDelimitedFileReader(),
+                file_chunker=LineDelimitedFileChunker(),
+                filesystem=None,
+                columns=None,
+                partition_filter=None,
+                ignore_missing_paths=False,
+                file_extensions=None,
+                shuffle=None,
+                concurrency=None,
+                ray_remote_args=None,
+            )
+
+        os.environ["RAY_TURBO_DISABLE_LARGE_FILE_CHUNKING"] = env_var_value
+        mock_call_read_files()
+        expected_chunker_class = (
+            WholeFileChunker if env_var_value == "True" else LineDelimitedFileChunker
+        )
+        assert (
+            type(mock_file_indexer_class.call_args.kwargs["file_chunker"])
+            is expected_chunker_class
+        )
+        del os.environ["RAY_TURBO_DISABLE_LARGE_FILE_CHUNKING"]
 
 
 class TestChunkingIntegration:
