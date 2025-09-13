@@ -326,7 +326,10 @@ fi
             --build-arg FULL_BASE_IMAGE="${BASE_IMG}" \
             --build-arg WHEEL_PATH=".whl/${WHEEL_FILE}" \
             --build-arg RAY_VERSION="${RAY_VERSION}" \
-            --build-arg PRESTART_DATA_PATH="${ANYSCALE_PRESTART_DATA_PATH}" \
+            --label io.ray.ray-version="${RAY_VERSION}" \
+            --label io.ray.ray-commit="${UPSTREAM_COMMIT}" \
+            --label com.anyscale.ray.rayturbo-commit="${FULL_COMMIT}" \
+            --label com.anyscale.ray.prestart-data-path="${ANYSCALE_PRESTART_DATA_PATH}" \
             -t "${RAY_IMG}" -f Dockerfile -
 )
 
