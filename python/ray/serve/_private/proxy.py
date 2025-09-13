@@ -15,8 +15,8 @@ from packaging import version
 from starlette.types import Receive
 
 import ray
+from ray._common.filters import CoreContextFilter
 from ray._common.utils import get_or_create_event_loop
-from ray._private.ray_logging.filters import CoreContextFilter
 from ray.anyscale.serve._private.tracing_utils import (
     is_span_recording,
     set_http_span_attributes,

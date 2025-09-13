@@ -7,13 +7,11 @@ RAY_TURBO_DEFAULT_CONFIG = {
         "ray": {
             "format": "%(asctime)s\t%(levelname)s %(filename)s:%(lineno)s -- %(message)s"  # noqa: E501
         },
-        "ray_json": {"class": "ray._private.ray_logging.formatters.JSONFormatter"},
+        "ray_json": {"class": "ray._common.formatters.JSONFormatter"},
     },
     "filters": {
         "console_filter": {"()": "ray.data._internal.logging.HiddenRecordFilter"},
-        "core_context_filter": {
-            "()": "ray._private.ray_logging.filters.CoreContextFilter"
-        },
+        "core_context_filter": {"()": "ray._common.filters.CoreContextFilter"},
     },
     "handlers": {
         "file": {

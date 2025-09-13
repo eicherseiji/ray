@@ -49,6 +49,7 @@ class _SingleRequest:
     self_arg: Any
     flattened_args: List[Any]
     future: asyncio.Future
+    request_context: serve.context._RequestContext
     trace_context: Optional[Any]
 
 
@@ -311,6 +312,9 @@ class _BatchQueue:
 
     async def _process_batches(self, func: Callable) -> None:
         """Loops infinitely and processes queued request batches."""
+        # When asyncio task is created, the task will inherit the request context from the current context.
+        # So we unset the request context so the current context is not inherited by the task, _process_batch.
+        serve.context._unset_request_context()
         while not self._loop.is_closed():
             batch = await self.wait_for_batch()
             promise = self._process_batch(func, batch)
@@ -348,6 +352,11 @@ class _BatchQueue:
                 else:
                     func_future_or_generator = func(*args, **kwargs)
 
+                # Add individual request context to the batch request context
+                serve.context._set_batch_request_context(
+                    [req.request_context for req in batch]
+                )
+
                 # As OTEL span cannot belong to multiple traces, we choose the first request’s context
                 # as the parent, so the span emitted by this batch will appear only in the first request’s trace.
                 with BatchTraceContextManager(batch[0].trace_context):
@@ -361,6 +370,9 @@ class _BatchQueue:
                         await self._assign_func_results(
                             func_future, futures, len(batch)
                         )
+
+                # Reset the batch request context after the batch is processed
+                serve.context._set_batch_request_context([])
             except Exception as e:
                 logger.exception("_process_batch ran into an unexpected exception.")
 
@@ -699,8 +711,13 @@ def batch(
             batch_queue = lazy_batch_queue_wrapper.queue
 
             future = get_or_create_event_loop().create_future()
+            request_context = serve.context._get_serve_request_context()
             trace_context = get_trace_context()
-            batch_queue.put(_SingleRequest(self, flattened_args, future, trace_context))
+            batch_queue.put(
+                _SingleRequest(
+                    self, flattened_args, future, request_context, trace_context
+                )
+            )
             return future
 
         @wraps(_func)
