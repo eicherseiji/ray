@@ -9,11 +9,11 @@ from ray.anyscale.air._internal.autoscaling_coordinator import (
 )
 from ray.anyscale.data._internal.cluster_autoscaler import (
     ClusterAutoscalingMetrics,
+    LegacyRayTurboClusterAutoscaler,
     NodeType,
     NormalizedThroughputCalculator,
     ProductivityCalculator,
     RateBasedClusterAutoscaler,
-    RayTurboClusterAutoscaler,
     SupportsClusterAutoscaling,
 )
 from ray.data._internal.cluster_autoscaler import (
@@ -193,7 +193,7 @@ def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):
     "cluster_autoscaler_env_value, expected_autoscaler_type",
     [
         ("RAYTURBO", RateBasedClusterAutoscaler),
-        ("RAYTURBO_LEGACY", RayTurboClusterAutoscaler),
+        ("RAYTURBO_LEGACY", LegacyRayTurboClusterAutoscaler),
         ("OSS", DefaultClusterAutoscaler),
     ],
 )

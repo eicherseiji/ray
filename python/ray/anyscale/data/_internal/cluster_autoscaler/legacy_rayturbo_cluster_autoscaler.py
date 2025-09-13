@@ -45,7 +45,7 @@ class _NodeResourceSpec:
         return {"CPU": self.cpu, "memory": self.mem}
 
 
-class RayTurboClusterAutoscaler(ClusterAutoscaler):
+class LegacyRayTurboClusterAutoscaler(ClusterAutoscaler):
     """Anyscale's proprietary Ray Data cluster autoscaler implementation.
 
     It works in the following way:

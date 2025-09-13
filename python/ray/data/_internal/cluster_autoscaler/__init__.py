@@ -34,10 +34,10 @@ def create_cluster_autoscaler(
         )
     elif selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO_LEGACY:
         from ray.anyscale.data._internal.cluster_autoscaler import (
-            RayTurboClusterAutoscaler,
+            LegacyRayTurboClusterAutoscaler,
         )
 
-        return RayTurboClusterAutoscaler(
+        return LegacyRayTurboClusterAutoscaler(
             topology,
             resource_manager,
             execution_id=execution_id,

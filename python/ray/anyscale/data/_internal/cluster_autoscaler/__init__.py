@@ -1,3 +1,4 @@
+from .legacy_rayturbo_cluster_autoscaler import LegacyRayTurboClusterAutoscaler
 from .productivity_calculator import (
     NormalizedThroughputCalculator,
 )
@@ -6,7 +7,6 @@ from .rate_based_cluster_autoscaler import (
     ProductivityCalculator,
     RateBasedClusterAutoscaler,
 )
-from .rayturbo_cluster_autoscaler import RayTurboClusterAutoscaler
 from .supports_cluster_autoscaling import (
     ClusterAutoscalingMetrics,
     SupportsClusterAutoscaling,
@@ -14,7 +14,7 @@ from .supports_cluster_autoscaling import (
 
 __all__ = [
     "NodeType",
-    "RayTurboClusterAutoscaler",
+    "LegacyRayTurboClusterAutoscaler",
     "RateBasedClusterAutoscaler",
     "ProductivityCalculator",
     "NormalizedThroughputCalculator",

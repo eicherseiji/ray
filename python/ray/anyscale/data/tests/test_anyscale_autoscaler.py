@@ -6,6 +6,7 @@ from typing import Optional, OrderedDict
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 import ray
 from ray.anyscale.data._internal.actor_autoscaler.rayturbo_actor_autoscaler import (
     DefaultActorPoolResizingPolicy,
@@ -13,8 +14,8 @@ from ray.anyscale.data._internal.actor_autoscaler.rayturbo_actor_autoscaler impo
     _get_scaling_up_factor,
     _normalize_scaling_up_factor,
 )
-from ray.anyscale.data._internal.cluster_autoscaler.rayturbo_cluster_autoscaler import (
-    RayTurboClusterAutoscaler,
+from ray.anyscale.data._internal.cluster_autoscaler.legacy_rayturbo_cluster_autoscaler import (
+    LegacyRayTurboClusterAutoscaler,
     _NodeResourceSpec,
 )
 from ray.anyscale.data._internal.util.average_calculator import (
@@ -151,7 +152,7 @@ def test_invalid_scaling_up_factors(invalid_factor):
 
 
 class TestClusterAutoscaling(unittest.TestCase):
-    """Tests for cluster autoscaling functions in RayTurboClusterAutoscaler."""
+    """Tests for cluster autoscaling functions in LegacyRayTurboClusterAutoscaler."""
 
     def setup_class(self):
         self._node_type1 = {
@@ -183,7 +184,7 @@ class TestClusterAutoscaling(unittest.TestCase):
 
     def test_get_node_resource_spec_and_count(self):
         # Test _get_node_resource_spec_and_count
-        autoscaler = RayTurboClusterAutoscaler(
+        autoscaler = LegacyRayTurboClusterAutoscaler(
             topology=MagicMock(),
             resource_manager=MagicMock(),
             execution_id="test_execution_id",
@@ -229,12 +230,12 @@ class TestClusterAutoscaling(unittest.TestCase):
             assert autoscaler._get_node_resource_spec_and_count() == expected
 
     @patch(
-        "ray.anyscale.data._internal.cluster_autoscaler.rayturbo_cluster_autoscaler.RayTurboClusterAutoscaler._send_resource_request",  # noqa: E501
+        "ray.anyscale.data._internal.cluster_autoscaler.legacy_rayturbo_cluster_autoscaler.LegacyRayTurboClusterAutoscaler._send_resource_request",  # noqa: E501
     )
     def test_try_scale_up_cluster(self, _send_resource_request):
         # Test _try_scale_up_cluster
         scaling_up_factor = 1.5
-        autoscaler = RayTurboClusterAutoscaler(
+        autoscaler = LegacyRayTurboClusterAutoscaler(
             topology=MagicMock(),
             resource_manager=MagicMock(),
             execution_id="test_execution_id",
@@ -257,7 +258,7 @@ class TestClusterAutoscaling(unittest.TestCase):
 
         # Test different CPU/memory utilization combinations.
         scale_up_threshold = (
-            RayTurboClusterAutoscaler.DEFAULT_CLUSTER_SCALING_UP_UTIL_THRESHOLD
+            LegacyRayTurboClusterAutoscaler.DEFAULT_CLUSTER_SCALING_UP_UTIL_THRESHOLD
         )
         for cpu_util in [scale_up_threshold / 2, scale_up_threshold]:
             for mem_util in [scale_up_threshold / 2, scale_up_threshold]:
