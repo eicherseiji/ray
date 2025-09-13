@@ -1,24 +1,24 @@
-from dataclasses import dataclass
 import unittest
+from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import ray
+
+# Import with a name that doesn't start with "Test" to avoid pytest discovery
+import ray.data.tests.test_actor_pool_map_operator as oss_test_module
+from ray.anyscale.data._internal.execution.operators.actor_pool_map_operator import (
+    ActorPoolMapOperator,
+    _ActorTaskSelectorImpl,
+)
+from ray.data._internal.execution.interfaces import ExecutionResources
 from ray.data._internal.execution.operators.actor_pool_map_operator import (
     _ActorPool,
     _ActorTaskSelector,
 )
-import ray
-from ray.anyscale.data._internal.execution.operators.actor_pool_map_operator import (
-    _ActorTaskSelectorImpl,
-    ActorPoolMapOperator,
-)
-from ray.data._internal.execution.interfaces import ExecutionResources
 from ray.data._internal.execution.operators.input_data_buffer import InputDataBuffer
 from ray.data.tests.conftest import *  # noqa: F403
-
-# Import with a name that doesn't start with "Test" to avoid pytest discovery
-import ray.data.tests.test_actor_pool_map_operator as oss_test_module
 
 
 class AnyscaleTestActorPool(oss_test_module.TestActorPool):

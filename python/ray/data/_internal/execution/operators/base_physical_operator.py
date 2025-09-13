@@ -69,6 +69,9 @@ class AllToAllOperator(InternalQueueOperatorMixin, PhysicalOperator):
                 list of input ref bundles, and the outputs are the output ref bundles
                 and a stats dict.
             input_op: Operator generating input data for this op.
+            data_context: The DataContext instance containing configuration settings.
+            target_max_block_size_override: The target maximum number of bytes to
+                include in an output block.
             num_outputs: The number of expected output bundles for progress bar.
             sub_progress_bar_names: The names of internal sub progress bars.
             name: The name of this operator.
