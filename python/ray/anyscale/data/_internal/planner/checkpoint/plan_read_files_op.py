@@ -32,9 +32,7 @@ def plan_read_files_op_with_checkpoint_filter(
             f"ParquetReader, but got {type(op.reader)}"
         )
 
-    physical_op = plan_read_files_op(
-        op, physical_children, data_context, load_checkpoint
-    )
+    physical_op = plan_read_files_op(op, physical_children, data_context)
 
     # TODO avoid modifying in-place
     physical_op._map_transformer.add_transform_fns(

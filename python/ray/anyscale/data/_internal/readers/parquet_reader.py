@@ -44,6 +44,7 @@ from ray.anyscale.data.checkpoint.util import (
     exclude_checkpointed_rows,
 )
 
+
 from .file_reader import FileReader
 from .in_memory_size_estimator import (
     InMemorySizeEstimator,
@@ -198,7 +199,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
         filesystem: pyarrow.fs.FileSystem,
-        checkpoint_ids: Optional[Block] = None,
     ) -> Iterable[DataBatch]:
         if columns and columns_rename:
             assert set(columns_rename.keys()).issubset(columns), (
@@ -218,9 +218,18 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 )
                 break
         chunk_metadatas = list(file_manifest.file_chunk_metadatas)
+        assert (
+            len(paths)
+            == len(chunk_metadatas)
+            == len(file_manifest.file_fragments_checkpoint)
+        )
 
-        fragments = self._create_fragments(
-            paths, chunk_metadatas, generated_id_column, filesystem=filesystem
+        fragments, path_to_checkpoint = self._create_fragments(
+            paths,
+            chunk_metadatas,
+            file_manifest.file_fragments_checkpoint,
+            generated_id_column,
+            filesystem=filesystem,
         )
 
         if len(fragments) == 0:
@@ -286,8 +295,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                     data_columns=data_columns,
                     partition_columns=partition_columns,
                     columns_rename=columns_rename,
-                    checkpoint_ids=checkpoint_ids,
                     generated_id_column=generated_id_column,
+                    path_to_checkpoint=path_to_checkpoint,
                 ),
                 # NOTE: It's crucial for the sequence to have preserved (deterministic)
                 #       ordering so that that tasks could be safely retried (when
@@ -303,8 +312,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 data_columns=data_columns,
                 partition_columns=partition_columns,
                 columns_rename=columns_rename,
-                checkpoint_ids=checkpoint_ids,
                 generated_id_column=generated_id_column,
+                path_to_checkpoint=path_to_checkpoint,
             )
 
     @property
@@ -410,10 +419,14 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self,
         paths: List[str],
         chunk_metadatas: List[ParquetFileChunkMetadata],
+        file_fragments_checkpoint: Optional[pa.Array],
         generated_id_column: Optional[str],
         *,
         filesystem: pa.fs.FileSystem,
-    ) -> List[pyarrow.dataset.ParquetFileFragment]:
+    ) -> Tuple[
+        List[pyarrow.dataset.ParquetFileFragment],
+        Optional[Dict[str, Optional[pa.StructScalar]]],
+    ]:
         deduped_paths = list(set(paths))
         parquet_dataset = call_with_retry(
             lambda: get_parquet_dataset(
@@ -425,16 +438,26 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         path_to_fragment = {}
         for fragment in parquet_dataset.fragments:
             path_to_fragment[fragment.path] = fragment
+
         fragments = []
+        if file_fragments_checkpoint is not None:
+            path_to_checkpoint = {}
+            for i, path in enumerate(paths):
+                scalar = file_fragments_checkpoint[i]
+                path_to_checkpoint[path] = scalar if scalar.is_valid else None
+        else:
+            path_to_checkpoint = None
+
         for path, chunk_metadata in zip(paths, chunk_metadatas):
             fragment = path_to_fragment[path]
             if chunk_metadata is None:
                 if generated_id_column:
                     # For checkpointing, we need to create a fragment for each row group.
                     for row_group_index in range(fragment.metadata.num_row_groups):
-                        fragments.append(
-                            fragment.subset(row_group_ids=[row_group_index])
+                        row_group_fragment = fragment.subset(
+                            row_group_ids=[row_group_index]
                         )
+                        fragments.append(row_group_fragment)
                 else:
                     fragments.append(fragment)
             else:
@@ -443,18 +466,20 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                         fragment, chunk_metadata
                     ):
                         assert len(fragment_item.row_groups) == 1, (
-                            f"Expected each fragment to have exactly 1 row group when "
-                            f"generated_id_column is set, but found fragment with "
-                            f"{len(fragment_item.row_groups)} row groups"
+                            f"Expected each fragment to have exactly 1 row group "
+                            f"when generated_id_column is set, but found fragment "
+                            f"with {len(fragment_item.row_groups)} row groups"
                         )
                         fragments.append(fragment_item)
                 else:
-                    fragments.extend(
+                    chunk_fragments = list(
                         self._fragments_from_chunk_metadata(fragment, chunk_metadata)
                     )
+                    fragments.extend(chunk_fragments)
 
         check_for_legacy_tensor_type(parquet_dataset.schema)
-        return fragments
+
+        return fragments, path_to_checkpoint
 
     def _get_num_threads(
         self, fragments: List[pyarrow.dataset.ParquetFileFragment]
@@ -477,17 +502,21 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         data_columns: Optional[List[str]] = None,
         partition_columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
-        checkpoint_ids: Optional[Block] = None,
         generated_id_column: Optional[str] = None,
+        path_to_checkpoint: Optional[Dict[str, Optional[pa.StructScalar]]] = None,
     ) -> Iterable["pyarrow.Table"]:
         for fragment in fragments:
+            checkpoint_file_fragment = None
+            if generated_id_column:
+                # Look up checkpoint data by the fragment's actual path
+                checkpoint_file_fragment = path_to_checkpoint.get(fragment.path)
             for table in self._read_batches(
                 fragment,
                 schema=schema,
                 data_columns=data_columns,
                 partition_columns=partition_columns,
                 filter_expr=filter_expr,
-                checkpoint_ids=checkpoint_ids,
+                checkpoint_file_fragment=checkpoint_file_fragment,
                 generated_id_column=generated_id_column,
             ):
                 if columns_rename is not None:
@@ -582,17 +611,17 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         data_columns: Optional[List[str]],
         partition_columns: Optional[List[str]],
         filter_expr: pyarrow.dataset.Expression,
-        checkpoint_ids: Optional[Block],
+        checkpoint_file_fragment: Optional[pa.StructScalar] = None,
         generated_id_column: Optional[str],
     ) -> Iterable[pyarrow.Table]:
         checkpointed_fragment_info: Optional[CheckpointedFragmentInfo] = None
-        if generated_id_column and checkpoint_ids is not None:
+        if generated_id_column and checkpoint_file_fragment is not None:
             assert len(fragment.row_groups) == 1
             row_group_idx = fragment.row_groups[0].id
             checkpointed_fragment_info = get_checkpointed_fragment_info(
                 fragment=fragment,
                 row_group_idx=row_group_idx,
-                checkpointed_ids=checkpoint_ids,
+                checkpointed_file_fragments=checkpoint_file_fragment,
             )
             if checkpointed_fragment_info.fully_checkpointed:
                 # Skip batching the fragment if all rows are checkpointed
@@ -657,14 +686,17 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 # Add generated ID column to the table
                 assert len(fragment.row_groups) == 1
                 row_group_idx = fragment.row_groups[0].id
+                actual_row_group_rows = fragment.metadata.row_group(
+                    row_group_idx
+                ).num_rows
+
                 table = table.append_column(
                     generated_id_column,
                     get_generated_id_column(
                         path=fragment.path,
                         row_group_idx=row_group_idx,
-                        total_num_rows=fragment.metadata.row_group(
-                            row_group_idx
-                        ).num_rows,
+                        num_row_groups=fragment.metadata.num_row_groups,
+                        total_num_rows=actual_row_group_rows,
                         current_row_offset=current_row_offset,
                         current_num_rows=table.num_rows,
                     ),

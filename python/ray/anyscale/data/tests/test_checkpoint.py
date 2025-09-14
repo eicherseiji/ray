@@ -9,11 +9,16 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pyarrow
 import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 import pytest
 from pyarrow.fs import FileSelector, LocalFileSystem
 from pytest_lazy_fixtures import lf as lazy_fixture
 
 import ray
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
 from ray.anyscale.data.checkpoint.checkpoint_filter import (
     BatchBasedCheckpointFilter,
 )
@@ -22,16 +27,29 @@ from ray.anyscale.data.checkpoint.util import (
     ROW_ID_FIELD,
     PATH_PREFIX_FIELD,
     FILE_NAME_FIELD,
-    ROW_GROUP_FIELD,
+    FRAGMENT_FIELD,
+    NUM_FRAGMENTS_FIELD,
     NUM_ROWS_FIELD,
     GENERATED_ID_COLUMN_FIELD_NAMES,
-    CHECKPOINTED_FRAGMENT_COLUMN_NAME,
-    CHECKPOINTED_ROW_COUNT_COLUMN_NAME,
-    CHECKPOINTED_ROW_IDS_COLUMN_NAME,
+    GENERATED_ID_COLUMN_FIELDS,
     get_checkpointed_fragment_info,
     exclude_checkpointed_rows,
     GENERATED_ID_COLUMN_TYPE,
     normalize_id,
+    get_checkpoint_fragments,
+    index_checkpointed_fragments,
+    CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
+    CHECKPOINTED_FILE_COLUMN_NAME,
+    CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME,
+    CHECKPOINTED_FRAGMENT_TYPE,
+    CHECKPOINTED_FILE_FRAGMENTS_TYPE,
+    CHECKPOINTED_FILE_FRAGMENT_ID_FIELD,
+    CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
+    CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD,
 )
 
 from ray.anyscale.data.checkpoint.checkpoint_writer import (
@@ -113,7 +131,9 @@ def generate_sample_data_parquet(tmp_path):
 
         f_path = os.path.join(f_dir, "sample_data.parquet")
         # Write 3 row groups per file with uneven distribution of rows per row group
-        df.to_parquet(f_path, row_group_size=SAMPLE_DATA_NUM_ROWS // 3)
+        table = pa.table(df)
+        row_group_size = max(1, SAMPLE_DATA_NUM_ROWS // 3)
+        pq.write_table(table, f_path, row_group_size=row_group_size)
         return f_dir
 
     return _generate
@@ -179,11 +199,11 @@ def _read_batch_file_ids(file_paths: List[str], id_column: str, fs) -> List[int]
     ids = []
     for file_path in file_paths:
         if fs is None:
-            with open(file_path, "r") as f:
-                df = pd.read_parquet(f)
+            table = pa.parquet.read_table(file_path)
         else:
             with fs.open_input_file(file_path) as f:
-                df = pd.read_parquet(f)
+                table = pa.parquet.read_table(f)
+        df = table.to_pandas()
         ids.extend(df[id_column].tolist())
     return ids
 
@@ -744,7 +764,7 @@ def test_recovery_skips_checkpointed_rows(
         # Get the actual complete dicts from the dataset
         actual_dicts = sorted(
             [row[id_col] for row in ds_readback.iter_rows()],
-            key=lambda d: (d[ROW_GROUP_FIELD], d[ROW_ID_FIELD]),
+            key=lambda d: (d[FRAGMENT_FIELD], d[ROW_ID_FIELD]),
         )
 
         # With multiple row groups, generate expected complete dicts
@@ -766,8 +786,9 @@ def test_recovery_skips_checkpointed_rows(
             {
                 PATH_PREFIX_FIELD: actual_path_prefix,
                 FILE_NAME_FIELD: actual_file_name,
-                ROW_GROUP_FIELD: row_group_idx,
+                FRAGMENT_FIELD: row_group_idx,
                 NUM_ROWS_FIELD: num_rows_in_group,
+                NUM_FRAGMENTS_FIELD: len(row_groups),
                 ROW_ID_FIELD: row_id,
             }
             for row_group_idx, num_rows_in_group in row_groups
@@ -775,7 +796,7 @@ def test_recovery_skips_checkpointed_rows(
         ]
 
         expected_dicts = sorted(
-            expected_dicts, key=lambda d: (d[ROW_GROUP_FIELD], d[ROW_ID_FIELD])
+            expected_dicts, key=lambda d: (d[FRAGMENT_FIELD], d[ROW_ID_FIELD])
         )
 
         assert actual_dicts == expected_dicts
@@ -929,6 +950,7 @@ def test_write_block_checkpoint_with_pandas_df(
         struct_array = get_generated_id_column(
             path="/data/file1.parquet",
             row_group_idx=0,
+            num_row_groups=1,
             total_num_rows=2,
             current_row_offset=0,
             current_num_rows=2,
@@ -955,11 +977,14 @@ def test_write_block_checkpoint_with_pandas_df(
     checkpoint_path = tmp_path / checkpoint_filename
     if generated_id_column:
         # For generated IDs, reconstruct the normalized ID from the individual fields
-        df = pd.read_parquet(checkpoint_path)
+        table = pa.parquet.read_table(checkpoint_path)
+        df = table.to_pandas()
         written_ids = [normalize_id(row) for row in df[GENERATED_ID_COL]]
     else:
         # For regular IDs, read the original ID column
-        written_ids = pd.read_parquet(checkpoint_path)[ID_COL].tolist()
+        table = pa.parquet.read_table(checkpoint_path)
+        df = table.to_pandas()
+        written_ids = df[ID_COL].tolist()
     assert written_ids == expected_ids
 
 
@@ -1082,59 +1107,231 @@ class TestCheckpointFragmentRestore:
 
     def _create_checkpointed_table(
         self,
-        fragment_ids: list[str],
+        file_paths: list[str],
+        fragment_ids_per_file: list[list[int]],
         row_ids_per_fragment: list[list[int]],
         expected_row_counts: list[int],
     ) -> pyarrow.Table:
         """Helper to create checkpointed_ids table with fragment IDs.
 
         Args:
-            fragment_ids: List of fragment IDs in format /path/to/file/row_group=X
+            file_paths: List of file paths
+            fragment_ids_per_file: List of fragment ID lists for each file
             row_ids_per_fragment: List of row ID lists for each fragment
             expected_row_counts: List of expected total row counts per fragment
 
         Returns:
-            pyarrow.Table: A table containing checkpointed fragment information with columns:
-                - CHECKPOINTED_FRAGMENT_COLUMN_NAME: sorted fragment IDs
-                - NUM_ROWS_FIELD: expected row counts per fragment
-                - CHECKPOINTED_ROW_COUNT_COLUMN_NAME: actual checkpointed row counts per fragment
-                - CHECKPOINTED_ROW_IDS_COLUMN_NAME: list of checkpointed row IDs per fragment
+            pyarrow.Table: A table containing checkpointed fragment information with
+            CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA
         """
-        if not fragment_ids:
+        if not file_paths:
             return pyarrow.table(
                 {
-                    CHECKPOINTED_FRAGMENT_COLUMN_NAME: [],
-                    NUM_ROWS_FIELD: [],
-                    CHECKPOINTED_ROW_COUNT_COLUMN_NAME: [],
-                    CHECKPOINTED_ROW_IDS_COLUMN_NAME: [],
-                }
+                    CHECKPOINTED_FILE_COLUMN_NAME: pa.array([], type=pa.string()),
+                    CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME: pa.array(
+                        [], type=CHECKPOINTED_FILE_FRAGMENTS_TYPE
+                    ),
+                },
+                schema=CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
             )
 
-        # Sort the fragments for binary search to work correctly
-        sorted_fragment_ids = sorted(fragment_ids)
+        # Create table rows
+        table_file_paths = []
+        file_fragments_structs = []
+
+        fragment_idx = 0
+        for file_idx, file_path in enumerate(file_paths):
+            table_file_paths.append(file_path)
+
+            # Get fragments for this file
+            file_fragment_ids = fragment_ids_per_file[file_idx]
+            file_fragments = []
+
+            for fragment_id in file_fragment_ids:
+                # Create checkpointed row IDs array
+                checkpointed_row_ids = self._create_checkpointed_row_ids_array(
+                    row_ids_per_fragment[fragment_idx],
+                    expected_row_counts[fragment_idx],
+                )
+
+                file_fragments.append(
+                    {
+                        CHECKPOINTED_FILE_FRAGMENT_ID_FIELD: fragment_id,
+                        CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD: expected_row_counts[
+                            fragment_idx
+                        ],
+                        CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD: self._calculate_checkpointed_count(
+                            row_ids_per_fragment[fragment_idx],
+                            expected_row_counts[fragment_idx],
+                        ),
+                        CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD: checkpointed_row_ids,
+                    }
+                )
+                fragment_idx += 1
+
+            file_fragments_structs.append(
+                self._create_file_fragments_struct(file_fragments)
+            )
+
+        # Convert StructScalar objects to Python dictionaries for PyArrow 9 compatibility
+        file_fragments_dicts = []
+        for struct_scalar in file_fragments_structs:
+            if struct_scalar is not None:
+                file_fragments_dicts.append(struct_scalar.as_py())
+            else:
+                file_fragments_dicts.append(None)
 
         return pyarrow.table(
             {
-                CHECKPOINTED_FRAGMENT_COLUMN_NAME: sorted_fragment_ids,
-                NUM_ROWS_FIELD: pyarrow.array(expected_row_counts),
-                CHECKPOINTED_ROW_COUNT_COLUMN_NAME: pyarrow.array(
-                    [
-                        # If row_ids is empty, it means all rows are checkpointed
-                        expected_row_counts[i] if len(row_ids) == 0 else len(row_ids)
-                        for i, row_ids in enumerate(row_ids_per_fragment)
-                    ]
-                ),
-                CHECKPOINTED_ROW_IDS_COLUMN_NAME: pyarrow.array(
-                    [
-                        []
-                        if len(row_ids) == 0
-                        else [i in row_ids for i in range(expected_row_counts[i])]
-                        for i, row_ids in enumerate(row_ids_per_fragment)
-                    ],
-                    type=pyarrow.list_(pyarrow.bool_()),
-                ),
-            }
+                CHECKPOINTED_FILE_COLUMN_NAME: table_file_paths,
+                CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME: file_fragments_dicts,
+            },
+            schema=CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
         )
+
+    def _create_checkpointed_row_ids_array(
+        self, row_ids: list[int], total_rows: int
+    ) -> pyarrow.Array:
+        """Create boolean array indicating which rows are checkpointed."""
+        if len(row_ids) == 0:
+            # All rows checkpointed - empty list
+            return pyarrow.array([], type=pyarrow.bool_())
+        else:
+            # Create boolean array where True = checkpointed
+            return pyarrow.array(
+                [j in row_ids for j in range(total_rows)],
+                type=pyarrow.bool_(),
+            )
+
+    def _calculate_checkpointed_count(self, row_ids: list[int], total_rows: int) -> int:
+        """Calculate number of checkpointed rows."""
+        return total_rows if len(row_ids) == 0 else len(row_ids)
+
+    def _create_file_fragments_struct(self, fragments: list[dict]) -> pyarrow.Scalar:
+        """Create file fragments struct from list of fragments."""
+        # Create fragment structs
+        fragment_structs = []
+        for frag in fragments:
+            # Wrap checkpointed_row_ids as LargeList
+            offsets = pyarrow.array(
+                [0, len(frag[CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD])],
+                type=pyarrow.int64(),
+            )
+            checkpointed_row_ids_list = pyarrow.LargeListArray.from_arrays(
+                offsets, frag[CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD]
+            )
+
+            fragment_struct = pyarrow.StructArray.from_arrays(
+                [
+                    pyarrow.array(
+                        [frag[CHECKPOINTED_FILE_FRAGMENT_ID_FIELD]],
+                        type=pyarrow.int32(),
+                    ),
+                    pyarrow.array(
+                        [frag[CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD]],
+                        type=pyarrow.int32(),
+                    ),
+                    pyarrow.array(
+                        [frag[CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD]],
+                        type=pyarrow.int32(),
+                    ),
+                    checkpointed_row_ids_list,
+                ],
+                fields=[
+                    pyarrow.field(
+                        CHECKPOINTED_FILE_FRAGMENT_ID_FIELD,
+                        pyarrow.int32(),
+                        nullable=False,
+                    ),
+                    pyarrow.field(
+                        CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD,
+                        pyarrow.int32(),
+                        nullable=False,
+                    ),
+                    pyarrow.field(
+                        CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
+                        pyarrow.int32(),
+                        nullable=False,
+                    ),
+                    pyarrow.field(
+                        CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
+                        pyarrow.large_list(pyarrow.bool_()),
+                        nullable=True,
+                    ),
+                ],
+            )
+            fragment_structs.append(fragment_struct)
+
+        # Create file fragments struct - concatenate all fragment structs
+        if fragment_structs:
+            all_fragment_structs = pyarrow.concat_arrays(fragment_structs)
+            offsets = pyarrow.array(
+                [0, len(all_fragment_structs)], type=pyarrow.int64()
+            )
+            fragments_list = pyarrow.LargeListArray.from_arrays(
+                offsets, all_fragment_structs
+            )
+        else:
+            fragments_list = pyarrow.array(
+                [[]], type=pyarrow.large_list(CHECKPOINTED_FRAGMENT_TYPE)
+            )
+
+        fully_checkpointed = all(
+            frag[CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD]
+            == frag[CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD]
+            for frag in fragments
+        )
+
+        file_fragments_struct = pyarrow.StructArray.from_arrays(
+            [
+                pyarrow.array([len(fragments)], type=pyarrow.int32()),
+                pyarrow.array([fully_checkpointed], type=pyarrow.bool_()),
+                fragments_list,
+            ],
+            fields=[
+                pyarrow.field(
+                    CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD,
+                    pyarrow.int32(),
+                    nullable=False,
+                ),
+                pyarrow.field(
+                    CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
+                    pyarrow.bool_(),
+                    nullable=False,
+                ),
+                pyarrow.field(
+                    CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD,
+                    pyarrow.large_list(
+                        pyarrow.struct(
+                            [
+                                pyarrow.field(
+                                    CHECKPOINTED_FILE_FRAGMENT_ID_FIELD,
+                                    pyarrow.int32(),
+                                    nullable=False,
+                                ),
+                                pyarrow.field(
+                                    CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD,
+                                    pyarrow.int32(),
+                                    nullable=False,
+                                ),
+                                pyarrow.field(
+                                    CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
+                                    pyarrow.int32(),
+                                    nullable=False,
+                                ),
+                                pyarrow.field(
+                                    CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
+                                    pyarrow.large_list(pyarrow.bool_()),
+                                    nullable=True,
+                                ),
+                            ]
+                        )
+                    ),
+                    nullable=True,
+                ),
+            ],
+        )
+        return file_fragments_struct[0]
 
     def _create_fragment(self, path: str, expected_num_rows: int = 3) -> MagicMock:
         """Helper to create mock fragment."""
@@ -1159,10 +1356,41 @@ class TestCheckpointFragmentRestore:
     ) -> None:
         """Helper to test get_checkpointed_fragment_info with given inputs."""
         fragment = self._create_fragment(fragment_path, expected_num_rows)
+        # Get checkpoint data for this fragment and create a file manifest
+        if checkpointed_fragments is not None:
+            # Index the checkpointed fragments by file path
+            checkpointed_fragments_by_path = index_checkpointed_fragments(
+                checkpointed_fragments
+            )
+            # Get the checkpoint fragments for this specific file
+            checkpointed_ids_struct = get_checkpoint_fragments(
+                checkpointed_fragments, fragment_path, checkpointed_fragments_by_path
+            )
+            # Create a file manifest with the processed checkpoint data
+            file_manifest = FileManifest.construct_manifest(
+                [fragment_path],  # Single path
+                [expected_num_rows],  # File size
+                [None],  # No chunk metadata
+                [checkpointed_ids_struct],
+            )
+        else:
+            # No checkpoint data available - create manifest with None checkpoint data
+            file_manifest = FileManifest.construct_manifest(
+                [fragment_path],  # Single path
+                [expected_num_rows],  # File size
+                [None],  # No chunk metadata
+                [None],  # No checkpoint data
+            )
+
+        # Extract checkpoint file fragments from the manifest
+        checkpointed_file_fragments = file_manifest.file_fragments_checkpoint
+
         result = get_checkpointed_fragment_info(
             fragment=fragment,
             row_group_idx=row_group_idx,
-            checkpointed_ids=checkpointed_fragments,
+            checkpointed_file_fragments=checkpointed_file_fragments[0]
+            if len(checkpointed_file_fragments) > 0
+            else None,
         )
         assert result.fragment.path == fragment_path
         assert result.fully_checkpointed is expected_fully_checkpointed
@@ -1175,13 +1403,12 @@ class TestCheckpointFragmentRestore:
         elif len(result.checkpointed_row_ids) == 0:
             # Handle empty arrays
             actual_row_ids = []
-
         else:
             # Handle boolean array - convert True positions to row IDs
             actual_row_ids = [
                 i
                 for i, is_checkpointed in enumerate(
-                    result.checkpointed_row_ids[0].as_py()
+                    result.checkpointed_row_ids.to_pylist()
                 )
                 if is_checkpointed
             ]
@@ -1191,36 +1418,22 @@ class TestCheckpointFragmentRestore:
             f"but got {actual_row_ids}"
         )
 
-    def _generate_fragment_ids(
-        self, base_path: str, file_name: str, row_groups: list[int]
-    ) -> list[str]:
-        """Helper to generate fragment IDs for a file with multiple row groups."""
-        return [f"{base_path}/{file_name}/row_group={rg}" for rg in row_groups]
-
     def test_get_checkpointed_fragment_info_full_match_multiple_files_row_groups(
         self,
     ) -> None:
         """Test full match with multiple files and row groups - all rows checkpointed."""
         # Create checkpointed table with multiple files and row groups
-        all_fragments = (
-            self._generate_fragment_ids(
-                base_path="/data",
-                file_name="file1.parquet",
-                row_groups=[0, 1, 2],
-            )
-            + self._generate_fragment_ids(
-                base_path="/data",
-                file_name="file2.parquet",
-                row_groups=[0, 1],
-            )
-            + self._generate_fragment_ids(
-                base_path="/data",
-                file_name="file3.parquet",
-                row_groups=[0],
-            )
-        )
         checkpointed_table = self._create_checkpointed_table(
-            fragment_ids=all_fragments,
+            file_paths=[
+                "/data/file1.parquet",
+                "/data/file2.parquet",
+                "/data/file3.parquet",
+            ],
+            fragment_ids_per_file=[
+                [0, 1, 2],
+                [0, 1],
+                [0],
+            ],  # Row group indices for each file
             # All rows checkpointed for each fragment - use empty lists when fully checkpointed
             row_ids_per_fragment=[
                 [],  # file1, row_group=0 - fully checkpointed (3 rows)
@@ -1284,25 +1497,17 @@ class TestCheckpointFragmentRestore:
     ) -> None:
         """Test partial match with multiple files and row groups - some rows checkpointed."""
         # Create checkpointed table with multiple files and row groups, but only some rows checkpointed
-        all_fragments = (
-            self._generate_fragment_ids(
-                base_path="/data",
-                file_name="file1.parquet",
-                row_groups=[0, 1, 2],
-            )
-            + self._generate_fragment_ids(
-                base_path="/data",
-                file_name="file2.parquet",
-                row_groups=[0, 1],
-            )
-            + self._generate_fragment_ids(
-                base_path="/data",
-                file_name="file3.parquet",
-                row_groups=[0],
-            )
-        )
         checkpointed_table = self._create_checkpointed_table(
-            fragment_ids=all_fragments,
+            file_paths=[
+                "/data/file1.parquet",
+                "/data/file2.parquet",
+                "/data/file3.parquet",
+            ],
+            fragment_ids_per_file=[
+                [0, 1, 2],
+                [0, 1],
+                [0],
+            ],  # Row group indices for each file
             row_ids_per_fragment=[
                 [0, 1, 2],  # file1, row_group=0
                 [0, 1],  # file1, row_group=1
@@ -1379,7 +1584,7 @@ class TestCheckpointFragmentRestore:
         )
 
         # Test with empty checkpointed_ids
-        empty_table = self._create_checkpointed_table([], [], expected_row_counts=[])
+        empty_table = self._create_checkpointed_table([], [], [], [])
         self._test_get_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=0,
@@ -1391,12 +1596,10 @@ class TestCheckpointFragmentRestore:
 
         # Test with non-matching file path
         checkpointed_table = self._create_checkpointed_table(
-            [
-                "/data/file2.parquet/row_group=0",
-                "/data/file3.parquet/row_group=0",
-            ],
+            ["/data/file2.parquet", "/data/file3.parquet"],
+            [[0], [0]],  # Row group indices for each file
             [[0, 1, 2], [0, 1, 2]],  # All rows checkpointed for each fragment
-            expected_row_counts=[3, 3],
+            [1, 1],
         )
         self._test_get_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
@@ -1409,11 +1612,10 @@ class TestCheckpointFragmentRestore:
 
         # Test with matching file path but non-matching row group
         checkpointed_table = self._create_checkpointed_table(
-            [
-                "/data/file1.parquet/row_group=1",  # Different row group
-            ],
+            ["/data/file1.parquet"],
+            [[1]],  # Different row group
             [[0, 1, 2]],  # All rows checkpointed
-            expected_row_counts=[3],
+            [1],
         )
         self._test_get_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
@@ -1435,15 +1637,15 @@ class TestCheckpointFragmentRestore:
             {"row_id": list(range(10)), "data": [f"data_{i}" for i in range(10)]}
         )
 
-        # All rows are checkpointed - with optimization, this creates an empty ListArray
+        # All rows are checkpointed - with optimization, this creates an empty LargeListArray
         fragment_info = CheckpointedFragmentInfo(
             fragment=None,  # Not used in this test
             row_group_idx=0,
             num_rows=10,
             fully_checkpointed=True,
             checkpointed_row_ids=pyarrow.array(
-                [[]]
-            ),  # Empty ListArray (optimized case)
+                [], type=pyarrow.bool_()
+            ),  # Empty boolean array (fully checkpointed)
             checkpointed_row_count=0,
         )
 
@@ -1481,9 +1683,7 @@ class TestCheckpointFragmentRestore:
             row_group_idx=0,
             num_rows=10,
             fully_checkpointed=False,
-            checkpointed_row_ids=pyarrow.array(
-                [boolean_array], type=pyarrow.list_(pyarrow.bool_())
-            ),
+            checkpointed_row_ids=pyarrow.array(boolean_array, type=pyarrow.bool_()),
             checkpointed_row_count=3,
         )
 
@@ -1534,9 +1734,7 @@ class TestCheckpointFragmentRestore:
             row_group_idx=0,
             num_rows=20,  # Must cover rows 0-19 for the function to work correctly
             fully_checkpointed=False,
-            checkpointed_row_ids=pyarrow.array(
-                [boolean_array], type=pyarrow.list_(pyarrow.bool_())
-            ),
+            checkpointed_row_ids=pyarrow.array(boolean_array, type=pyarrow.bool_()),
             checkpointed_row_count=3,
         )
 
@@ -1591,9 +1789,7 @@ class TestCheckpointFragmentRestore:
             row_group_idx=0,
             num_rows=10,  # 10 rows in this fragment (0-9)
             fully_checkpointed=False,  # Not fully checkpointed
-            checkpointed_row_ids=pyarrow.array(
-                [boolean_array], type=pyarrow.list_(pyarrow.bool_())
-            ),
+            checkpointed_row_ids=pyarrow.array(boolean_array, type=pyarrow.bool_()),
             checkpointed_row_count=5,  # 5 rows checkpointed (0-4)
         )
 
@@ -1631,6 +1827,7 @@ class TestLoadCheckpointAndProcessGeneratedId:
         path_prefix: str,
         file_name: str,
         row_group: int,
+        num_row_groups: int,
         num_rows: int,
         row_id: int,
     ) -> dict[str, Union[str, int]]:
@@ -1640,6 +1837,7 @@ class TestLoadCheckpointAndProcessGeneratedId:
             path_prefix: Path prefix for the file
             file_name: Name of the parquet file
             row_group: Row group identifier
+            num_row_groups: Number of row groups for this file/row_group
             num_rows: Expected number of rows for this file/row_group
             row_id: Unique row identifier
 
@@ -1649,7 +1847,8 @@ class TestLoadCheckpointAndProcessGeneratedId:
         return {
             PATH_PREFIX_FIELD: path_prefix,
             FILE_NAME_FIELD: file_name,
-            ROW_GROUP_FIELD: row_group,
+            FRAGMENT_FIELD: row_group,
+            NUM_FRAGMENTS_FIELD: num_row_groups,
             NUM_ROWS_FIELD: num_rows,
             ROW_ID_FIELD: row_id,
         }
@@ -1701,16 +1900,33 @@ class TestLoadCheckpointAndProcessGeneratedId:
             checkpoint_path: Path to the checkpoint directory
             test_data: List of test data dictionaries with generated ID structure
         """
-        import pyarrow as pa
-
         # Create the struct column for the generated ID
         id_arrays = []
         for field_name in GENERATED_ID_COLUMN_FIELD_NAMES:
             field_values = [row[field_name] for row in test_data]
-            id_arrays.append(pa.array(field_values))
+            if field_name in [PATH_PREFIX_FIELD, FILE_NAME_FIELD]:
+                # String fields need dictionary encoding
+                array = pa.array(field_values, type=pa.string())
+                id_arrays.append(pc.dictionary_encode(array))
+            elif field_name in [FRAGMENT_FIELD, NUM_FRAGMENTS_FIELD, NUM_ROWS_FIELD]:
+                # Integer fields need dictionary encoding
+                array = pa.array(field_values, type=pa.int32())
+                id_arrays.append(pc.dictionary_encode(array))
+            elif field_name == ROW_ID_FIELD:
+                # Row ID field is just int32, no dictionary encoding
+                id_arrays.append(pa.array(field_values, type=pa.int32()))
+            else:
+                raise ValueError(f"Unknown field name: {field_name}")
+
+        # Create proper pyarrow.Field objects for PyArrow 9 compatibility
+        fields = [
+            pa.field(field_name, field_type, nullable=False)
+            for field_name, field_type in GENERATED_ID_COLUMN_FIELDS.items()
+        ]
 
         id_column_struct = pa.StructArray.from_arrays(
-            id_arrays, names=GENERATED_ID_COLUMN_FIELD_NAMES
+            id_arrays,
+            fields=fields,
         )
 
         # Create the table with just the id_column (struct)
@@ -1728,8 +1944,6 @@ class TestLoadCheckpointAndProcessGeneratedId:
             checkpoint_path: Path to the checkpoint directory
             test_data: List of simple test data dictionaries to write
         """
-        import pyarrow as pa
-
         # Extract column names from the first row
         if test_data:
             column_names = list(test_data[0].keys())
@@ -1765,23 +1979,21 @@ class TestLoadCheckpointAndProcessGeneratedId:
         if id_column == GENERATED_ID_COL:
             # Verify required columns exist for generated ID column
             required_columns = [
-                CHECKPOINTED_FRAGMENT_COLUMN_NAME,
-                NUM_ROWS_FIELD,
-                CHECKPOINTED_ROW_COUNT_COLUMN_NAME,
-                CHECKPOINTED_ROW_IDS_COLUMN_NAME,
+                CHECKPOINTED_FILE_COLUMN_NAME,
+                CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME,
             ]
             for col in required_columns:
                 assert (
                     col in checkpoint_block.column_names
                 ), f"Required column {col} not found in generated ID checkpoint block. Available columns: {checkpoint_block.column_names}"
 
-            # Verify checkpointed fragment column is sorted
-            checkpoint_fragments = checkpoint_block[
-                CHECKPOINTED_FRAGMENT_COLUMN_NAME
+            # Verify checkpointed file column is sorted
+            checkpoint_files = checkpoint_block[
+                CHECKPOINTED_FILE_COLUMN_NAME
             ].to_pylist()
-            assert checkpoint_fragments == sorted(
-                checkpoint_fragments
-            ), f"Checkpoint block {CHECKPOINTED_FRAGMENT_COLUMN_NAME} column is not sorted: {checkpoint_fragments}"
+            assert checkpoint_files == sorted(
+                checkpoint_files
+            ), f"Checkpoint block {CHECKPOINTED_FILE_COLUMN_NAME} column is not sorted: {checkpoint_files}"
         else:
             # Verify required columns exist for regular ID column
             required_columns = [
@@ -1818,6 +2030,7 @@ class TestLoadCheckpointAndProcessGeneratedId:
                             path_prefix,
                             file_name,
                             row_group,
+                            1,
                             expected_rows,
                             row_id_offset + i,
                         )
@@ -1913,17 +2126,18 @@ class TestLoadCheckpointAndProcessGeneratedId:
 
         # Create test data with many row groups
         # File with 20 row groups, alternating between completed and incomplete
-        file_specs = []
+        row_group_specs = []
         for row_group in range(20):
             expected_rows = 5  # Each row group expects 5 rows
             actual_rows = (
                 5 if row_group % 2 == 0 else 3
             )  # Even row groups are complete, odd are incomplete
-            file_specs.append((row_group, expected_rows, actual_rows, row_group * 1000))
+            row_group_specs.append(
+                (row_group, expected_rows, actual_rows, row_group * 1000)
+            )
 
-        test_data = self._create_test_data_with_row_groups(
-            [("/data", "large_file.parquet", file_specs)]
-        )
+        file_specs = [("/data", "large_file.parquet", row_group_specs)]
+        test_data = self._create_test_data_with_row_groups(file_specs)
 
         # Setup checkpoint
         self._write_generated_id_column_checkpoint_data(checkpoint_path, test_data)

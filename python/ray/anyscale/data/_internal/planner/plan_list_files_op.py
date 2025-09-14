@@ -1,6 +1,6 @@
 import logging
 from functools import partial
-from typing import Iterable, List, Optional
+from typing import Callable, Iterable, List, Optional
 
 import numpy as np
 import pyarrow as pa
@@ -28,6 +28,8 @@ from ray.data._internal.execution.operators.map_transformer import (
 from ray.data.block import Block, BlockAccessor
 from ray.data.context import DataContext
 from ray.data.datasource import FileShuffleConfig, PathPartitionFilter
+from ray.types import ObjectRef
+from ray.anyscale.data.checkpoint.util import CHECKPOINTED_IDS_KWARG_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,7 @@ def plan_list_files_op(
     op: ListFiles,
     physical_children: List[PhysicalOperator],
     data_context: DataContext,
+    load_checkpoint: Optional[Callable[[], ObjectRef]] = None,
 ) -> MapOperator:
     assert len(physical_children) == 0
 
@@ -92,7 +95,7 @@ def plan_list_files_op(
 
     map_transformer = MapTransformer(transform_fns)
 
-    return MapOperator.create(
+    map_operator = MapOperator.create(
         map_transformer,
         create_input_data_buffer(
             op,
@@ -113,6 +116,20 @@ def plan_list_files_op(
         # Avoid fuse ListFiles with the following ReadFiles.
         supports_fusion=False,
     )
+
+    if (
+        load_checkpoint is not None
+        and data_context.checkpoint_config.generated_id_column
+    ):
+        # Checkpoint restore is run as an execution callback, so the checkpoint block
+        # object reference is not yet available. Instead we pass in load_checkpoint
+        # function, so when the map task is executed, the checkpoint block is loaded
+        # and passed to the map task.
+        map_operator.add_map_task_kwargs_fn(
+            lambda: {CHECKPOINTED_IDS_KWARG_NAME: load_checkpoint()}
+        )
+
+    return map_operator
 
 
 def create_input_data_buffer(
@@ -149,17 +166,21 @@ def create_input_data_buffer(
 
 def list_files_for_each_block(
     blocks: Iterable[Block],
-    _: TaskContext,
+    ctx: TaskContext,
     *,
     indexer: FileIndexer,
     filesystem: FileSystem,
     file_extensions: Optional[List[str]],
     partition_filter: Optional[PathPartitionFilter],
 ) -> Iterable[Block]:
+    checkpoint_ids = None
+    if CHECKPOINTED_IDS_KWARG_NAME in ctx.kwargs:
+        checkpoint_ids = ctx.kwargs[CHECKPOINTED_IDS_KWARG_NAME]
     for block in blocks:
         for file_manifest in indexer.list_files(
             block[PATH_COLUMN_NAME],
             filesystem=filesystem,
+            checkpoint_ids=checkpoint_ids,
             file_extensions=file_extensions,
             partition_filter=partition_filter,
         ):

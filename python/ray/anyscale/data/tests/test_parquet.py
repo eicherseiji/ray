@@ -1,6 +1,7 @@
 import functools
 import re
 import os
+from typing import List
 
 import pandas as pd
 import pyarrow as pa
@@ -16,7 +17,13 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
 from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
-from ray.anyscale.data.checkpoint.util import normalize_id
+from ray.anyscale.data.checkpoint.util import (
+    normalize_id,
+    get_checkpoint_fragments,
+    CHECKPOINTED_FRAGMENT_TYPE,
+    CHECKPOINTED_FILE_FRAGMENTS_TYPE,
+    CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
+)
 
 import ray
 from ray.data.tests.conftest import *  # noqa
@@ -514,7 +521,9 @@ def test_read_parquet_batching(ray_start_regular_shared, tmp_path, test_case):
 
     # Get actual file size for the manifest
     file_size = os.path.getsize(file_path)
-    file_manifest = FileManifest.construct_manifest([file_path], [file_size], [None])
+    file_manifest = FileManifest.construct_manifest(
+        [file_path], [file_size], [None], [None]
+    )
 
     tables = list(
         reader.read_files(
@@ -944,6 +953,7 @@ def test_parquet_chunked_reading_preserves_order(ray_start_regular_shared, tmp_p
         paths,
         [file_size] * len(paths),
         chunk_metadatas,
+        [None] * len(chunks),
     )
 
     # Read the data
@@ -1114,6 +1124,7 @@ def test_chunked_vs_non_chunked_same_result(
         [file_path],
         [file_size],
         [None],
+        [None],
     )
 
     tables_no_chunk = list(
@@ -1127,6 +1138,7 @@ def test_chunked_vs_non_chunked_same_result(
         [file_path] * len(chunks),
         [file_size] * len(chunks),
         [metadata for metadata, _ in chunks],
+        [None] * len(chunks),
     )
 
     tables_chunked = list(
@@ -1191,6 +1203,7 @@ def test_chunked_reading_with_column_selection(
         [file_path] * len(chunks),
         [file_size] * len(chunks),
         [metadata for metadata, _ in chunks],
+        [None] * len(chunks),
     )
 
     tables = list(
@@ -1259,6 +1272,7 @@ def test_chunked_out_of_range_returns_empty(
         [file_path] * len(out_of_range_chunk_mds),
         [file_size] * len(out_of_range_chunk_mds),
         out_of_range_chunk_mds,
+        [None] * len(out_of_range_chunk_mds),
     )
 
     tables = list(
@@ -1268,6 +1282,72 @@ def test_chunked_out_of_range_returns_empty(
         )
     )
     assert len(tables) == 0
+
+
+def _create_checkpointed_ids_table(
+    file_path: str,
+    fragment_specs: List[tuple[int, int, int, List[bool]]],
+) -> pa.Table:
+    """Helper function to create checkpointed_ids table for testing.
+
+    Args:
+        file_path: The file path for the checkpoint data
+        fragment_specs: List of (fragment_id, num_rows, num_checkpointed_rows, checkpointed_row_ids)
+                       where checkpointed_row_ids is a boolean list indicating which rows are checkpointed
+
+    Returns:
+        PyArrow table with CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA
+    """
+    # Create fragment structs
+    fragment_structs = []
+    for (
+        fragment_id,
+        num_rows,
+        num_checkpointed_rows,
+        checkpointed_row_ids,
+    ) in fragment_specs:
+        # Create struct using the actual schema type definition
+        fragment_struct = pa.StructArray.from_arrays(
+            [
+                pa.array([fragment_id], type=pa.int32()),
+                pa.array([num_rows], type=pa.int32()),
+                pa.array([num_checkpointed_rows], type=pa.int32()),
+                pa.array([checkpointed_row_ids], type=pa.large_list(pa.bool_())),
+            ],
+            fields=CHECKPOINTED_FRAGMENT_TYPE,
+        )
+        fragment_structs.append(fragment_struct)
+
+    # Create file fragments struct
+    if fragment_structs:
+        all_fragment_structs = pa.concat_arrays(fragment_structs)
+        offsets = pa.array([0, len(all_fragment_structs)], type=pa.int64())
+        fragments_list = pa.LargeListArray.from_arrays(offsets, all_fragment_structs)
+    else:
+        fragments_list = pa.array([[]], type=pa.large_list(CHECKPOINTED_FRAGMENT_TYPE))
+
+    # Calculate if fully checkpointed
+    fully_checkpointed = all(
+        num_checkpointed_rows == num_rows
+        for _, num_rows, num_checkpointed_rows, _ in fragment_specs
+    )
+
+    checkpointed_file_fragments = pa.StructArray.from_arrays(
+        [
+            pa.array([len(fragment_specs)], type=pa.int32()),  # num_fragments
+            pa.array([fully_checkpointed], type=pa.bool_()),  # fully_checkpointed
+            fragments_list,  # fragments
+        ],
+        fields=CHECKPOINTED_FILE_FRAGMENTS_TYPE,
+    )
+
+    return pa.Table.from_arrays(
+        [
+            pa.array([file_path]),  # checkpointed_file
+            checkpointed_file_fragments,  # checkpointed_file_fragments
+        ],
+        schema=CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
+    )
 
 
 def test_read_files_with_checkpoint_ids_fully_skip_fragment(
@@ -1283,7 +1363,6 @@ def test_read_files_with_checkpoint_ids_fully_skip_fragment(
     pq.write_table(table, file_path, row_group_size=25)  # 4 row groups
 
     file_size = os.path.getsize(file_path)
-    file_manifest = FileManifest.construct_manifest([file_path], [file_size], [None])
 
     parquet_reader = ParquetReader(
         schema=None,
@@ -1296,21 +1375,27 @@ def test_read_files_with_checkpoint_ids_fully_skip_fragment(
         target_block_size=None,
     )
 
-    checkpointed_ids = pa.table(
-        {
-            "checkpointed_fragment": [f"{file_path}/row_group={i}" for i in range(4)],
-            "num_rows": [25, 25, 25, 25],
-            "checkpointed_row_count": [25, 25, 25, 25],
-            "checkpointed_row_ids": pa.array(
-                [[], [], [], []], type=pa.list_(pa.bool_())
-            ),
-        }
+    # Create checkpoint data in the new table format (fully checkpointed)
+    fragment_specs = [
+        (i, 25, 25, []) for i in range(4)  # 4 row groups, all fully checkpointed
+    ]
+    checkpointed_ids = _create_checkpointed_ids_table(str(file_path), fragment_specs)
+
+    # Convert to manifest format using the new utility function
+    from ray.anyscale.data.checkpoint.util import index_checkpointed_fragments
+
+    checkpointed_fragments_by_path = index_checkpointed_fragments(checkpointed_ids)
+    checkpoint_ids_scalar = get_checkpoint_fragments(
+        checkpointed_ids, str(file_path), checkpointed_fragments_by_path
+    )
+
+    file_manifest = FileManifest.construct_manifest(
+        [file_path], [file_size], [None], [checkpoint_ids_scalar]
     )
 
     tables = list(
         parquet_reader.read_files(
             file_manifest,
-            checkpoint_ids=checkpointed_ids,
             filesystem=pa.fs.LocalFileSystem(),
         )
     )
@@ -1329,7 +1414,6 @@ def test_read_files_with_checkpoint_ids_partial_skip_fragment(
     pq.write_table(table, file_path, row_group_size=5)  # 4 row groups
 
     file_size = os.path.getsize(file_path)
-    file_manifest = FileManifest.construct_manifest([file_path], [file_size], [None])
 
     parquet_reader = ParquetReader(
         schema=None,
@@ -1342,31 +1426,49 @@ def test_read_files_with_checkpoint_ids_partial_skip_fragment(
         target_block_size=None,
     )
 
-    checkpointed_ids_table = pa.table(
-        {
-            "checkpointed_fragment": [f"{file_path}/row_group={i}" for i in range(4)],
-            "num_rows": [5, 5, 5, 5],
-            "checkpointed_row_count": [3, 0, 0, 0],
-            "checkpointed_row_ids": pa.array(
-                [
-                    [True, True, True, False, False],
-                    [False, False, False, False, False],
-                    [False, False, False, False, False],
-                    [False, False, False, False, False],
-                ],
-                type=pa.list_(pa.bool_()),
-            ),
-        }
+    # Create checkpoint data in the new table format (partially checkpointed)
+    fragment_specs = [
+        (
+            0,
+            5,
+            3,
+            [True, True, True, False, False],
+        ),  # Fragment 0: 3 out of 5 rows checkpointed
+        (
+            1,
+            5,
+            0,
+            [False, False, False, False, False],
+        ),  # Fragment 1: no rows checkpointed
+        (
+            2,
+            5,
+            0,
+            [False, False, False, False, False],
+        ),  # Fragment 2: no rows checkpointed
+        (
+            3,
+            5,
+            0,
+            [False, False, False, False, False],
+        ),  # Fragment 3: no rows checkpointed
+    ]
+    checkpointed_ids = _create_checkpointed_ids_table(str(file_path), fragment_specs)
+
+    # Convert to manifest format using the new utility function
+    from ray.anyscale.data.checkpoint.util import index_checkpointed_fragments
+
+    checkpointed_fragments_by_path = index_checkpointed_fragments(checkpointed_ids)
+    checkpoint_ids_scalar = get_checkpoint_fragments(
+        checkpointed_ids, str(file_path), checkpointed_fragments_by_path
     )
 
-    checkpointed_ids = ray.data.from_arrow(checkpointed_ids_table).take_batch(
-        batch_format="pyarrow"
+    file_manifest = FileManifest.construct_manifest(
+        [file_path], [file_size], [None], [checkpoint_ids_scalar]
     )
-
     tables = list(
         parquet_reader.read_files(
             file_manifest,
-            checkpoint_ids=checkpointed_ids,
             filesystem=pa.fs.LocalFileSystem(),
         )
     )
@@ -1390,7 +1492,6 @@ def test_read_files_with_checkpoint_ids_no_skip_fragment(
     pq.write_table(table, file_path, row_group_size=25)  # 4 row groups
 
     file_size = os.path.getsize(file_path)
-    file_manifest = FileManifest.construct_manifest([file_path], [file_size], [None])
 
     parquet_reader = ParquetReader(
         schema=None,
@@ -1403,28 +1504,36 @@ def test_read_files_with_checkpoint_ids_no_skip_fragment(
         target_block_size=None,
     )
 
-    checkpointed_ids_table = pa.table(
-        {
-            # Different file, different row group
-            "checkpointed_fragment": ["/non/existent/path.parquet/row_group=0"],
-            "num_rows": [25],
-            "checkpointed_row_count": [5],
-            # Different file has checkpointed rows
-            "checkpointed_row_ids": pa.array(
-                [[False] * 100 + [True, True, True, True, True] + [False] * 95],
-                type=pa.list_(pa.bool_()),
-            ),
-        }
+    # Create checkpoint data in the new table format for a different file
+    fragment_specs = [
+        (
+            0,
+            25,
+            5,
+            [False] * 100 + [True, True, True, True, True] + [False] * 95,
+        ),  # Different file, partially checkpointed
+    ]
+    checkpointed_ids_table = _create_checkpointed_ids_table(
+        "/non/existent/path.parquet", fragment_specs
     )
 
-    checkpointed_ids = ray.data.from_arrow(checkpointed_ids_table).take_batch(
-        batch_format="pyarrow"
+    # Convert to manifest format using the new utility function
+    from ray.anyscale.data.checkpoint.util import index_checkpointed_fragments
+
+    checkpointed_fragments_by_path = index_checkpointed_fragments(
+        checkpointed_ids_table
+    )
+    checkpoint_ids_scalar = get_checkpoint_fragments(
+        checkpointed_ids_table, str(file_path), checkpointed_fragments_by_path
+    )
+
+    file_manifest = FileManifest.construct_manifest(
+        [file_path], [file_size], [None], [checkpoint_ids_scalar]
     )
 
     tables = list(
         parquet_reader.read_files(
             file_manifest,
-            checkpoint_ids=checkpointed_ids,
             filesystem=pa.fs.LocalFileSystem(),
         )
     )

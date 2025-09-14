@@ -227,21 +227,32 @@ def run_checkpoints_benchmark(
         }
 
         if checkpoint_config is not None:
-            # TODO(srinathk10): Allow partial checkpoint recovery only for 10M rows now
-            # and remove this once it scales.
             if num_rows == 10_000_000:
+                # For small scale, we test all scenarios
                 test_scenarios = [
                     ("full_checkpoint", 1.0),  # Full completion
-                    ("90_percent_completion", 0.9),  # 90% completion
+                    ("90_percent_completion", 0.90),  # 90% completion
                     ("75_percent_completion", 0.75),  # 75% completion
                     ("50_percent_completion", 0.5),  # 50% completion
                     ("25_percent_completion", 0.25),  # 25% completion
                     ("10_percent_completion", 0.1),  # 10% completion
                 ]
-            else:
-                test_scenarios = [
-                    ("full_checkpoint", 1.0),  # Full completion
-                ]
+            elif num_rows == 3_000_000_000:
+                # For large scale, limit the test scenarios
+                if checkpoint_config.generated_id_column is not None:
+                    # For generated id column, we only test full completion and 99% completion for
+                    # 3B rows scale. This is because for simulating failure, we randomly delete
+                    # checkpoint files, and this may end up resulting in more partial file checkpoint
+                    # completions than expected in real-world batch inference scenarios.
+                    test_scenarios = [
+                        ("full_checkpoint", 1.0),  # Full completion
+                        ("99_percent_completion", 0.99),  # 99% completion
+                    ]
+                else:
+                    # For existing id column, we test full completion
+                    test_scenarios = [
+                        ("full_checkpoint", 1.0),  # Full completion
+                    ]
 
             for scenario_name, completion_percentage in test_scenarios:
                 if completion_percentage < 1.0:

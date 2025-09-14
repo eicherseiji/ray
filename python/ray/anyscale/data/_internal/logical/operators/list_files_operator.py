@@ -8,15 +8,19 @@ from ray.data import FileShuffleConfig
 from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
 from ray.data.block import Block, BlockAccessor, BlockColumnAccessor
 from ray.data.datasource import PathPartitionFilter
+from ray.anyscale.data.checkpoint.util import CHECKPOINTED_FILE_FRAGMENTS_TYPE
 
 if TYPE_CHECKING:
     from ray.anyscale.data._internal.file_indexer import FileIndexer
     from ray.anyscale.data._internal.partitioners import FilePartitioner
     from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 
+
+# File manifest column names
 PATH_COLUMN_NAME = "__path"
 FILE_SIZE_COLUMN_NAME = "__file_size"
 FILE_CHUNK_METADATA_COLUMN_NAME = "__file_chunk_metadata"
+FILE_FRAGMENTS_CHECKPOINT_COLUMN_NAME = "__file_fragments_checkpoint"
 
 
 class FileManifest:
@@ -34,19 +38,22 @@ class FileManifest:
         """Create a new `FileManifest` from a block.
 
         Args:
-            block: Block with `PATH_COLUMN_NAME` and `FILE_SIZE_COLUMN_NAME` columns.
+            block: Block with `PATH_COLUMN_NAME`, `FILE_SIZE_COLUMN_NAME`,
+                `FILE_CHUNK_METADATA_COLUMN_NAME`, and `FILE_FRAGMENTS_CHECKPOINT_COLUMN_NAME` columns.
                 Any other columns are optional and treated as input data.
         """
         column_names = BlockAccessor.for_block(block).column_names()
         assert FILE_SIZE_COLUMN_NAME in column_names
         assert PATH_COLUMN_NAME in column_names
         assert FILE_CHUNK_METADATA_COLUMN_NAME in column_names
+        assert FILE_FRAGMENTS_CHECKPOINT_COLUMN_NAME in column_names
 
         self._block = block
 
         self._paths = block[PATH_COLUMN_NAME]
         self._file_sizes = block[FILE_SIZE_COLUMN_NAME]
         self._file_chunk_metadatas = block[FILE_CHUNK_METADATA_COLUMN_NAME]
+        self._file_fragments_checkpoint = block[FILE_FRAGMENTS_CHECKPOINT_COLUMN_NAME]
 
     def __len__(self) -> int:
         return len(self._block)
@@ -66,6 +73,10 @@ class FileManifest:
     def file_chunk_metadatas(self) -> np.ndarray:
         return BlockColumnAccessor.for_column(self._file_chunk_metadatas).to_numpy()
 
+    @cached_property
+    def file_fragments_checkpoint(self) -> pa.Array:
+        return self._file_fragments_checkpoint
+
     def as_block(self) -> Block:
         """Return the underlying block for the `FileManifest`.
 
@@ -74,14 +85,40 @@ class FileManifest:
         return self._block
 
     @classmethod
-    def construct_manifest(cls, paths, sizes, chunk_metadatas) -> "FileManifest":
-        assert len(paths) == len(sizes) == len(chunk_metadatas)
+    def construct_manifest(
+        cls,
+        paths: List[str],
+        sizes: List[int],
+        chunk_metadatas: List[Optional[dict]],
+        checkpoint_file_fragments: List[Optional[pa.StructScalar]],
+    ) -> "FileManifest":
+        assert (
+            len(paths)
+            == len(sizes)
+            == len(chunk_metadatas)
+            == len(checkpoint_file_fragments)
+        )
+
+        processed_fragments = []
+        for fragment in checkpoint_file_fragments:
+            if fragment is None:
+                processed_fragments.append(None)
+            elif isinstance(fragment, pa.StructScalar) and fragment.is_valid:
+                # Convert StructScalar to dict for PyArrow 9 compatibility
+                processed_fragments.append(fragment.as_py())
+            else:
+                processed_fragments.append(None)
+
+        checkpoint_file_fragments_array = pa.array(
+            processed_fragments, type=CHECKPOINTED_FILE_FRAGMENTS_TYPE
+        )
 
         block = pa.table(
             {
                 PATH_COLUMN_NAME: paths,
                 FILE_SIZE_COLUMN_NAME: sizes,
                 FILE_CHUNK_METADATA_COLUMN_NAME: chunk_metadatas,
+                FILE_FRAGMENTS_CHECKPOINT_COLUMN_NAME: checkpoint_file_fragments_array,
             }
         )
         return cls(block)

@@ -10,7 +10,7 @@ from pyarrow.fs import FileSelector, FileSystem, FileType
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
-from ray.data.block import BlockColumn
+from ray.data.block import BlockColumn, Block
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
 from ray.data.datasource.partitioning import PathPartitionFilter
 from ray.data.datasource.path_util import (
@@ -142,6 +142,7 @@ class FileIndexer(abc.ABC):
         filesystem: "FileSystem",
         file_extensions: Optional[List[str]] = None,
         partition_filter: Optional[PathPartitionFilter] = None,
+        checkpoint_ids: Optional[Block] = None,
     ) -> Iterable[FileManifest]:
         """List files and their on-disk sizes for the given path.
 
@@ -150,6 +151,7 @@ class FileIndexer(abc.ABC):
             filesystem: A PyArrow filesystem object.
             file_extensions: A list of file extensions to filter by.
             partition_filter: A partition filter to filter by.
+            checkpoint_ids: A block of checkpointed IDs.
 
         Returns:
             An iterator of `FileManifest` objects, each of which contains a file path
@@ -190,10 +192,26 @@ class NonSamplingFileIndexer(FileIndexer):
         filesystem: "FileSystem",
         file_extensions: Optional[List[str]] = None,
         partition_filter: Optional[PathPartitionFilter] = None,
+        checkpoint_ids: Optional[Block] = None,
     ) -> Iterable[FileManifest]:
+        from ray.anyscale.data.checkpoint.util import (
+            get_checkpoint_fragments,
+            index_checkpointed_fragments,
+            is_file_fragments_fully_checkpointed,
+        )
+
+        if checkpoint_ids is not None:
+            # Index the checkpointed fragments by file path
+            checkpointed_fragments_by_path: dict[
+                str, int
+            ] = index_checkpointed_fragments(checkpoint_ids)
+        else:
+            checkpointed_fragments_by_path = {}
+
         running_paths = []
         running_file_sizes = []
         running_file_chunk_metadatas = []
+        running_file_fragments_checkpoint = []
         manifests_count = 0
         filtered_paths_count = 0
         file_chunks_count = 0
@@ -215,12 +233,32 @@ class NonSamplingFileIndexer(FileIndexer):
                     filtered_paths_count += 1
                     continue
 
+                checkpoint_file_fragments = None
+                if checkpoint_ids is not None:
+                    # Get checkpoint file fragments for this file
+                    checkpoint_file_fragments = get_checkpoint_fragments(
+                        checkpoint_ids, path, checkpointed_fragments_by_path
+                    )
+
+                    # Check if the file is fully checkpointed
+                    if (
+                        checkpoint_file_fragments is not None
+                        and is_file_fragments_fully_checkpointed(
+                            checkpoint_file_fragments
+                        )
+                    ):
+                        logger.debug(
+                            f"list_files: Skipping fully checkpointed file: {path!r}"
+                        )
+                        continue
+
                 for chunk_metadata, size in self._file_chunker.generate_chunk_metadatas(
                     path, file_size
                 ):
                     running_paths.append(path)
                     running_file_sizes.append(size)
                     running_file_chunk_metadatas.append(chunk_metadata)
+                    running_file_fragments_checkpoint.append(checkpoint_file_fragments)
                     file_chunks_count += 1
                     if len(running_paths) >= self._MAX_PATHS_PER_LIST_FILES_OUTPUT:
                         manifests_count += 1
@@ -228,16 +266,19 @@ class NonSamplingFileIndexer(FileIndexer):
                             running_paths,
                             running_file_sizes,
                             running_file_chunk_metadatas,
+                            running_file_fragments_checkpoint,
                         )
                         running_paths = []
                         running_file_sizes = []
                         running_file_chunk_metadatas = []
+                        running_file_fragments_checkpoint = []
         if running_paths:
             manifests_count += 1
             yield FileManifest.construct_manifest(
                 running_paths,
                 running_file_sizes,
                 running_file_chunk_metadatas,
+                running_file_fragments_checkpoint,
             )
         logger.debug(
             f"Listing files: filtered {filtered_paths_count} paths, constructed manifests {manifests_count} with {file_chunks_count} file chunks"

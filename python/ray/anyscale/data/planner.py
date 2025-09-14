@@ -17,6 +17,7 @@ from ray.anyscale.data._internal.planner import (
 )
 from ray.anyscale.data._internal.planner.checkpoint import (
     plan_from_op_with_checkpoint_filter,
+    plan_list_files_op_with_checkpoint_filter,
     plan_read_files_op_with_checkpoint_filter,
     plan_read_op_with_checkpoint_filter,
     plan_write_op_with_checkpoint_writer,
@@ -180,6 +181,10 @@ def _get_plan_fns_for_checkpointing(
     load_checkpoint: Callable[[], ObjectRef],
 ) -> Dict[Type[LogicalOperator], PlanLogicalOpFn]:
     plan_fns = {
+        ListFiles: functools.partial(
+            plan_list_files_op_with_checkpoint_filter,
+            load_checkpoint=load_checkpoint,
+        ),
         Read: functools.partial(
             plan_read_op_with_checkpoint_filter,
             load_checkpoint=load_checkpoint,

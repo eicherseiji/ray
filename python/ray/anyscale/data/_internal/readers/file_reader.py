@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
-from ray.data.block import Block, DataBatch
+from ray.data.block import DataBatch
 
 if TYPE_CHECKING:
     import pyarrow
@@ -28,7 +28,6 @@ class FileReader(abc.ABC):
         columns: Optional[List[str]],
         columns_rename: Optional[Dict[str, str]],
         filesystem: "pyarrow.fs.FileSystem",
-        checkpoint_ids: Optional[Block] = None,
     ) -> Iterable[DataBatch]:
         """Read batches of data from the given file paths.
 

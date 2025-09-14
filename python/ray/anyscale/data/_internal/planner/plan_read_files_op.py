@@ -1,5 +1,5 @@
 import logging
-from typing import Callable, Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -18,8 +18,6 @@ from ray.data._internal.output_buffer import OutputBlockSizeOption
 from ray.data._internal.table_block import TableBlockAccessor
 from ray.data.block import Block, BlockType, DataBatch, BatchFormat
 from ray.data.context import DataContext
-from ray.anyscale.data.checkpoint.util import CHECKPOINTED_IDS_KWARG_NAME
-from ray import ObjectRef
 
 
 logger = logging.getLogger(__name__)
@@ -29,7 +27,6 @@ def plan_read_files_op(
     op: ReadFiles,
     physical_children: List[PhysicalOperator],
     data_context: DataContext,
-    load_checkpoint: Optional[Callable[[], ObjectRef]] = None,
 ) -> PhysicalOperator:
     assert len(physical_children) == 1
     input_op = physical_children[0]
@@ -46,9 +43,6 @@ def plan_read_files_op(
     reader = op.reader
 
     def read_files(blocks: Iterable[Block], ctx: TaskContext) -> Iterable[DataBatch]:
-        checkpoint_ids = None
-        if CHECKPOINTED_IDS_KWARG_NAME in ctx.kwargs:
-            checkpoint_ids = ctx.kwargs[CHECKPOINTED_IDS_KWARG_NAME]
         for block in blocks:
             file_manifest = FileManifest(block)
             # For some readers, we need to filter the rows in-memory.
@@ -58,7 +52,6 @@ def plan_read_files_op(
                 columns_rename=columns_rename_map,
                 filter_expr=filter_expr,
                 filesystem=fs,
-                checkpoint_ids=checkpoint_ids,
             )
 
     transform_fns: List[MapTransformFn] = [
@@ -115,14 +108,5 @@ def plan_read_files_op(
         ),
         ray_remote_args=op._ray_remote_args,
     )
-
-    if load_checkpoint is not None:
-        # Checkpoint restore is run as an execution callback, so the checkpoint block
-        # object reference is not yet available. Instead we pass in load_checkpoint
-        # function, so when the map task is executed, the checkpoint block is loaded
-        # and passed to the map task.
-        map_operator.add_map_task_kwargs_fn(
-            lambda: {CHECKPOINTED_IDS_KWARG_NAME: load_checkpoint()}
-        )
 
     return map_operator

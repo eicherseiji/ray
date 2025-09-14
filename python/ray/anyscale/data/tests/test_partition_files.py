@@ -8,6 +8,7 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FILE_SIZE_COLUMN_NAME,
     PATH_COLUMN_NAME,
     FILE_CHUNK_METADATA_COLUMN_NAME,
+    FILE_FRAGMENTS_CHECKPOINT_COLUMN_NAME,
 )
 from ray.anyscale.data._internal.partitioners import (
     RoundRobinPartitioner,
@@ -54,6 +55,7 @@ def test_round_robin_partitioner_produces_correct_partitions(
             PATH_COLUMN_NAME: [str(i) for i in range(1, num_paths + 1)],
             FILE_SIZE_COLUMN_NAME: [1] * num_paths,
             FILE_CHUNK_METADATA_COLUMN_NAME: [None] * num_paths,
+            FILE_FRAGMENTS_CHECKPOINT_COLUMN_NAME: [None] * num_paths,
         }
     )
 
@@ -87,6 +89,7 @@ def test_round_robin_partitioner_with_no_size_estimates():
             PATH_COLUMN_NAME: ["path0", "path1", "path2"],
             FILE_SIZE_COLUMN_NAME: [None, None, None],
             FILE_CHUNK_METADATA_COLUMN_NAME: [None, None, None],
+            FILE_FRAGMENTS_CHECKPOINT_COLUMN_NAME: [None, None, None],
         }
     )
 

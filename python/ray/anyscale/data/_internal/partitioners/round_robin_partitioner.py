@@ -19,6 +19,7 @@ class _FileBucket:
         self._paths = []
         self._file_sizes = []
         self._file_chunk_metadatas = []
+        self._checkpoint_file_fragments = []
         self._in_memory_size = 0
 
     @property
@@ -37,22 +38,29 @@ class _FileBucket:
     def file_chunk_metadatas(self):
         return self._file_chunk_metadatas
 
+    @property
+    def checkpoint_file_fragments(self):
+        return self._checkpoint_file_fragments
+
     def add(
         self,
         path: str,
         file_size: int,
         file_chunk_metadata: Tuple[int, int],
         in_memory_size: int,
+        checkpoint_file_fragments=None,
     ):
         self._paths.append(path)
         self._file_sizes.append(file_size)
         self._file_chunk_metadatas.append(file_chunk_metadata)
+        self._checkpoint_file_fragments.append(checkpoint_file_fragments)
         self._in_memory_size += in_memory_size
 
     def clear(self):
         self._paths.clear()
         self._file_sizes.clear()
         self._file_chunk_metadatas.clear()
+        self._checkpoint_file_fragments.clear()
         self._in_memory_size = 0
 
 
@@ -99,11 +107,18 @@ class RoundRobinPartitioner(FilePartitioner):
         in_memory_size_estimates = (
             self._in_memory_size_estimator.estimate_in_memory_sizes(input)
         )
-        for file_path, file_size, file_chunk_metadata, in_memory_size_estimate in zip(
+        for (
+            file_path,
+            file_size,
+            file_chunk_metadata,
+            in_memory_size_estimate,
+            checkpoint_file_fragments,
+        ) in zip(
             input.paths,
             input.file_sizes,
             input.file_chunk_metadatas,
             in_memory_size_estimates,
+            input.file_fragments_checkpoint,
         ):
             current_bucket = self._buckets[self._current_bucket_index]
 
@@ -115,20 +130,31 @@ class RoundRobinPartitioner(FilePartitioner):
             # This is a special-case for file systems that don't provide file sizes
             # like HTTP-based file systems.
             if in_memory_size_estimate is None:
-                current_bucket.add(file_path, file_size, file_chunk_metadata, 0)
+                current_bucket.add(
+                    file_path,
+                    file_size,
+                    file_chunk_metadata,
+                    0,
+                    checkpoint_file_fragments,
+                )
                 self._current_bucket_index = (
                     self._current_bucket_index + 1
                 ) % self._num_buckets
                 continue
 
             current_bucket.add(
-                file_path, file_size, file_chunk_metadata, in_memory_size_estimate
+                file_path,
+                file_size,
+                file_chunk_metadata,
+                in_memory_size_estimate,
+                checkpoint_file_fragments,
             )
             if current_bucket.in_memory_size >= self._max_bucket_size:
                 manifest = FileManifest.construct_manifest(
                     current_bucket.paths,
                     current_bucket.file_sizes,
                     current_bucket.file_chunk_metadatas,
+                    current_bucket.checkpoint_file_fragments,
                 )
                 self._output_queue.append(manifest)
                 self._current_bucket_index = (
@@ -150,6 +176,9 @@ class RoundRobinPartitioner(FilePartitioner):
         for bucket in self._buckets:
             if bucket.paths:
                 manifest = FileManifest.construct_manifest(
-                    bucket.paths, bucket.file_sizes, bucket.file_chunk_metadatas
+                    bucket.paths,
+                    bucket.file_sizes,
+                    bucket.file_chunk_metadatas,
+                    bucket.checkpoint_file_fragments,
                 )
                 self._output_queue.append(manifest)

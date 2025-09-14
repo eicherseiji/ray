@@ -6,14 +6,18 @@ from dataclasses import dataclass
 
 import pyarrow as pa
 import pyarrow.compute as pc
+import pyarrow.dataset
 import numpy as np
-
+import logging
 from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointConfig,
 )
 from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data.block import Block, BlockAccessor, DataBatch
 from ray.data._internal.arrow_block import ArrowBlockAccessor
+
+
+logger = logging.getLogger(__name__)
 
 
 # Checkpoint keyword argument name
@@ -25,12 +29,15 @@ CHECKPOINTED_IDS_KWARG_NAME = "checkpointed_ids"
 #
 
 # Generated ID string format
-GENERATED_ID_STRING_FORMAT = "{path_prefix}/{file_name}/row_group={row_group}/num_rows={num_rows}/row_id={row_id}"
+GENERATED_ID_STRING_FORMAT = (
+    "{path_prefix}/{file_name}/fragment={fragment}/num_rows={num_rows}/row_id={row_id}"
+)
 
 # Field names for `generated_id_column` schema
 PATH_PREFIX_FIELD = "path_prefix"
 FILE_NAME_FIELD = "file_name"
-ROW_GROUP_FIELD = "row_group"
+FRAGMENT_FIELD = "fragment"
+NUM_FRAGMENTS_FIELD = "num_fragments"
 NUM_ROWS_FIELD = "num_rows"
 ROW_ID_FIELD = "row_id"
 
@@ -38,10 +45,17 @@ ROW_ID_FIELD = "row_id"
 # Note: Dictionary encoding is used to reduce the size of the generated id column
 # because of low cardinality of the fields.
 GENERATED_ID_COLUMN_FIELDS = {
+    # Path prefix for the file
     PATH_PREFIX_FIELD: pa.dictionary(pa.int32(), pa.string()),
+    # File name
     FILE_NAME_FIELD: pa.dictionary(pa.int32(), pa.string()),
-    ROW_GROUP_FIELD: pa.dictionary(pa.int32(), pa.int32()),
+    # Fragment (chunk) index
+    FRAGMENT_FIELD: pa.dictionary(pa.int32(), pa.int32()),
+    # Total number of fragments in the file
+    NUM_FRAGMENTS_FIELD: pa.dictionary(pa.int32(), pa.int32()),
+    # Total number of rows in the file fragment
     NUM_ROWS_FIELD: pa.dictionary(pa.int32(), pa.int32()),
+    # Row ID
     ROW_ID_FIELD: pa.int32(),
 }
 
@@ -49,7 +63,8 @@ GENERATED_ID_COLUMN_FIELDS = {
 GENERATED_ID_COLUMN_FIELD_NAMES = [
     PATH_PREFIX_FIELD,
     FILE_NAME_FIELD,
-    ROW_GROUP_FIELD,
+    FRAGMENT_FIELD,
+    NUM_FRAGMENTS_FIELD,
     NUM_ROWS_FIELD,
     ROW_ID_FIELD,
 ]
@@ -59,16 +74,18 @@ GENERATED_ID_COLUMN_FIELD_NAMES = [
 class GeneratedIdFieldIndex(IntEnum):
     PATH_PREFIX = 0
     FILE_NAME = 1
-    ROW_GROUP = 2
-    NUM_ROWS = 3
-    ROW_ID = 4
+    FRAGMENT = 2
+    NUM_FRAGMENTS = 3
+    NUM_ROWS = 4
+    ROW_ID = 5
 
 
 # Explicit mapping from enum to field names
 GENERATED_ID_FIELD_MAPPING = {
     GeneratedIdFieldIndex.PATH_PREFIX: PATH_PREFIX_FIELD,
     GeneratedIdFieldIndex.FILE_NAME: FILE_NAME_FIELD,
-    GeneratedIdFieldIndex.ROW_GROUP: ROW_GROUP_FIELD,
+    GeneratedIdFieldIndex.FRAGMENT: FRAGMENT_FIELD,
+    GeneratedIdFieldIndex.NUM_FRAGMENTS: NUM_FRAGMENTS_FIELD,
     GeneratedIdFieldIndex.NUM_ROWS: NUM_ROWS_FIELD,
     GeneratedIdFieldIndex.ROW_ID: ROW_ID_FIELD,
 }
@@ -82,7 +99,7 @@ GENERATED_ID_FIELD_INDICES = {
 # PyArrow struct type for `generated_id_column`
 GENERATED_ID_COLUMN_TYPE = pa.struct(
     [
-        pa.field(field_name, GENERATED_ID_COLUMN_FIELDS[field_name])
+        pa.field(field_name, GENERATED_ID_COLUMN_FIELDS[field_name], nullable=False)
         for field_name in GENERATED_ID_COLUMN_FIELD_NAMES
     ]
 )
@@ -91,22 +108,74 @@ GENERATED_ID_COLUMN_TYPE = pa.struct(
 # Generated ID column Checkpoint table schema and type definitions
 #
 
-# Checkpointed fragment column name
-CHECKPOINTED_FRAGMENT_COLUMN_NAME = "checkpointed_fragment"
+# Checkpointed file column name
+CHECKPOINTED_FILE_COLUMN_NAME = "checkpointed_file"
 
-# Checkpointed row count column name
-CHECKPOINTED_ROW_COUNT_COLUMN_NAME = "checkpointed_row_count"
+# Checkpointed file fragments column name
+CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME = "checkpointed_file_fragments"
 
-# Checkpointed row ids column name
-CHECKPOINTED_ROW_IDS_COLUMN_NAME = "checkpointed_row_ids"
+# Schema for individual checkpointed fragment struct
+CHECKPOINTED_FILE_FRAGMENT_ID_FIELD = "fragment_id"
+CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD = "num_rows"
+CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD = "num_checkpointed_rows"
+CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD = "checkpointed_row_ids"
+CHECKPOINTED_FRAGMENT_TYPE = pa.struct(
+    [
+        # Fragment ID in this file
+        pa.field(CHECKPOINTED_FILE_FRAGMENT_ID_FIELD, pa.int32(), nullable=False),
+        # Total number of rows in this fragment
+        pa.field(CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD, pa.int32(), nullable=False),
+        # Number of checkpointed rows in this fragment
+        pa.field(
+            CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
+            pa.int32(),
+            nullable=False,
+        ),
+        # Boolean array of checkpointed rows (True = checkpointed)
+        pa.field(
+            CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
+            pa.large_list(pa.bool_()),
+            nullable=True,
+        ),
+    ]
+)
+
+# Schema for checkpointed file fragments struct. This struct is passed in the
+# file manifest to the readers.
+CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD = "num_fragments"
+CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD = "fully_checkpointed"
+CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD = "fragments"
+CHECKPOINTED_FILE_FRAGMENTS_TYPE = pa.struct(
+    [
+        # Number of fragments for this file
+        pa.field(
+            CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD,
+            pa.int32(),
+            nullable=False,
+        ),
+        # Whether all fragments in the file are checkpointed
+        pa.field(
+            CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
+            pa.bool_(),
+            nullable=False,
+        ),
+        # List of checkpointed fragment structs
+        pa.field(
+            CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD,
+            pa.large_list(CHECKPOINTED_FRAGMENT_TYPE),
+            nullable=True,
+        ),
+    ]
+)
 
 # Schema for the checkpointed generated id column table
 CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA = pa.schema(
     [
-        pa.field(CHECKPOINTED_FRAGMENT_COLUMN_NAME, pa.string()),
-        pa.field(NUM_ROWS_FIELD, pa.int32()),
-        pa.field(CHECKPOINTED_ROW_COUNT_COLUMN_NAME, pa.int32()),
-        pa.field(CHECKPOINTED_ROW_IDS_COLUMN_NAME, pa.list_(pa.bool_())),
+        pa.field(CHECKPOINTED_FILE_COLUMN_NAME, pa.string()),
+        pa.field(
+            CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME,
+            CHECKPOINTED_FILE_FRAGMENTS_TYPE,
+        ),
     ]
 )
 
@@ -199,8 +268,8 @@ class CheckpointedFragmentInfo:
     fully_checkpointed: bool
     # The row IDs of the checkpointed rows in sorted order
     checkpointed_row_ids: Optional[
-        pa.ListArray
-    ]  # ListArray containing lists of row IDs per fragment
+        pa.Array
+    ]  # PyArrow array of boolean values indicating checkpointed rows
     # The number of checkpointed rows in the fragment
     checkpointed_row_count: int
 
@@ -209,11 +278,11 @@ def _create_empty_checkpointed_fragment_info(
     fragment: pa.dataset.ParquetFileFragment,
     row_group_idx: int,
 ) -> "CheckpointedFragmentInfo":
-    """Create a CheckpointedFragmentInfo for a empty checkpointed fragment.
+    """Create a CheckpointedFragmentInfo for an empty checkpointed fragment.
 
     Args:
         fragment: The Parquet fragment.
-        row_group: Row group index.
+        row_group_idx: Row group index.
 
     Returns:
         CheckpointedFragmentInfo indicating the fragment is fully checkpointed.
@@ -221,7 +290,9 @@ def _create_empty_checkpointed_fragment_info(
     return CheckpointedFragmentInfo(
         fragment=fragment,
         row_group_idx=row_group_idx,
-        num_rows=fragment.metadata.num_rows,  # Use actual fragment size
+        num_rows=fragment.metadata.row_group(
+            row_group_idx
+        ).num_rows,  # Use actual fragment size
         fully_checkpointed=False,  # Empty checkpointed fragment
         checkpointed_row_ids=None,
         checkpointed_row_count=0,  # No rows checkpointed
@@ -231,88 +302,105 @@ def _create_empty_checkpointed_fragment_info(
 def get_checkpointed_fragment_info(
     fragment: pa.dataset.ParquetFileFragment,
     row_group_idx: int,
-    checkpointed_ids: Block,
+    checkpointed_file_fragments: pa.StructScalar,
 ) -> CheckpointedFragmentInfo:
-    """
-    Get the checkpointed row IDs of a fragment from checkpointed_ids Block.
+    """Get the checkpointed row IDs of a fragment (parquet row group) from checkpointed_ids
+    for this parquet file.
+
     Args:
-        fragment: Parquet fragment to check.
+        fragment: Parquet fragment for which to get checkpointed row IDs.
         row_group_idx: Row group index.
-        checkpointed_ids: Block containing checkpointed IDs.
+        checkpointed_file_fragments: PyArrow array containing checkpointed file fragments for
+            this parquet file.
 
     Returns:
-        CheckpointedFragmentInfo: Checkpointed row IDs of the fragment.
+        CheckpointedFragmentInfo: Checkpointed row IDs of the fragment (parquet row group).
     """
-    accessor = ArrowBlockAccessor.for_block(checkpointed_ids)
-    checkpointed_ids_table = accessor.to_arrow()
-    if checkpointed_ids_table.num_rows == 0:
-        # No checkpointed IDs, return empty checkpointed fragment info
-        return _create_empty_checkpointed_fragment_info(fragment, row_group_idx)
-
-    # Extract file path from fragment path
-    fragment_path = fragment.path
-
-    # Create the search key: /path/to/file/row_group=<row_group>
-    search_key = f"{fragment_path}/row_group={row_group_idx}"
-
-    # Use binary search to find the fragment in the checkpointed_ids table.
-    checkpoint_fragment_col = checkpointed_ids_table[CHECKPOINTED_FRAGMENT_COLUMN_NAME]
-    checkpoint_fragment_array = checkpoint_fragment_col.to_numpy()
-    insert_idx = np.searchsorted(checkpoint_fragment_array, search_key, side="left")
-
+    # Check if there are any checkpointed IDs for this file.
     if (
-        insert_idx >= len(checkpoint_fragment_array)
-        or checkpoint_fragment_array[insert_idx] != search_key
+        checkpointed_file_fragments is None
+        or checkpointed_file_fragments.is_valid is False
     ):
-        # Fragment not found, return empty checkpointed fragment info
         return _create_empty_checkpointed_fragment_info(fragment, row_group_idx)
 
-    # Fragment found. Check if all the rows in the fragment are checkpointed.
-    checkpointed_ids_fragment = checkpointed_ids_table.take([insert_idx])
+    fragments_field_idx = get_struct_field_index(
+        checkpointed_file_fragments, CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD
+    )
+    fragments = pc.struct_field(checkpointed_file_fragments, [fragments_field_idx])
 
-    # Extract the checkpointed fragment row count
-    checkpointed_row_count = checkpointed_ids_fragment[
-        CHECKPOINTED_ROW_COUNT_COLUMN_NAME
-    ][0].as_py()
+    # Convert ListScalar to ListArray
+    if fragments.is_valid is False or len(fragments) == 0:
+        return _create_empty_checkpointed_fragment_info(fragment, row_group_idx)
+    fragments_values = fragments.values  # StructArray
 
-    # Extract the fragment row count
-    fragment_row_count = checkpointed_ids_fragment[NUM_ROWS_FIELD][0].as_py()
-    assert fragment_row_count == fragment.metadata.row_group(row_group_idx).num_rows, (
-        f"Fragment row count {fragment_row_count} is not equal to the fragment metadata "
-        f"num_rows {fragment.metadata.row_group(row_group_idx).num_rows}"
+    # Extract fragment IDs as a sorted array
+    fragment_id_field_idx = get_struct_field_index(
+        fragments_values, CHECKPOINTED_FILE_FRAGMENT_ID_FIELD
+    )
+    fragment_ids = pc.struct_field(fragments_values, [fragment_id_field_idx])
+
+    # Find matching fragment_id
+    target_scalar = pa.scalar(row_group_idx, fragment_ids.type)
+    wanted_mask = pc.equal(fragment_ids, target_scalar)
+
+    if not pc.any(wanted_mask).as_py():
+        return _create_empty_checkpointed_fragment_info(fragment, row_group_idx)
+
+    # Get the first matching fragment by index
+    # Convert mask to indices and take the first one
+    indices = pc.indices_nonzero(wanted_mask)
+    if len(indices) == 0:
+        return _create_empty_checkpointed_fragment_info(fragment, row_group_idx)
+    first_match_idx = indices[0].as_py()
+    checkpointed_fragment = fragments_values[first_match_idx]
+    checkpointed_row_ids_field_idx = get_struct_field_index(
+        checkpointed_fragment, CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD
+    )
+    checkpointed_row_ids = pc.struct_field(
+        checkpointed_fragment, [checkpointed_row_ids_field_idx]
+    )
+    num_rows_field_idx = get_struct_field_index(
+        checkpointed_fragment, CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD
+    )
+    num_rows = pc.struct_field(checkpointed_fragment, [num_rows_field_idx]).as_py()
+    num_checkpointed_rows_field_idx = get_struct_field_index(
+        checkpointed_fragment, CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD
+    )
+    num_checkpointed_rows = pc.struct_field(
+        checkpointed_fragment, [num_checkpointed_rows_field_idx]
+    ).as_py()
+
+    # Get the actual number of rows in this specific row group
+    actual_num_rows = fragment.metadata.row_group(row_group_idx).num_rows
+
+    assert num_rows == actual_num_rows, (
+        f"Number of rows in the row group {actual_num_rows} does not match "
+        f"the number of rows in the checkpointed fragment {num_rows}"
     )
 
-    if checkpointed_row_count == fragment_row_count:
-        # All rows in the fragment are checkpointed
-        fully_checkpointed = True
-
-        # When all rows are checkpointed, the checkpointed_row_ids should be an empty list.
-        checkpointed_row_ids_col = checkpointed_ids_fragment[
-            CHECKPOINTED_ROW_IDS_COLUMN_NAME
-        ]
-        assert (
-            len(checkpointed_row_ids_col) > 0 and len(checkpointed_row_ids_col[0]) == 0
-        ), f"All rows are checkpointed, so checkpointed_row_ids {checkpointed_row_ids_col} should be an empty list"
-        final_checkpointed_row_ids = checkpointed_row_ids_col
-    else:
-        # Some rows in the fragment are not checkpointed
-        assert checkpointed_row_count < fragment_row_count, (
-            f"Checkpointed row count {checkpointed_row_count} is greater than "
-            f"fragment row count {fragment_row_count}"
+    # Check if this is a fully checkpointed fragment (empty list means all rows checkpointed)
+    if len(checkpointed_row_ids) == 0:
+        assert num_checkpointed_rows == num_rows, (
+            f"Number of checkpointed rows {num_checkpointed_rows} does not match "
+            f"the number of rows in the checkpointed fragment {num_rows}"
         )
+        fully_checkpointed = True
+        final_checkpointed_row_ids = pa.array([], type=pa.bool_())
+    else:
         fully_checkpointed = False
-        final_checkpointed_row_ids = checkpointed_ids_fragment[
-            CHECKPOINTED_ROW_IDS_COLUMN_NAME
-        ].combine_chunks()
+        # checkpointed_row_ids is a ListScalar containing a list of booleans
+        # Extract the values directly as a PyArrow boolean array without Python conversion
+        final_checkpointed_row_ids = checkpointed_row_ids.values
 
-    return CheckpointedFragmentInfo(
+    result = CheckpointedFragmentInfo(
         fragment=fragment,
         row_group_idx=row_group_idx,
-        num_rows=fragment_row_count,
+        num_rows=num_rows,
         fully_checkpointed=fully_checkpointed,
         checkpointed_row_ids=final_checkpointed_row_ids,
-        checkpointed_row_count=checkpointed_row_count,
+        checkpointed_row_count=num_checkpointed_rows,
     )
+    return result
 
 
 def exclude_checkpointed_rows(
@@ -331,9 +419,8 @@ def exclude_checkpointed_rows(
     Returns:
         The table with checkpointed rows excluded.
     """
-    # checkpointed_row_ids is a ListArray containing a boolean array.
-    # The boolean array has True at checkpointed row positions, False at
-    # non-checkpointed.
+    # checkpointed_row_ids is a PyArrow array of boolean values.
+    # True at checkpointed row positions, False at non-checkpointed.
     checkpointed_row_ids = checkpointed_fragment_info.checkpointed_row_ids
 
     # If no rows are checkpointed, return the table as-is.
@@ -343,33 +430,25 @@ def exclude_checkpointed_rows(
         ), "Checkpointed row ids is None, intended to be empty checkpointed fragment"
         return table
 
-    # If checkpointed_row_ids is empty list, all rows are checkpointed.
-    if len(checkpointed_row_ids) > 0 and len(checkpointed_row_ids[0]) == 0:
+    # If checkpointed_row_ids is empty array, all rows are checkpointed.
+    if len(checkpointed_row_ids) == 0:
         assert (
             checkpointed_fragment_info.fully_checkpointed
-        ), "Checkpointed row ids is empty list, intended to be fully checkpointed fragment"
+        ), "Checkpointed row ids is empty array, intended to be fully checkpointed fragment"
         # Return empty table - all rows checkpointed
-        return pa.table({})
-
-    # Extract the first (and only) list from the ListArray
-    checkpointed_row_ids_list = checkpointed_row_ids[0]
-
-    # Convert the ListScalar to a regular boolean array
-    checkpointed_row_ids_bool = checkpointed_row_ids_list.values
+        return table.slice(0, 0)
 
     # Create row indices for the current batch
-    row_indices = np.arange(current_row_offset, current_row_offset + current_num_rows)
-
     # Check if the requested row range is completely inside the boolean array bounds.
-    assert current_row_offset + current_num_rows <= len(checkpointed_row_ids_bool), (
+    assert current_row_offset + current_num_rows <= len(checkpointed_row_ids), (
         f"Current row offset {current_row_offset} + current num rows {current_num_rows} "
-        f"is greater than the length of the boolean array {len(checkpointed_row_ids_bool)}"
+        f"is greater than the length of the PyArrow boolean array {len(checkpointed_row_ids)}"
     )
 
     # Extract the relevant portion of the boolean array.
     # Use take to get the boolean values for the current row range.
     # Set boundscheck=False to handle out-of-bounds gracefully.
-    relevant_bools = pc.take(checkpointed_row_ids_bool, row_indices, boundscheck=False)
+    relevant_bools = checkpointed_row_ids.slice(current_row_offset, current_num_rows)
 
     # Invert the boolean array: True (checkpointed) becomes False (exclude).
     # False (not checkpointed) becomes True (keep).
@@ -382,6 +461,7 @@ def exclude_checkpointed_rows(
 def get_generated_id_column(
     path: str,
     row_group_idx: int,
+    num_row_groups: int,
     total_num_rows: int,
     current_row_offset: int,
     current_num_rows: int,
@@ -391,6 +471,7 @@ def get_generated_id_column(
     Args:
         path: Full path to the file
         row_group_idx: Row group index
+        num_row_groups: Number of row groups in the file
         total_num_rows: Total number of rows in the file row group
         current_row_offset: Current row offset for sequential IDs
         current_num_rows: Number of rows in the current batch
@@ -411,9 +492,13 @@ def get_generated_id_column(
             array = pa.nulls(current_num_rows, type=pa.string())
             filled_array = pc.fill_null(array, file_name)
             return pc.dictionary_encode(filled_array)
-        elif field_name == ROW_GROUP_FIELD:
+        elif field_name == FRAGMENT_FIELD:
             array = pa.nulls(current_num_rows, type=pa.int32())
             filled_array = pc.fill_null(array, row_group_idx)
+            return pc.dictionary_encode(filled_array)
+        elif field_name == NUM_FRAGMENTS_FIELD:
+            array = pa.nulls(current_num_rows, type=pa.int32())
+            filled_array = pc.fill_null(array, num_row_groups)
             return pc.dictionary_encode(filled_array)
         elif field_name == NUM_ROWS_FIELD:
             array = pa.nulls(current_num_rows, type=pa.int32())
@@ -428,7 +513,12 @@ def get_generated_id_column(
         create_array_for_field(field_name)
         for field_name in GENERATED_ID_COLUMN_FIELD_NAMES
     ]
-    return pa.StructArray.from_arrays(arrays, names=GENERATED_ID_COLUMN_FIELD_NAMES)
+    # Create proper pyarrow.Field objects for PyArrow 9 compatibility
+    fields = [
+        pa.field(field_name, field_type, nullable=False)
+        for field_name, field_type in GENERATED_ID_COLUMN_FIELDS.items()
+    ]
+    return pa.StructArray.from_arrays(arrays, fields=fields)
 
 
 def normalize_id(id: Union[dict, int]) -> str:
@@ -448,6 +538,89 @@ def normalize_id(id: Union[dict, int]) -> str:
 
     # Quote the normalized ID to make it safe for use as a filename.
     return urllib.parse.quote(normalized_id, safe="")
+
+
+def get_checkpoint_fragments(
+    checkpointed_ids: Block,
+    path: str,
+    checkpointed_fragments_by_path: dict[str, int],
+) -> Optional[pa.StructScalar]:
+    """Filter checkpointed fragments based on the checkpointed IDs.
+
+    Args:
+        checkpointed_ids: A Block containing checkpointed IDs with schema CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA
+        path: The file path to get the checkpointed fragments for
+        checkpointed_fragments_by_path: A dictionary mapping file path to the index of the file in the checkpointed IDs block
+
+    Returns:
+        A PyArrow StructScalar with schema CHECKPOINTED_FILE_FRAGMENTS_TYPE
+
+    """
+    if checkpointed_ids is None:
+        # No checkpointed IDs
+        return None
+
+    accessor = ArrowBlockAccessor.for_block(checkpointed_ids)
+    checkpointed_ids_table = accessor.to_arrow()
+    if checkpointed_ids_table.num_rows == 0:
+        # No checkpointed files
+        return None
+
+    if path not in checkpointed_fragments_by_path:
+        # No checkpointed fragments for this path
+        return None
+
+    file_index = checkpointed_fragments_by_path[path]
+    checkpointed_file_fragments_col = checkpointed_ids_table[
+        CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME
+    ]
+    checkpointed_file_fragments = checkpointed_file_fragments_col[file_index]
+    return checkpointed_file_fragments
+
+
+def index_checkpointed_fragments(
+    checkpointed_ids: Block,
+) -> dict[str, int]:
+    """Index checkpointed fragments by file path based on the checkpointed IDs.
+
+    Args:
+        checkpointed_ids: A Block containing checkpointed IDs with CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA
+
+    Returns:
+        A dictionary mapping file path to the index of the file in the checkpointed IDs block
+    """
+    if checkpointed_ids is None:
+        return {}
+
+    accessor = ArrowBlockAccessor.for_block(checkpointed_ids)
+    checkpointed_ids_table = accessor.to_arrow()
+    if checkpointed_ids_table.num_rows == 0:
+        return {}
+
+    file_path_col = checkpointed_ids_table[CHECKPOINTED_FILE_COLUMN_NAME]
+    file_path_dict = {file_path.as_py(): i for i, file_path in enumerate(file_path_col)}
+    return file_path_dict
+
+
+def is_file_fragments_fully_checkpointed(
+    checkpointed_file_fragments: pa.StructScalar,
+) -> bool:
+    """Check if the file fragments are fully checkpointed.
+
+    Args:
+        checkpointed_file_fragments: A PyArrow StructScalar with schema CHECKPOINTED_FILE_FRAGMENTS_TYPE
+
+    Returns:
+        True if the file fragments are fully checkpointed, False otherwise
+    """
+    fully_checkpointed_field_idx = get_struct_field_index(
+        checkpointed_file_fragments,
+        CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
+    )
+    fully_checkpointed = pc.struct_field(
+        checkpointed_file_fragments, [fully_checkpointed_field_idx]
+    ).as_py()
+    return fully_checkpointed
 
 
 def get_struct_field_index(
@@ -481,5 +654,4 @@ def get_struct_field_index(
     field_index = struct_type.get_field_index(field_name)
     if field_index == -1:
         raise ValueError(f"Field '{field_name}' not found in struct type {struct_type}")
-
     return field_index
