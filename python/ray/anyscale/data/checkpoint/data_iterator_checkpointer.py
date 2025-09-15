@@ -1,4 +1,5 @@
 import abc
+from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, fields
 import logging
 import os
@@ -301,38 +302,43 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         self._flush_completed_event: Optional[threading.Event] = None
         # Exception raised during a flush operation.
         self._flush_exception: Optional[Exception] = None
-        # Whether the flush thread attributes have been initialized.
-        self._flush_thread_initialized = False
+
+        # Deletion threadpool.
+        self._delete_threadpool: Optional[ThreadPoolExecutor] = None
+        # Task for deleting completed epoch checkpoints.
+        self._delete_task: Optional[Future] = None
+
+        # Whether the thread attributes have been initialized.
+        self._threads_initialized = False
 
         # Load state dict
         if state_dict:
             self._epoch_idx = state_dict.epoch_idx
             self._latest_committed_checkpoint_idx = state_dict.checkpoint_idx
 
-    def _init_flush_thread(self):
-        """Initialize a background thread that flushes row IDs to checkpoint files.
+    def _init_threads(self):
+        """Initialize background threads for flushing row IDs to checkpoint files
+        and deleting completed epoch checkpoints.
 
-        Delay the flush thread initialization until the start of iteration
+        Delay the thread initialization until the start of iteration
         in order to keep this class serializable.
         """
-        if self._flush_thread_initialized:
+        if self._threads_initialized:
             return
 
-        # Queue for staging row IDs.
         self._row_ids_staging_queue: Queue[Optional[Block]] = Queue()
-        # Background thread for flushing row IDs to a checkpoint file.
         self._flush_thread = threading.Thread(
             target=self._process_row_ids_from_queue,
             daemon=True,
             name="DataIteratorCheckpointer-flush",
         )
-        # Event for signaling that a forced flush has completed.
         self._flush_completed_event = threading.Event()
-        # Exception raised during a flush operation.
         self._flush_exception: Optional[Exception] = None
-
         self._flush_thread.start()
-        self._flush_thread_initialized = True
+
+        self._delete_threadpool = ThreadPoolExecutor(max_workers=1)
+
+        self._threads_initialized = True
 
     def _get_current_checkpoint_directory(self) -> str:
         """Get the current checkpoint directory where files are written.
@@ -368,7 +374,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
 
     def _flush_row_ids(self, row_ids_batches: List[pa.Array]):
         """Flush staged row IDs to a checkpoint file."""
-        assert self._flush_thread_initialized, "Flush thread not initialized."
+        assert self._threads_initialized, "Threads not initialized."
 
         if not row_ids_batches:
             raise ValueError(
@@ -455,7 +461,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
 
         Raises an exception if a previous flush operation failed.
         """
-        assert self._flush_thread_initialized, "Flush thread not initialized."
+        assert self._threads_initialized, "Threads not initialized."
 
         # The flush thread may have failed from a periodic flush.
         self._raise_if_flush_failed()
@@ -471,7 +477,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         assert (
             self._epoch_running
         ), "Must call `start_epoch` before recording yielded batches."
-        assert self._flush_thread_initialized, "Flush thread not initialized."
+        assert self._threads_initialized, "Threads not initialized."
 
         self._raise_if_flush_failed()
 
@@ -499,7 +505,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         checkpoint_dir = self._get_current_checkpoint_directory()
         self._setup_new_checkpoint_directory(checkpoint_dir)
 
-        self._init_flush_thread()
+        self._init_threads()
 
         self._epoch_running = True
 
@@ -510,6 +516,9 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
 
         # Make sure any staged row IDs are flushed before ending the epoch.
         self._flush_all_staged_row_ids()
+
+        if self._checkpoint_config.delete_checkpoints_after_epoch:
+            self._delete_completed_epoch_checkpoints(epoch_idx=self._epoch_idx)
 
         self._epoch_idx += 1
         self._latest_committed_checkpoint_idx = -1
@@ -558,3 +567,35 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
             _delete_fs_path(self._fs, new_checkpoint_dir)
 
         _create_directory(self._fs, new_checkpoint_dir)
+
+    def _delete_completed_epoch_checkpoints(self, epoch_idx: int):
+        """Delete checkpoint files for the completed epoch.
+
+        Every worker is responsible for deleting its own checkpoint files."""
+        from ray.train.v2._internal.execution.storage import _delete_fs_path
+
+        fs = self._fs
+        checkpoint_path = os.path.join(
+            self._checkpoint_path_unwrapped,
+            f"rank={self.world_rank}",
+            f"epoch={epoch_idx}",
+        )
+
+        def _delete_checkpoint_files():
+            try:
+                _delete_fs_path(fs, checkpoint_path)
+            except Exception:
+                logger.exception(
+                    f"Failed to delete checkpoint files: {checkpoint_path}"
+                )
+                raise
+
+        # Wait for the previous delete task to complete.
+        if self._delete_task:
+            self._delete_task.result()
+
+        self._delete_task = self._delete_threadpool.submit(_delete_checkpoint_files)
+
+    def __del__(self):
+        if self._delete_threadpool:
+            self._delete_threadpool.shutdown(wait=True)

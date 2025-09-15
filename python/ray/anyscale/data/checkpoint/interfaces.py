@@ -255,12 +255,17 @@ class TrainingIngestCheckpointConfig:
             read/write checkpoint data. Use this when you want to use custom credentials.
             If unset, this defaults to the filesystem configured in the `ray.train.RunConfig`
             passed to the trainer.
+        delete_checkpoints_after_epoch: If True, automatically delete checkpoint
+            data after each epoch completion. This allows for fault tolerance from
+            the latest checkpoint. If you intend to resume from a checkpoint prior
+            to the latest epoch, set this to False. Defaults to True.
     """
 
     id_column: str
     generate_id_column: bool = False
     checkpoint_path: Optional[str] = None
     override_filesystem: Optional["pyarrow.fs.FileSystem"] = None
+    delete_checkpoints_after_epoch: bool = True
 
     def __post_init__(self):
         if not isinstance(self.id_column, str) or len(self.id_column) == 0:

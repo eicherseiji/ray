@@ -241,14 +241,17 @@ def test_state_dict_across_epoch_lifecycle(tmp_path):
     assert not tmp_path.joinpath("rank=0", "epoch=1", "checkpoint=-1").is_dir()
 
 
-def test_end_epoch(tmp_path):
+@pytest.mark.parametrize("delete_checkpoints_after_epoch", [True, False])
+def test_end_epoch(tmp_path, delete_checkpoints_after_epoch):
     """Test that the checkpointer correctly handles ending an epoch.
 
     Ending an epoch should flush any staged row IDs to a checkpoint file.
     """
     checkpointer = RowIDBasedDataIteratorCheckpointer(
         checkpoint_config=DatasetCheckpointConfig(
-            checkpoint_path=str(tmp_path), id_column="id"
+            checkpoint_path=str(tmp_path),
+            id_column="id",
+            delete_checkpoints_after_epoch=delete_checkpoints_after_epoch,
         )
     )
     checkpointer.start_epoch()
@@ -258,8 +261,13 @@ def test_end_epoch(tmp_path):
     checkpoint_path = tmp_path.joinpath(
         "rank=0", "epoch=0", "checkpoint=0", "chunk_0.parquet"
     )
-    assert checkpoint_path.is_file()
-    assert pq.read_table(checkpoint_path).column("id").to_pylist() == [1, 2, 3]
+    if delete_checkpoints_after_epoch:
+        assert checkpointer._delete_task is not None
+        checkpointer._delete_task.result()
+        assert not checkpoint_path.is_file()
+    else:
+        assert checkpoint_path.is_file()
+        assert pq.read_table(checkpoint_path).column("id").to_pylist() == [1, 2, 3]
 
     assert filter_state_dict(checkpointer.state_dict()) == {
         "epoch_idx": 1,
