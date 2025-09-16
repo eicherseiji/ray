@@ -91,6 +91,3 @@ class DataContextMixin:
             raise TypeError(
                 "checkpoint_config must be a CheckpointConfig instance, a dict, or None."
             )
-
-    # Controls whether checkpointing state is overridden
-    checkpoint_enabled_override: Optional[bool] = None

@@ -53,7 +53,6 @@ def run_dataset(
 ) -> int:
     ctx = DataContext.get_current()
     ctx.checkpoint_config = checkpoint_config
-    ctx.checkpoint_enabled_override = False
 
     # Make read_parquet and transform fuse.
     ctx._enable_read_files_fusion_override = True

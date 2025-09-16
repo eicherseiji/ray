@@ -34,7 +34,6 @@ from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 from ray.data.block import Block, BlockAccessor, DataBatch, BlockMetadata, Schema
 from ray.data.datasource.path_util import _unwrap_protocol
 from ray.types import ObjectRef
-from ray.data import DataContext
 from ray.data.context import ShuffleStrategy
 from ray.data.datasource import PathPartitionFilter
 
@@ -171,6 +170,12 @@ class CheckpointLoader:
             filesystem=self.filesystem,
             partition_filter=self.checkpoint_path_partition_filter,
         )
+
+        # Manually disable checkpointing for loading the checkpoint metadata
+        # to avoid recursively restoring checkpoints and generating ID columns.
+        # TODO: Clean way to do this would be to introduce per Op config
+        # [https://github.com/ray-project/ray/issues/54520]
+        checkpoint_ds.context.checkpoint_config = None
 
         # Pre-process data pipeline
         checkpoint_ds: ray.data.Dataset = self._preprocess_data_pipeline(checkpoint_ds)
@@ -566,12 +571,6 @@ class BatchBasedCheckpointFilter(CheckpointFilter):
         Returns:
             ObjectRef[Block]: ObjectRef to the checkpointed IDs block.
         """
-        # Override checkpointing here since we are loading the checkpoint metadata and should not generate ID column.
-        # TODO: Clean way to do this would be to introduce per Op config [https://github.com/ray-project/ray/issues/54520]
-        data_context = DataContext.get_current()
-        if self.generated_id_column:
-            data_context.checkpoint_enabled_override = True
-
         if self.generated_id_column:
             loader = GeneratedIdColumnCheckpointLoader(
                 checkpoint_path=self.checkpoint_path,

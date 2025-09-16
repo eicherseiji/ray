@@ -320,11 +320,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     def _generated_id_column(self) -> Optional[str]:
         """Get the generated id column from the checkpoint config if it is set."""
         ctx = DataContext.get_current()
-        if (
-            ctx.checkpoint_config
-            and ctx.checkpoint_config.generated_id_column
-            and not ctx.checkpoint_enabled_override
-        ):
+        if ctx.checkpoint_config and ctx.checkpoint_config.generated_id_column:
             return ctx.checkpoint_config.generated_id_column
         return None
 

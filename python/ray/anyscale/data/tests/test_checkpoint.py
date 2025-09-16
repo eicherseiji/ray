@@ -477,7 +477,6 @@ def test_checkpoint(
 
     # When execution succeeds, checkpoint data should be automatically deleted.
     # TODO(haochen): Also delete checkpoint for row-based backends.
-    ctx.checkpoint_enabled_override = False
     checkpoint_ids = read_ids_from_checkpoint_files(ctx.checkpoint_config)
     if ctx.checkpoint_config.is_batch_based():
         assert checkpoint_ids == []
@@ -580,7 +579,6 @@ def test_full_dataset_executed_for_non_write(
         ds.write_parquet(data_output_path, filesystem=fs)
 
     # Recreate the same dataset, so that it will skip checkpointed rows.
-    ctx.checkpoint_enabled_override = False
     ds2 = ray.data.read_parquet(parquet_dir)
     ds2 = ds2.map(lambda row: row)
 
@@ -735,7 +733,6 @@ def test_recovery_skips_checkpointed_rows(
 
     # When execution succeeds, checkpoint data should be automatically deleted.
     # TODO(haochen): Also delete checkpoint for row-based backends.
-    ctx.checkpoint_enabled_override = False
     if ctx.checkpoint_config.is_batch_based():
         assert read_ids_from_checkpoint_files(ctx.checkpoint_config) == []
     else:
@@ -1051,7 +1048,6 @@ def test_checkpoint_restore_after_full_execution(
 
         ctx = DataContext.get_current()
         ctx.checkpoint_config = checkpoint_config
-        ctx.checkpoint_enabled_override = False
         ctx.default_hash_shuffle_parallelism = 1
         ds = ray.data.read_parquet(input_path)
 
@@ -1388,9 +1384,11 @@ class TestCheckpointFragmentRestore:
         result = get_checkpointed_fragment_info(
             fragment=fragment,
             row_group_idx=row_group_idx,
-            checkpointed_file_fragments=checkpointed_file_fragments[0]
-            if len(checkpointed_file_fragments) > 0
-            else None,
+            checkpointed_file_fragments=(
+                checkpointed_file_fragments[0]
+                if len(checkpointed_file_fragments) > 0
+                else None
+            ),
         )
         assert result.fragment.path == fragment_path
         assert result.fully_checkpointed is expected_fully_checkpointed
