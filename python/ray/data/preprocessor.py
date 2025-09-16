@@ -288,11 +288,17 @@ class Preprocessor(abc.ABC):
 
         if transform_type == BatchFormat.PANDAS:
             return ds.map_batches(
-                self._transform_pandas, batch_format=BatchFormat.PANDAS, **kwargs
+                self._transform_pandas,
+                batch_format=BatchFormat.PANDAS,
+                zero_copy_batch=True,
+                **kwargs,
             )
         elif transform_type == BatchFormat.NUMPY:
             return ds.map_batches(
-                self._transform_numpy, batch_format=BatchFormat.NUMPY, **kwargs
+                self._transform_numpy,
+                batch_format=BatchFormat.NUMPY,
+                zero_copy_batch=True,
+                **kwargs,
             )
         else:
             raise ValueError(
