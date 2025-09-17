@@ -229,6 +229,7 @@ if setup_spec.type == SetupType.RAY:
         "pyarrow >= 9.0.0",
     ]
     pydantic_dep = "pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,<3"
+    polars_dep = "polars>=1.30.0,<2.0.0"
     setup_spec.extras = {
         "cgraph": [
             "cupy-cuda12x; sys_platform != 'darwin'",
@@ -242,6 +243,7 @@ if setup_spec.type == SetupType.RAY:
         "data": [
             numpy_dep,
             pandas_dep,
+            polars_dep,
             *pyarrow_deps,
             "fsspec",
         ],
@@ -741,6 +743,20 @@ def pip_run(build_ext):
     print("# of files copied to {}: {}".format(build_ext.build_lib, copied_files))
 
 
+_LICENSE = """
+Copyright (2023 and onwards) Anyscale, Inc.
+
+The use of any code contained within this package is subject to the
+Anyscale Terms of Service (anyscale.com/terms) or other written agreement
+between you and Anyscale.
+
+Notwithstanding any terms in any license file contained within this package,
+you may not use any code in this package except within the Anyscale Platform.
+Unless specifically described otherwise in the Anyscale Documentation, you may
+not copy, modify or remove any file contained in this package.
+"""
+
+
 if __name__ == "__main__":
     import setuptools
     import setuptools.command.build_ext
@@ -808,5 +824,5 @@ if __name__ == "__main__":
             "": ["BUILD", "BUILD.bazel"],
         },
         zip_safe=False,
-        license="Apache 2.0",
+        license=_LICENSE.lstrip(),
     )

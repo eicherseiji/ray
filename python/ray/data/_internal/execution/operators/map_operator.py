@@ -9,6 +9,7 @@ from typing import (
     Callable,
     Deque,
     Dict,
+    Iterable,
     Iterator,
     List,
     Optional,
@@ -43,7 +44,7 @@ from ray.data._internal.execution.operators.base_physical_operator import (
     OneToOneOperator,
 )
 from ray.data._internal.execution.operators.map_transformer import (
-    ApplyAdditionalSplitToOutputBlocks,
+    BlockMapTransformFn,
     MapTransformer,
 )
 from ray.data._internal.execution.util import memory_string
@@ -82,7 +83,7 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
         input_op: PhysicalOperator,
         data_context: DataContext,
         name: str,
-        target_max_block_size: Optional[int],
+        target_max_block_size_override: Optional[int],
         min_rows_per_bundle: Optional[int],
         supports_fusion: bool,
         map_task_kwargs: Optional[Dict[str, Any]],
@@ -117,7 +118,7 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
         self._metadata_tasks: Dict[int, MetadataOpTask] = {}
         self._next_metadata_task_idx = 0
         # Keep track of all finished streaming generators.
-        super().__init__(name, input_op, data_context, target_max_block_size)
+        super().__init__(name, input_op, data_context, target_max_block_size_override)
 
         # If set, then all output blocks will be split into
         # this many sub-blocks. This is to avoid having
@@ -168,7 +169,7 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
         map_transformer: MapTransformer,
         input_op: PhysicalOperator,
         data_context: DataContext,
-        target_max_block_size: Optional[int] = None,
+        target_max_block_size_override: Optional[int] = None,
         name: str = "Map",
         # TODO(ekl): slim down ComputeStrategy to only specify the compute
         # config and not contain implementation code.
@@ -192,8 +193,7 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
             init_fn: The callable class to instantiate if using ActorPoolMapOperator.
             name: The name of this operator.
             compute_strategy: Customize the compute strategy for this op.
-            target_max_block_size: The target maximum number of bytes to
-                include in an output block.
+            target_max_block_size_override: Override for target max-block-size.
             min_rows_per_bundle: The number of rows to gather per batch passed to the
                 transform_fn, or None to use the block size. Setting the batch size is
                 important for the performance of GPU-accelerated transform functions.
@@ -213,16 +213,16 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
             compute_strategy = TaskPoolStrategy()
 
         if isinstance(compute_strategy, TaskPoolStrategy):
-            from ray.data._internal.execution.operators.task_pool_map_operator import (
+            from ray.anyscale.data._internal.execution.operators.task_pool_map_operator import (
                 TaskPoolMapOperator,
-            )
+            )  # noqa: E501
 
             return TaskPoolMapOperator(
                 map_transformer,
                 input_op,
                 data_context,
                 name=name,
-                target_max_block_size=target_max_block_size,
+                target_max_block_size_override=target_max_block_size_override,
                 min_rows_per_bundle=min_rows_per_bundle,
                 concurrency=compute_strategy.size,
                 supports_fusion=supports_fusion,
@@ -231,15 +231,15 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
                 ray_remote_args=ray_remote_args,
             )
         elif isinstance(compute_strategy, ActorPoolStrategy):
-            from ray.data._internal.execution.operators.actor_pool_map_operator import (
+            from ray.anyscale.data._internal.execution.operators.actor_pool_map_operator import (
                 ActorPoolMapOperator,
-            )
+            )  # noqa: E501
 
             return ActorPoolMapOperator(
                 map_transformer,
                 input_op,
                 data_context,
-                target_max_block_size_override=target_max_block_size,
+                target_max_block_size_override=target_max_block_size_override,
                 compute_strategy=compute_strategy,
                 name=name,
                 min_rows_per_bundle=min_rows_per_bundle,
@@ -286,8 +286,16 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
         map_transformer = self._map_transformer
         # Apply additional block split if needed.
         if self.get_additional_split_factor() > 1:
+            split_factor = self.get_additional_split_factor()
             split_transformer = MapTransformer(
-                [ApplyAdditionalSplitToOutputBlocks(self.get_additional_split_factor())]
+                [
+                    BlockMapTransformFn(
+                        lambda blocks, ctx: _split_blocks(blocks, split_factor),
+                        # NOTE: Disable block-shaping to avoid it overriding
+                        #       splitting
+                        disable_block_shaping=True,
+                    )
+                ]
             )
             map_transformer = map_transformer.fuse(split_transformer)
         # Put the function def in the object store to avoid repeated serialization
@@ -551,7 +559,14 @@ def _map_task(
     ctx.kwargs.update(kwargs)
     TaskContext.set_current(ctx)
     stats = BlockExecStats.builder()
-    map_transformer.override_target_max_block_size(ctx.target_max_block_size_override)
+
+    # NOTE: Only override target max-block size of the transformer in case it's
+    #       required by the operator
+    if ctx.target_max_block_size_override is not None:
+        map_transformer.override_target_max_block_size(
+            ctx.target_max_block_size_override
+        )
+
     with MemoryProfiler(data_context.memory_usage_poll_interval_s) as profiler:
         for b_out in map_transformer.apply_transform(iter(blocks), ctx):
             # TODO(Clark): Add input file propagation from input blocks.
@@ -772,3 +787,34 @@ def _canonicalize_ray_remote_args(ray_remote_args: Dict[str, Any]) -> Dict[str, 
         ray_remote_args["num_cpus"] = 1
 
     return ray_remote_args
+
+
+def _splitrange(n, k):
+    """Calculates array lens of np.array_split().
+
+    This is the equivalent of
+    `[len(x) for x in np.array_split(range(n), k)]`.
+    """
+    base = n // k
+    output = [base] * k
+    rem = n - sum(output)
+    for i in range(len(output)):
+        if rem > 0:
+            output[i] += 1
+            rem -= 1
+    assert rem == 0, (rem, output, n, k)
+    assert sum(output) == n, (output, n, k)
+    return output
+
+
+def _split_blocks(blocks: Iterable[Block], split_factor: float) -> Iterable[Block]:
+    for block in blocks:
+        block = BlockAccessor.for_block(block)
+        offset = 0
+        split_sizes = _splitrange(block.num_rows(), split_factor)
+        for size in split_sizes:
+            # NOTE: copy=True is needed because this is an output block. If
+            # a block slice is put into the object store, the entire block
+            # will get serialized.
+            yield block.slice(offset, offset + size, copy=True)
+            offset += size

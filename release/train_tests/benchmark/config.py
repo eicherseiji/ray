@@ -62,6 +62,9 @@ class TorchConfig(DataLoaderConfig):
 class BenchmarkConfig(BaseModel):
     # ScalingConfig
     num_workers: int = 1
+    min_workers: int = 0
+    max_workers: int = 0
+
     # Run CPU training where train workers request a `MOCK_GPU` resource instead.
     mock_gpu: bool = False
 
