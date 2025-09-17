@@ -631,13 +631,15 @@ class AnyscaleReplica(ReplicaBase):
 
     async def _on_initialized(self):
         serve_proprietary_pb2_grpc.add_ASGIServiceServicer_to_server(self, self._server)
-        self._port = self._server.add_insecure_port("[::]:0")
+        self._internal_grpc_port = self._server.add_insecure_port("[::]:0")
         await self._server.start()
 
         await self._maybe_start_direct_ingress_servers()
 
+        current_rank = ray.serve.context._get_internal_replica_context().rank
         self._set_internal_replica_context(
-            servable_object=self._user_callable_wrapper.user_callable
+            servable_object=self._user_callable_wrapper.user_callable,
+            rank=current_rank,
         )
 
         # Save the initialization latency if the replica is initializing
