@@ -38,7 +38,7 @@ from ray.data.datasource.path_util import _has_file_extension
 from ray.util.debug import log_once
 from ray.anyscale.data.checkpoint.util import (
     CheckpointedFragmentInfo,
-    get_checkpointed_fragment_info,
+    parse_checkpointed_fragment_info,
     get_generated_id_column,
     GENERATED_ID_COLUMN_TYPE,
     exclude_checkpointed_rows,
@@ -614,7 +614,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         if generated_id_column and checkpoint_file_fragment is not None:
             assert len(fragment.row_groups) == 1
             row_group_idx = fragment.row_groups[0].id
-            checkpointed_fragment_info = get_checkpointed_fragment_info(
+            checkpointed_fragment_info = parse_checkpointed_fragment_info(
                 fragment=fragment,
                 row_group_idx=row_group_idx,
                 checkpointed_file_fragments=checkpoint_file_fragment,

@@ -19,7 +19,7 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
 from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
 from ray.anyscale.data.checkpoint.util import (
     normalize_id,
-    get_checkpoint_fragments,
+    get_checkpoint_fragments_info_for_file,
     CHECKPOINTED_FRAGMENT_TYPE,
     CHECKPOINTED_FILE_FRAGMENTS_TYPE,
     CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
@@ -1385,7 +1385,7 @@ def test_read_files_with_checkpoint_ids_fully_skip_fragment(
     from ray.anyscale.data.checkpoint.util import index_checkpointed_fragments
 
     checkpointed_fragments_by_path = index_checkpointed_fragments(checkpointed_ids)
-    checkpoint_ids_scalar = get_checkpoint_fragments(
+    checkpoint_ids_scalar = get_checkpoint_fragments_info_for_file(
         checkpointed_ids, str(file_path), checkpointed_fragments_by_path
     )
 
@@ -1459,7 +1459,7 @@ def test_read_files_with_checkpoint_ids_partial_skip_fragment(
     from ray.anyscale.data.checkpoint.util import index_checkpointed_fragments
 
     checkpointed_fragments_by_path = index_checkpointed_fragments(checkpointed_ids)
-    checkpoint_ids_scalar = get_checkpoint_fragments(
+    checkpoint_ids_scalar = get_checkpoint_fragments_info_for_file(
         checkpointed_ids, str(file_path), checkpointed_fragments_by_path
     )
 
@@ -1523,7 +1523,7 @@ def test_read_files_with_checkpoint_ids_no_skip_fragment(
     checkpointed_fragments_by_path = index_checkpointed_fragments(
         checkpointed_ids_table
     )
-    checkpoint_ids_scalar = get_checkpoint_fragments(
+    checkpoint_ids_scalar = get_checkpoint_fragments_info_for_file(
         checkpointed_ids_table, str(file_path), checkpointed_fragments_by_path
     )
 

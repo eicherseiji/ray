@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 import numpy as np
 import pyarrow as pa
+from packaging.version import parse as parse_version
 
 from ray.data import FileShuffleConfig
 from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
@@ -101,11 +102,12 @@ class FileManifest:
 
         processed_fragments = []
         for fragment in checkpoint_file_fragments:
-            if fragment is None:
-                processed_fragments.append(None)
-            elif isinstance(fragment, pa.StructScalar) and fragment.is_valid:
+            if isinstance(fragment, pa.StructScalar) and fragment.is_valid:
                 # Convert StructScalar to dict for PyArrow 9 compatibility
-                processed_fragments.append(fragment.as_py())
+                if parse_version(pa.__version__) < parse_version("10.0.0"):
+                    processed_fragments.append(fragment.as_py())
+                else:
+                    processed_fragments.append(fragment)
             else:
                 processed_fragments.append(None)
 

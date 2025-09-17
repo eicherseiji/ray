@@ -108,7 +108,7 @@ GENERATED_ID_COLUMN_TYPE = pa.struct(
 # Generated ID column Checkpoint table schema and type definitions
 #
 
-# Checkpointed file column name
+# Checkpointed file path column name
 CHECKPOINTED_FILE_COLUMN_NAME = "checkpointed_file"
 
 # Checkpointed file fragments column name
@@ -143,8 +143,8 @@ CHECKPOINTED_FRAGMENT_TYPE = pa.struct(
 # Schema for checkpointed file fragments struct. This struct is passed in the
 # file manifest to the readers.
 CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD = "num_fragments"
-CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD = "fully_checkpointed"
-CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD = "fragments"
+CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD = "fully_checkpointed"
+CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD = "fragments"
 CHECKPOINTED_FILE_FRAGMENTS_TYPE = pa.struct(
     [
         # Number of fragments for this file
@@ -155,13 +155,13 @@ CHECKPOINTED_FILE_FRAGMENTS_TYPE = pa.struct(
         ),
         # Whether all fragments in the file are checkpointed
         pa.field(
-            CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
+            CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
             pa.bool_(),
             nullable=False,
         ),
         # List of checkpointed fragment structs
         pa.field(
-            CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD,
+            CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD,
             pa.large_list(CHECKPOINTED_FRAGMENT_TYPE),
             nullable=True,
         ),
@@ -187,29 +187,18 @@ def filter_checkpointed_rows_for_blocks(
 ) -> Iterable[Block]:
     """For each block, filter rows that have already been checkpointed
     and yield the resulting block."""
-    if checkpoint_config.is_batch_based():
-        from ray.anyscale.data.checkpoint.checkpoint_filter import (
-            BatchBasedCheckpointFilter,
+    from ray.anyscale.data.checkpoint.checkpoint_filter import (
+        BatchBasedCheckpointFilter,
+    )
+
+    ckpt_filter = BatchBasedCheckpointFilter(checkpoint_config)
+    checkpointed_ids = task_context.kwargs[CHECKPOINTED_IDS_KWARG_NAME]
+
+    def filter_fn(block: Block) -> Block:
+        return ckpt_filter.filter_rows_for_block(
+            block=block,
+            checkpointed_ids=checkpointed_ids,
         )
-
-        ckpt_filter = BatchBasedCheckpointFilter(checkpoint_config)
-        checkpointed_ids = task_context.kwargs[CHECKPOINTED_IDS_KWARG_NAME]
-
-        def filter_fn(block: Block) -> Block:
-            return ckpt_filter.filter_rows_for_block(
-                block=block,
-                checkpointed_ids=checkpointed_ids,
-            )
-
-    else:
-        from ray.anyscale.data.checkpoint.checkpoint_filter import (
-            RowBasedCheckpointFilter,
-        )
-
-        ckpt_filter = RowBasedCheckpointFilter.create(checkpoint_config)
-
-        def filter_fn(block: Block) -> Block:
-            return ckpt_filter.filter_rows_for_block(block)
 
     for block in blocks:
         filtered_block = filter_fn(block)
@@ -225,29 +214,18 @@ def filter_checkpointed_rows_for_batches(
 ) -> Iterable[DataBatch]:
     """For each batch, filter rows that have already been checkpointed
     and yield the resulting batches."""
-    if checkpoint_config.is_batch_based():
-        from ray.anyscale.data.checkpoint.checkpoint_filter import (
-            BatchBasedCheckpointFilter,
+    from ray.anyscale.data.checkpoint.checkpoint_filter import (
+        BatchBasedCheckpointFilter,
+    )
+
+    ckpt_filter = BatchBasedCheckpointFilter(checkpoint_config)
+    checkpointed_ids = task_context.kwargs[CHECKPOINTED_IDS_KWARG_NAME]
+
+    def filter_fn(batch: DataBatch) -> DataBatch:
+        return ckpt_filter.filter_rows_for_batch(
+            batch=batch,
+            checkpointed_ids=checkpointed_ids,
         )
-
-        ckpt_filter = BatchBasedCheckpointFilter(checkpoint_config)
-        checkpointed_ids = task_context.kwargs[CHECKPOINTED_IDS_KWARG_NAME]
-
-        def filter_fn(batch: DataBatch) -> DataBatch:
-            return ckpt_filter.filter_rows_for_batch(
-                batch=batch,
-                checkpointed_ids=checkpointed_ids,
-            )
-
-    else:
-        from ray.anyscale.data.checkpoint.checkpoint_filter import (
-            RowBasedCheckpointFilter,
-        )
-
-        ckpt_filter = RowBasedCheckpointFilter.create(checkpoint_config)
-
-        def filter_fn(batch: DataBatch) -> DataBatch:
-            return ckpt_filter.filter_rows_for_batch(batch)
 
     for batch in batches:
         filtered_batch = filter_fn(batch)
@@ -299,7 +277,7 @@ def _create_empty_checkpointed_fragment_info(
     )
 
 
-def get_checkpointed_fragment_info(
+def parse_checkpointed_fragment_info(
     fragment: pa.dataset.ParquetFileFragment,
     row_group_idx: int,
     checkpointed_file_fragments: pa.StructScalar,
@@ -324,7 +302,7 @@ def get_checkpointed_fragment_info(
         return _create_empty_checkpointed_fragment_info(fragment, row_group_idx)
 
     fragments_field_idx = get_struct_field_index(
-        checkpointed_file_fragments, CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD
+        checkpointed_file_fragments, CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD
     )
     fragments = pc.struct_field(checkpointed_file_fragments, [fragments_field_idx])
 
@@ -540,12 +518,12 @@ def normalize_id(id: Union[dict, int]) -> str:
     return urllib.parse.quote(normalized_id, safe="")
 
 
-def get_checkpoint_fragments(
+def get_checkpoint_fragments_info_for_file(
     checkpointed_ids: Block,
     path: str,
     checkpointed_fragments_by_path: dict[str, int],
 ) -> Optional[pa.StructScalar]:
-    """Filter checkpointed fragments based on the checkpointed IDs.
+    """Filter checkpointed fragments based on the checkpointed IDs. Here we extract checkpointed fragments info for a specific file.
 
     Args:
         checkpointed_ids: A Block containing checkpointed IDs with schema CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA
@@ -598,7 +576,8 @@ def index_checkpointed_fragments(
         return {}
 
     file_path_col = checkpointed_ids_table[CHECKPOINTED_FILE_COLUMN_NAME]
-    file_path_dict = {file_path.as_py(): i for i, file_path in enumerate(file_path_col)}
+    file_path_list = file_path_col.to_pylist()
+    file_path_dict = {file_path: i for i, file_path in enumerate(file_path_list)}
     return file_path_dict
 
 
@@ -615,7 +594,7 @@ def is_file_fragments_fully_checkpointed(
     """
     fully_checkpointed_field_idx = get_struct_field_index(
         checkpointed_file_fragments,
-        CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
+        CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
     )
     fully_checkpointed = pc.struct_field(
         checkpointed_file_fragments, [fully_checkpointed_field_idx]

@@ -122,11 +122,9 @@ class RayTurboPlanner(Planner):
         if checkpoint_config is not None and _supports_checkpointing(logical_plan):
             self._supports_checkpointing = True
 
-            load_checkpoint = None
-            if checkpoint_config.is_batch_based():
-                checkpoint_callback = LoadCheckpointCallback(checkpoint_config)
-                add_execution_callback(checkpoint_callback, logical_plan.context)
-                load_checkpoint = checkpoint_callback.load_checkpoint
+            checkpoint_callback = LoadCheckpointCallback(checkpoint_config)
+            add_execution_callback(checkpoint_callback, logical_plan.context)
+            load_checkpoint = checkpoint_callback.load_checkpoint
 
             # Dynamically set the plan functions for checkpointing because they
             # need to a reference to the checkpoint ref.

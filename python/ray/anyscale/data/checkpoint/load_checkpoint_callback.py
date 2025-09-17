@@ -19,7 +19,6 @@ class LoadCheckpointCallback(ExecutionCallback):
 
     def __init__(self, config: CheckpointConfig):
         assert config is not None
-        assert config.is_batch_based()
         self._config = config
 
         self._ckpt_filter = BatchBasedCheckpointFilter(config)

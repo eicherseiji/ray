@@ -2,7 +2,6 @@ import csv
 import os
 import pathlib
 import random
-import urllib.parse
 from typing import List, Union
 from unittest.mock import MagicMock
 
@@ -32,11 +31,11 @@ from ray.anyscale.data.checkpoint.util import (
     NUM_ROWS_FIELD,
     GENERATED_ID_COLUMN_FIELD_NAMES,
     GENERATED_ID_COLUMN_FIELDS,
-    get_checkpointed_fragment_info,
+    parse_checkpointed_fragment_info,
     exclude_checkpointed_rows,
     GENERATED_ID_COLUMN_TYPE,
     normalize_id,
-    get_checkpoint_fragments,
+    get_checkpoint_fragments_info_for_file,
     index_checkpointed_fragments,
     CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
     CHECKPOINTED_FILE_COLUMN_NAME,
@@ -48,8 +47,8 @@ from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
     CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
     CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD,
-    CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
-    CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD,
+    CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
+    CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD,
 )
 
 from ray.anyscale.data.checkpoint.checkpoint_writer import (
@@ -72,6 +71,7 @@ from ray.data.datasource.path_util import _unwrap_protocol
 from ray.data.tests.conftest import *  # noqa
 from ray.tests.conftest import *  # noqa
 from ray.data import DataContext
+
 
 # User-provided ID column name
 ID_COL = "id"
@@ -210,26 +210,8 @@ def _read_batch_file_ids(file_paths: List[str], id_column: str, fs) -> List[int]
 
 def read_ids_from_checkpoint_files(config: CheckpointConfig) -> List[Union[int, str]]:
     """Reads the checkpoint files and returns a sorted list of IDs which have been checkpointed."""
-    is_generated_id = config.generated_id_column is not None
-
-    # Row-based backends
-    if config.backend in (
-        CheckpointBackend.FILE_STORAGE_ROW,
-        CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW,
-    ):
-        filenames = _get_row_based_files(config.checkpoint_path, config.filesystem)
-        parsed_ids = [_parse_filename_to_id(f, is_generated_id) for f in filenames]
-
-        if is_generated_id:
-            return sorted(
-                parsed_ids,
-                key=lambda x: int(urllib.parse.unquote(x).split("row_id=")[-1]),
-            )
-        else:
-            return sorted(parsed_ids)
-
     # Batch-based backends
-    elif config.backend in (
+    if config.backend in (
         CheckpointBackend.FILE_STORAGE,
         CheckpointBackend.CLOUD_OBJECT_STORAGE,
     ):
@@ -307,22 +289,22 @@ class TestCheckpointConfig:
             (
                 lazy_fixture("local_path"),
                 lazy_fixture("local_fs"),
-                CheckpointBackend.FILE_STORAGE_ROW,
+                CheckpointBackend.FILE_STORAGE,
             ),
             (
                 lazy_fixture("s3_path"),
                 lazy_fixture("s3_fs"),
-                CheckpointBackend.FILE_STORAGE_ROW,
+                CheckpointBackend.FILE_STORAGE,
             ),
             (
                 lazy_fixture("local_path"),
                 lazy_fixture("local_fs"),
-                CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW,
+                CheckpointBackend.CLOUD_OBJECT_STORAGE,
             ),
             (
                 lazy_fixture("s3_path"),
                 lazy_fixture("s3_fs"),
-                CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW,
+                CheckpointBackend.CLOUD_OBJECT_STORAGE,
             ),
         ],
     )
@@ -387,17 +369,6 @@ class TestCheckpointConfig:
 @pytest.mark.parametrize(
     "backend,fs,data_path",
     [
-        (CheckpointBackend.FILE_STORAGE_ROW, None, lazy_fixture("local_path")),
-        (
-            CheckpointBackend.FILE_STORAGE_ROW,
-            lazy_fixture("local_fs"),
-            lazy_fixture("local_path"),
-        ),
-        (
-            CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW,
-            lazy_fixture("s3_fs"),
-            lazy_fixture("s3_path"),
-        ),
         (CheckpointBackend.FILE_STORAGE, None, lazy_fixture("local_path")),
         (
             CheckpointBackend.FILE_STORAGE,
@@ -476,13 +447,21 @@ def test_checkpoint(
     assert actual_output == expected_output
 
     # When execution succeeds, checkpoint data should be automatically deleted.
-    # TODO(haochen): Also delete checkpoint for row-based backends.
-    checkpoint_ids = read_ids_from_checkpoint_files(ctx.checkpoint_config)
-    if ctx.checkpoint_config.is_batch_based():
-        assert checkpoint_ids == []
-    else:
-        expected_checkpoint_ids = sorted([row[ID_COL] for row in ds.iter_rows()])
-        assert checkpoint_ids == expected_checkpoint_ids
+    # Check that the checkpoint directory is empty or doesn't exist
+    if ctx.checkpoint_config.delete_checkpoint_on_success:
+        try:
+            unwrapped_path = _unwrap_protocol(ckpt_path)
+            # Try to get file info for the checkpoint directory
+            files = ctx.checkpoint_config.filesystem.get_file_info(
+                pyarrow.fs.FileSelector(unwrapped_path, recursive=True)
+            )
+            # If we can get file info, the directory exists and should be empty
+            assert (
+                len(files) == 0
+            ), f"Checkpoint directory should be empty but contains {len(files)} files"
+        except (FileNotFoundError, OSError):
+            # If directory doesn't exist, that's also fine (cleanup worked)
+            pass
 
 
 @pytest.mark.parametrize("read_code_path", ["runtime", "oss_fallback"])
@@ -490,17 +469,6 @@ def test_checkpoint(
 @pytest.mark.parametrize(
     "backend,fs,data_path",
     [
-        (CheckpointBackend.FILE_STORAGE_ROW, None, lazy_fixture("local_path")),
-        (
-            CheckpointBackend.FILE_STORAGE_ROW,
-            lazy_fixture("local_fs"),
-            lazy_fixture("local_path"),
-        ),
-        (
-            CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW,
-            lazy_fixture("s3_fs"),
-            lazy_fixture("s3_path"),
-        ),
         (CheckpointBackend.FILE_STORAGE, None, lazy_fixture("local_path")),
         (
             CheckpointBackend.FILE_STORAGE,
@@ -600,17 +568,6 @@ def test_full_dataset_executed_for_non_write(
 @pytest.mark.parametrize(
     "backend,fs,data_path",
     [
-        (CheckpointBackend.FILE_STORAGE_ROW, None, lazy_fixture("local_path")),
-        (
-            CheckpointBackend.FILE_STORAGE_ROW,
-            lazy_fixture("local_fs"),
-            lazy_fixture("local_path"),
-        ),
-        (
-            CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW,
-            lazy_fixture("s3_fs"),
-            lazy_fixture("s3_path"),
-        ),
         (CheckpointBackend.FILE_STORAGE, None, lazy_fixture("local_path")),
         (
             CheckpointBackend.FILE_STORAGE,
@@ -732,19 +689,7 @@ def test_recovery_skips_checkpointed_rows(
     ds.write_parquet(data_output_path, filesystem=fs, concurrency=1)
 
     # When execution succeeds, checkpoint data should be automatically deleted.
-    # TODO(haochen): Also delete checkpoint for row-based backends.
-    if ctx.checkpoint_config.is_batch_based():
-        assert read_ids_from_checkpoint_files(ctx.checkpoint_config) == []
-    else:
-        # For row-based backends, check that all rows are checkpointed
-        checkpointed_ids = read_ids_from_checkpoint_files(ctx.checkpoint_config)
-        if generated_id_column is not None:
-            # For generated IDs, we expect string IDs with absolute paths
-            # The exact paths depend on the temporary directory, so we just check the count
-            assert len(checkpointed_ids) == max_num_items
-        else:
-            # For existing ID column, expect integer IDs
-            assert checkpointed_ids == list(range(max_num_items))
+    assert read_ids_from_checkpoint_files(ctx.checkpoint_config) == []
 
     # Get the ID column name from the checkpoint config
     id_col = ctx.checkpoint_config.id_column
@@ -808,17 +753,6 @@ def test_recovery_skips_checkpointed_rows(
 @pytest.mark.parametrize(
     "backend,fs,data_path",
     [
-        (CheckpointBackend.FILE_STORAGE_ROW, None, lazy_fixture("local_path")),
-        (
-            CheckpointBackend.FILE_STORAGE_ROW,
-            lazy_fixture("local_fs"),
-            lazy_fixture("local_path"),
-        ),
-        (
-            CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW,
-            lazy_fixture("s3_fs"),
-            lazy_fixture("s3_path"),
-        ),
         (CheckpointBackend.FILE_STORAGE, None, lazy_fixture("local_path")),
         (
             CheckpointBackend.FILE_STORAGE,
@@ -923,14 +857,12 @@ def test_dict_checkpoint_config(checkpoint_path):
         "id_column": ID_COL,
         "checkpoint_path": checkpoint_path,
         "override_filesystem": fs,
-        "override_backend": "CLOUD_OBJECT_STORAGE_ROW",
+        "override_backend": "CLOUD_OBJECT_STORAGE",
     }
     assert context.checkpoint_config.id_column == ID_COL
     assert context.checkpoint_config.checkpoint_path == checkpoint_path
     assert context.checkpoint_config.filesystem is fs
-    assert (
-        context.checkpoint_config.backend == CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW
-    )
+    assert context.checkpoint_config.backend == CheckpointBackend.CLOUD_OBJECT_STORAGE
 
 
 @pytest.mark.parametrize("generated_id_column", [False, True])
@@ -1099,7 +1031,7 @@ def test_checkpoint_restore_after_full_execution(
 
 
 class TestCheckpointFragmentRestore:
-    """Test the get_checkpointed_fragment_info and exclude_checkpointed_rows functions."""
+    """Test the parse_checkpointed_fragment_info and exclude_checkpointed_rows functions."""
 
     def _create_checkpointed_table(
         self,
@@ -1291,12 +1223,12 @@ class TestCheckpointFragmentRestore:
                     nullable=False,
                 ),
                 pyarrow.field(
-                    CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
+                    CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
                     pyarrow.bool_(),
                     nullable=False,
                 ),
                 pyarrow.field(
-                    CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD,
+                    CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD,
                     pyarrow.large_list(
                         pyarrow.struct(
                             [
@@ -1341,7 +1273,7 @@ class TestCheckpointFragmentRestore:
         fragment.metadata.row_group.return_value = row_group_mock
         return fragment
 
-    def _test_get_checkpointed_fragment_info(
+    def _test_parse_checkpointed_fragment_info(
         self,
         fragment_path: str,
         row_group_idx: int,
@@ -1350,7 +1282,7 @@ class TestCheckpointFragmentRestore:
         expected_checkpointed_row_ids: list[int],
         expected_num_rows: int = 0,
     ) -> None:
-        """Helper to test get_checkpointed_fragment_info with given inputs."""
+        """Helper to test parse_checkpointed_fragment_info with given inputs."""
         fragment = self._create_fragment(fragment_path, expected_num_rows)
         # Get checkpoint data for this fragment and create a file manifest
         if checkpointed_fragments is not None:
@@ -1359,7 +1291,7 @@ class TestCheckpointFragmentRestore:
                 checkpointed_fragments
             )
             # Get the checkpoint fragments for this specific file
-            checkpointed_ids_struct = get_checkpoint_fragments(
+            checkpointed_ids_struct = get_checkpoint_fragments_info_for_file(
                 checkpointed_fragments, fragment_path, checkpointed_fragments_by_path
             )
             # Create a file manifest with the processed checkpoint data
@@ -1381,7 +1313,7 @@ class TestCheckpointFragmentRestore:
         # Extract checkpoint file fragments from the manifest
         checkpointed_file_fragments = file_manifest.file_fragments_checkpoint
 
-        result = get_checkpointed_fragment_info(
+        result = parse_checkpointed_fragment_info(
             fragment=fragment,
             row_group_idx=row_group_idx,
             checkpointed_file_fragments=(
@@ -1416,7 +1348,7 @@ class TestCheckpointFragmentRestore:
             f"but got {actual_row_ids}"
         )
 
-    def test_get_checkpointed_fragment_info_full_match_multiple_files_row_groups(
+    def test_parse_checkpointed_fragment_info_full_match_multiple_files_row_groups(
         self,
     ) -> None:
         """Test full match with multiple files and row groups - all rows checkpointed."""
@@ -1446,7 +1378,7 @@ class TestCheckpointFragmentRestore:
         )
 
         # Test that existing fragments are fully checkpointed
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=0,
             checkpointed_fragments=checkpointed_table,
@@ -1454,7 +1386,7 @@ class TestCheckpointFragmentRestore:
             expected_num_rows=3,
             expected_checkpointed_row_ids=[],  # Empty when fully checkpointed
         )
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=1,
             checkpointed_fragments=checkpointed_table,
@@ -1462,7 +1394,7 @@ class TestCheckpointFragmentRestore:
             expected_num_rows=3,
             expected_checkpointed_row_ids=[],  # Empty when fully checkpointed
         )
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=2,
             checkpointed_fragments=checkpointed_table,
@@ -1472,7 +1404,7 @@ class TestCheckpointFragmentRestore:
         )
 
         # Test that existing fragments are fully checkpointed
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file2.parquet",
             row_group_idx=0,
             checkpointed_fragments=checkpointed_table,
@@ -1481,7 +1413,7 @@ class TestCheckpointFragmentRestore:
             expected_checkpointed_row_ids=[],  # Empty when fully checkpointed
         )
 
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file3.parquet",
             row_group_idx=0,
             checkpointed_fragments=checkpointed_table,
@@ -1490,7 +1422,7 @@ class TestCheckpointFragmentRestore:
             expected_checkpointed_row_ids=[],  # Empty when fully checkpointed
         )
 
-    def test_get_checkpointed_fragment_info_partial_match_multiple_files_row_groups(
+    def test_parse_checkpointed_fragment_info_partial_match_multiple_files_row_groups(
         self,
     ) -> None:
         """Test partial match with multiple files and row groups - some rows checkpointed."""
@@ -1525,7 +1457,7 @@ class TestCheckpointFragmentRestore:
         )
 
         # Test that fragments are partially checkpointed
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=0,
             checkpointed_fragments=checkpointed_table,
@@ -1533,7 +1465,7 @@ class TestCheckpointFragmentRestore:
             expected_num_rows=5,
             expected_checkpointed_row_ids=[0, 1, 2],
         )
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=1,
             checkpointed_fragments=checkpointed_table,
@@ -1541,7 +1473,7 @@ class TestCheckpointFragmentRestore:
             expected_num_rows=5,
             expected_checkpointed_row_ids=[0, 1],
         )
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=2,
             checkpointed_fragments=checkpointed_table,
@@ -1551,7 +1483,7 @@ class TestCheckpointFragmentRestore:
         )
 
         # Test that fragments are not checkpointed
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file2.parquet",
             row_group_idx=0,
             checkpointed_fragments=checkpointed_table,
@@ -1560,7 +1492,7 @@ class TestCheckpointFragmentRestore:
             expected_checkpointed_row_ids=[0, 1],
         )
 
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file3.parquet",
             row_group_idx=0,
             checkpointed_fragments=checkpointed_table,
@@ -1569,10 +1501,10 @@ class TestCheckpointFragmentRestore:
             expected_checkpointed_row_ids=[0],
         )
 
-    def test_get_checkpointed_fragment_info_no_match(self) -> None:
+    def test_parse_checkpointed_fragment_info_no_match(self) -> None:
         """Test no match scenarios - fragment not found in checkpointed data."""
         # Test with empty checkpointed_ids Block
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=0,
             checkpointed_fragments=pa.table({}),
@@ -1583,7 +1515,7 @@ class TestCheckpointFragmentRestore:
 
         # Test with empty checkpointed_ids
         empty_table = self._create_checkpointed_table([], [], [], [])
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=0,
             checkpointed_fragments=empty_table,
@@ -1599,7 +1531,7 @@ class TestCheckpointFragmentRestore:
             [[0, 1, 2], [0, 1, 2]],  # All rows checkpointed for each fragment
             [1, 1],
         )
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=0,
             checkpointed_fragments=checkpointed_table,
@@ -1615,7 +1547,7 @@ class TestCheckpointFragmentRestore:
             [[0, 1, 2]],  # All rows checkpointed
             [1],
         )
-        self._test_get_checkpointed_fragment_info(
+        self._test_parse_checkpointed_fragment_info(
             fragment_path="/data/file1.parquet",
             row_group_idx=0,
             checkpointed_fragments=checkpointed_table,

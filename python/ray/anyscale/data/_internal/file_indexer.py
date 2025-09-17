@@ -195,7 +195,7 @@ class NonSamplingFileIndexer(FileIndexer):
         checkpoint_ids: Optional[Block] = None,
     ) -> Iterable[FileManifest]:
         from ray.anyscale.data.checkpoint.util import (
-            get_checkpoint_fragments,
+            get_checkpoint_fragments_info_for_file,
             index_checkpointed_fragments,
             is_file_fragments_fully_checkpointed,
         )
@@ -236,7 +236,7 @@ class NonSamplingFileIndexer(FileIndexer):
                 checkpoint_file_fragments = None
                 if checkpoint_ids is not None:
                     # Get checkpoint file fragments for this file
-                    checkpoint_file_fragments = get_checkpoint_fragments(
+                    checkpoint_file_fragments = get_checkpoint_fragments_info_for_file(
                         checkpoint_ids, path, checkpointed_fragments_by_path
                     )
 

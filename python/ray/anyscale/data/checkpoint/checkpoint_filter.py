@@ -8,7 +8,7 @@ import pyarrow
 import pyarrow.compute as pc
 
 import ray
-from ray.anyscale.data.checkpoint.interfaces import CheckpointBackend, CheckpointConfig
+from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
 from ray.anyscale.data.checkpoint.util import (
     GeneratedIdFieldIndex,
     get_struct_field_index,
@@ -27,8 +27,8 @@ from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
     CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
     CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD,
-    CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
-    CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD,
+    CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
+    CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD,
 )
 from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 from ray.data.block import Block, BlockAccessor, DataBatch, BlockMetadata, Schema
@@ -56,57 +56,6 @@ class CheckpointFilter(abc.ABC):
         self.generated_id_column = self.ckpt_config.generated_id_column
         self.filesystem = self.ckpt_config.filesystem
         self.filter_num_threads = self.ckpt_config.filter_num_threads
-
-
-class RowBasedCheckpointFilter(CheckpointFilter):
-    """CheckpointFiter for row-based backends."""
-
-    @staticmethod
-    def create(config: CheckpointConfig) -> "RowBasedCheckpointFilter":
-        """Factory method to create a `RowBasedCheckpointFilter` based on the
-        provided `CheckpointConfig`."""
-        assert config.is_row_based()
-        backend = config.backend
-        if backend == CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW:
-            from ray.anyscale.data.checkpoint.checkpoint_cloud_object_storage_row import (
-                RowBasedCloudObjectStorageCheckpointFilter,
-            )
-
-            return RowBasedCloudObjectStorageCheckpointFilter(config)
-        if backend == CheckpointBackend.FILE_STORAGE_ROW:
-            from ray.anyscale.data.checkpoint.checkpoint_file_storage_row import (
-                RowBasedFileStorageCheckpointFilter,
-            )
-
-            return RowBasedFileStorageCheckpointFilter(config)
-
-        raise NotImplementedError(f"Backend {backend} not implemented")
-
-    @abc.abstractmethod
-    def filter_rows_for_block(self, block: Block) -> Block:
-        """For the given block, filter out rows that have already
-        been checkpointed, and return the resulting block.
-
-        Subclasses must implement this method.
-
-        Args:
-            block: The input block to filter.
-        Returns:
-            A new block with rows that have not been checkpointed.
-        """
-        ...
-
-    def filter_rows_for_batch(self, batch: DataBatch) -> DataBatch:
-        """For the given batch, filter out rows that have already
-        been checkpointed, and return the resulting batch.
-
-        Note that this method calls `filter_rows_for_block()` under the hood,
-        so it is preferred to call that method directly if you already have a block.
-        """
-        arrow_block = BlockAccessor.batch_to_block(batch)
-        filtered_block = self.filter_rows_for_block(arrow_block)
-        filtered_batch = BlockAccessor.for_block(filtered_block).to_batch_format(None)
-        return filtered_batch
 
 
 @ray.remote(max_retries=-1)
@@ -467,12 +416,12 @@ class GeneratedIdColumnCheckpointLoader(CheckpointLoader):
                     nullable=False,
                 ),
                 pyarrow.field(
-                    CHECKPOINTED_FILE_FRAGMENTS_FULLY_CHECKPOINTED_FIELD,
+                    CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
                     pyarrow.bool_(),
                     nullable=False,
                 ),
                 pyarrow.field(
-                    CHECKPOINTED_FILE_FRAGMENTS_FRAGMENTS_FIELD,
+                    CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD,
                     pyarrow.large_list(
                         pyarrow.struct(
                             [

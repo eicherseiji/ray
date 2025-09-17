@@ -48,19 +48,6 @@ class CheckpointWriter:
             CheckpointBackend.FILE_STORAGE,
         ]:
             return BatchBasedCheckpointWriter(config)
-        if backend == CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW:
-            from ray.anyscale.data.checkpoint.checkpoint_cloud_object_storage_row import (
-                RowBasedCloudObjectStorageCheckpointWriter,
-            )
-
-            return RowBasedCloudObjectStorageCheckpointWriter(config)
-        if backend == CheckpointBackend.FILE_STORAGE_ROW:
-            from ray.anyscale.data.checkpoint.checkpoint_file_storage_row import (
-                RowBasedFileStorageCheckpointWriter,
-            )
-
-            return RowBasedFileStorageCheckpointWriter(config)
-
         raise NotImplementedError(f"Backend {backend} not implemented")
 
 

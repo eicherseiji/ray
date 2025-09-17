@@ -13,30 +13,18 @@ from ray.util.annotations import PublicAPI
 class CheckpointBackend(Enum):
     """Supported backends for storing and reading checkpoint files.
 
-    Currently, there are two types of backends:
+    Currently, only one type of backend is supported:
         * Batch-based backends: CLOUD_OBJECT_STORAGE and FILE_STORAGE.
-        * Row-based backends: CLOUD_OBJECT_STORAGE_ROW and FILE_STORAGE_ROW.
 
     Their differences are as follows:
     1. Writing checkpoints:
        * Batch-based backends write a checkpoint file for each block.
-       * Row-based backends write a checkpoint file for each individual row.
     2. Loading checkpoints and filtering input data:
        * Batch-based backends load all checkpoint data into memory prior to
          dataset execution. The checkpoint data is then passed to each
          read task to perform filtering.
-       * Row-based backends do not preload any data at the execution start-up.
-         Instead, during the read tasks, each row is filtered based on whether it
-         already exists in the backend.
 
-    Overall, batch-based backends are recommended due to their lower runtime
-    overheads. However, they may introduce a delay in job start-up due to the
-    checkpoint loading process.
     """
-
-    # TODO(haochen): Deprecate row-based backends when we make sure the
-    # checkpoint loading overhead of the batch-based backends is acceptable
-    # for all workloads.
 
     CLOUD_OBJECT_STORAGE = "CLOUD_OBJECT_STORAGE"
     """
@@ -51,25 +39,10 @@ class CheckpointBackend(Enum):
     file system (e.g. `/mnt/cluster_storage/`).
     """
 
-    CLOUD_OBJECT_STORAGE_ROW = "CLOUD_OBJECT_STORAGE_ROW"
-    """
-    Batch-based checkpoint backend that uses cloud object storage, such as
-    AWS S3, Google Cloud Storage, etc.
-    It's more recommended to use the batch-based version.
-    """
-
-    FILE_STORAGE_ROW = "FILE_STORAGE_ROW"
-    """
-    Batch based checkpoint backend that uses file system storage.
-    Note, when using this backend, the checkpoint path must be a network-mounted
-    file system (e.g. `/mnt/cluster_storage/`).
-    It's more recommended to use the batch-based version.
-    """
-
 
 @PublicAPI(stability="beta")
 class CheckpointConfig:
-    """Configuration for row-level checkpointing.
+    """Configuration for checkpointing.
 
     Args:
         id_column: Name of the ID column in the input dataset.
@@ -91,11 +64,8 @@ class CheckpointConfig:
         override_filesystem: Override the :class:`pyarrow.fs.FileSystem` object used to
             read/write checkpoint data. Use this when you want to use custom credentials.
         override_backend: Override the :class:`CheckpointBackend` object used to
-            access the checkpoint backend storage. Only use this if you want to use
-            the row-backend checkpoint backends. By default, batch-based backends
-            are used.
+            access the checkpoint backend storage.
         filter_num_threads: Number of threads used to filter checkpointed rows.
-            Only used for row-based backends.
         write_num_threads: Number of threads used to write checkpoint files for
             completed rows.
         checkpoint_path_partition_filter: Filter for checkpoint files to load during
@@ -169,20 +139,6 @@ class CheckpointConfig:
         self.filter_num_threads: int = filter_num_threads
         self.write_num_threads: int = write_num_threads
         self.checkpoint_path_partition_filter = checkpoint_path_partition_filter
-
-    def is_row_based(self):
-        """Whether the checkpoint backend is row-based."""
-        return self.backend in [
-            CheckpointBackend.FILE_STORAGE_ROW,
-            CheckpointBackend.CLOUD_OBJECT_STORAGE_ROW,
-        ]
-
-    def is_batch_based(self):
-        """Whether the checkpoint backend is batch-based."""
-        return self.backend in [
-            CheckpointBackend.FILE_STORAGE,
-            CheckpointBackend.CLOUD_OBJECT_STORAGE,
-        ]
 
     def _get_default_checkpoint_path(self) -> str:
         artifact_storage = os.environ.get(self.DEFAULT_CHECKPOINT_PATH_BUCKET_ENV_VAR)
@@ -283,8 +239,7 @@ class InvalidCheckpointingConfig(Exception):
 
 
 class InvalidCheckpointingOperators(Exception):
-    """Exception which indicates that the DAG is not
-    eligible for row-based checkpointing, due to
-    one or more incompatible operators."""
+    """Exception which indicates that the DAG is not eligible for checkpointing,
+    due to one or more incompatible operators."""
 
     pass

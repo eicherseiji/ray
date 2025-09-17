@@ -49,7 +49,7 @@ def _generate_checkpoint_writing_transform(
     datasink = logical_op._datasink_or_legacy_datasource
     if not isinstance(datasink, Datasink):
         raise InvalidCheckpointingOperators(
-            f"To enable row-based checkpointing, Write operation must use a "
+            f"To enable checkpointing, Write operation must use a "
             f"Datasink and not a legacy Datasource, but got: "
             f"{type(datasink)}"
         )
