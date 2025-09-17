@@ -229,7 +229,6 @@ if setup_spec.type == SetupType.RAY:
         "pyarrow >= 9.0.0",
     ]
     pydantic_dep = "pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,<3"
-    polars_dep = "polars>=1.30.0,<2.0.0"
     setup_spec.extras = {
         "cgraph": [
             "cupy-cuda12x; sys_platform != 'darwin'",
@@ -243,7 +242,6 @@ if setup_spec.type == SetupType.RAY:
         "data": [
             numpy_dep,
             pandas_dep,
-            polars_dep,
             *pyarrow_deps,
             "fsspec",
         ],
