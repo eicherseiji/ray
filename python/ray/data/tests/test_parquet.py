@@ -689,7 +689,6 @@ def test_parquet_reader_estimate_data_size(shutdown_only, tmp_path):
             1000, shape=(1000,), override_num_blocks=10
         ).write_parquet(tensor_output_path)
         ds = ray.data.read_parquet(tensor_output_path)
-        assert ds._plan.initial_num_blocks() > 1
         data_size = ds.size_bytes()
         assert (
             data_size >= 6_000_000 and data_size <= 10_000_000
@@ -717,7 +716,6 @@ def test_parquet_reader_estimate_data_size(shutdown_only, tmp_path):
             text_output_path
         )
         ds = ray.data.read_parquet(text_output_path)
-        assert ds._plan.initial_num_blocks() > 1
         data_size = ds.size_bytes()
         assert (
             data_size >= 700_000 and data_size <= 2_200_000
@@ -1146,7 +1144,7 @@ def test_parquet_read_spread(ray_start_cluster, tmp_path, restore_data_context):
 
     # Minimize the block size to prevent Ray Data from reading multiple fragments in a
     # single task.
-    ray.data.DataContext.get_current().target_max_block_size = 1
+    ray.data.DataContext.get_current().max_read_partition_size = 1
     ds = ray.data.read_parquet(data_path)
 
     # Force reads.

@@ -152,6 +152,7 @@ CollatedData = TypeVar("CollatedData")
 TorchBatchType = Union[Dict[str, "torch.Tensor"], CollatedData]
 
 BT_API_GROUP = "Basic Transformations"
+J_API_GROUP = "Joining Operation APIs"
 SSR_API_GROUP = "Sorting, Shuffling and Repartitioning"
 SMJ_API_GROUP = "Splitting, Merging, Joining datasets"
 GGA_API_GROUP = "Grouped and Global aggregations"
@@ -595,7 +596,8 @@ class Dataset:
             batch_format: If ``"default"`` or ``"numpy"``, batches are
                 ``Dict[str, numpy.ndarray]``. If ``"pandas"``, batches are
                 ``pandas.DataFrame``. If ``"pyarrow"``, batches are
-                ``pyarrow.Table``.
+                ``pyarrow.Table``. If ``batch_format`` is set to ``None`` input
+                block format will be used. Note that
             zero_copy_batch: Whether ``fn`` should be provided zero-copy, read-only
                 batches. If this is ``True`` and no copy is required for the
                 ``batch_format`` conversion, the batch is a zero-copy, read-only
@@ -661,7 +663,7 @@ class Dataset:
             task, until their total size is equal to or greater than the given
             ``batch_size``.
             If ``batch_size`` is not set, the bundling will not be performed. Each task
-            will receive only one input block.
+            will receive entire input block as a batch.
 
         .. seealso::
 
@@ -1527,6 +1529,7 @@ class Dataset:
             fn_constructor_args=fn_constructor_args,
             fn_constructor_kwargs=fn_constructor_kwargs,
             filter_expr=resolved_expr,
+            filter_expr_strs=[expr],
             compute=compute,
             ray_remote_args_fn=ray_remote_args_fn,
             ray_remote_args=ray_remote_args,
@@ -1811,6 +1814,7 @@ class Dataset:
             random_sample,
             fn_args=[seed],
             batch_format=None,
+            batch_size=None,
         )
 
     @ConsumptionAPI

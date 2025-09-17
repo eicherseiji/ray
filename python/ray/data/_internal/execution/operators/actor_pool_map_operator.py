@@ -301,7 +301,7 @@ class ActorPoolMapOperator(MapOperator):
             ctx = TaskContext(
                 task_idx=self._next_data_task_idx,
                 op_name=self.name,
-                target_max_block_size_override=self.actual_target_max_block_size,
+                target_max_block_size_override=self.target_max_block_size_override,
             )
             gen = actor.submit.options(
                 num_returns="streaming",
@@ -1132,18 +1132,3 @@ class _ActorPool(AutoscalingActorPool):
     def per_actor_resource_usage(self) -> ExecutionResources:
         """Per actor resource usage."""
         return self._per_actor_resource_usage
-
-    def get_pool_util(self) -> float:
-        if self.num_running_actors() == 0:
-            return 0.0
-        else:
-            # We compute utilization as a ration of
-            #  - Number of submitted tasks over
-            #  - Max number of tasks that Actor Pool could currently run
-            #
-            # This value could exceed 100%, since by default actors are allowed
-            # to queue tasks (to pipeline task execution by overlapping block
-            # fetching with the execution of the previous task)
-            return self.num_tasks_in_flight() / (
-                self._max_actor_concurrency * self.num_running_actors()
-            )

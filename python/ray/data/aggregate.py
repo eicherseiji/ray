@@ -1,15 +1,34 @@
 import abc
 import math
-from typing import TYPE_CHECKING, Any, Callable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import numpy as np
 
 from ray.data._internal.util import is_null
-from ray.data.block import AggType, Block, BlockAccessor, KeyType, T, U
+from ray.data.block import (
+    AggType,
+    Block,
+    BlockAccessor,
+    BlockColumnAccessor,
+    KeyType,
+    T,
+    U,
+)
 from ray.util.annotations import Deprecated, PublicAPI
 
 if TYPE_CHECKING:
     from ray.data import Schema
+
+
+# _Optional implements container protocol similar to standalone Optional class
+# object in other languages (like Java, Scala, etc) by utilizing Python's `List`
+#
+# Unlike default Python's `Optional` it allows to encode following states:
+#   - Holding no value (ie empty)
+#   - Holding value (that could still be null)
+_Optional = List
+
+_OPTIONAL_EMPTY = []
 
 
 @Deprecated(message="AggregateFn is deprecated, please use AggregateFnV2")
@@ -791,6 +810,14 @@ class Quantile(AggregateFnV2):
         return ls
 
     def finalize(self, accumulator: List[Any]) -> Optional[U]:
+        def unwrap(v):
+            try:
+                return v.as_py() if hasattr(v, "as_py") else v
+            except Exception:
+                return v
+
+        accumulator = [unwrap(v) for v in accumulator]
+
         if self._ignore_nulls:
             accumulator = [v for v in accumulator if not is_null(v)]
         else:
@@ -878,6 +905,50 @@ class Unique(AggregateFnV2):
             return set(x)
         else:
             return {x}
+
+
+class ValueCounter(AggregateFnV2):
+    """Counts the number of times each value appears in a column."""
+
+    def __init__(
+        self,
+        on: str,
+        alias_name: Optional[str] = None,
+    ):
+        super().__init__(
+            alias_name if alias_name else f"value_counter({str(on)})",
+            on=on,
+            ignore_nulls=True,
+            zero_factory=lambda: {},
+        )
+
+    def aggregate_block(self, block: Block) -> Dict[str, List]:
+
+        col_accessor = BlockColumnAccessor.for_column(block[self._target_col_name])
+        return col_accessor.value_counts()
+
+    def combine(
+        self,
+        current_accumulator: Dict[str, List],
+        new_accumulator: Dict[str, List],
+    ) -> Dict[str, List]:
+
+        values = current_accumulator["values"]
+        counts = current_accumulator["counts"]
+
+        # Build a value → index map once (avoid repeated lookups)
+        value_to_index = {v: i for i, v in enumerate(values)}
+
+        for v_new, c_new in zip(new_accumulator["values"], new_accumulator["counts"]):
+            if v_new in value_to_index:
+                idx = value_to_index[v_new]
+                counts[idx] += c_new
+            else:
+                value_to_index[v_new] = len(values)
+                values.append(v_new)
+                counts.append(c_new)
+
+        return current_accumulator
 
 
 def _null_safe_zero_factory(zero_factory, ignore_nulls: bool):
