@@ -11,6 +11,7 @@ py_test_module_list(
             "tests/test_deployment_scheduler.py",
             "tests/test_direct_ingress.py",
             "tests/test_direct_ingress_standalone.py",
+            "tests/test_haproxy.py",
         ],
     ),
     tags = [
@@ -133,6 +134,27 @@ py_test_module_list(
     tags = [
         "direct_ingress",
         "exclusive",
+        "team:serve",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test_module_list(
+    size = "medium",
+    data = glob(["tests/fixtures/*.*"]),
+    env = {
+        "ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY": "1",
+        "ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
+    },
+    files = [
+        "tests/test_haproxy.py",
+    ],
+    tags = [
+        "exclusive",
+        "haproxy",
         "team:serve",
     ],
     deps = [

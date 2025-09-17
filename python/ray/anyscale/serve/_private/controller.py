@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Set
 
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
 )
 from ray.serve._private.common import DeploymentID, RequestProtocol
 from ray.serve._private.constants import (
@@ -52,8 +53,13 @@ class AnyscaleServeController(ServeController):
                 "  • Garbage collector is frozen on startup\n"
             )
 
+        self._ha_proxy_enabled = ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
         self._direct_ingress_enabled = ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
-        if self._direct_ingress_enabled:
+        if self._ha_proxy_enabled:
+            logger.info(
+                "HAProxy is enabled in AnyscaleServeController, replacing Serve proxy with HAProxy"
+            )
+        elif self._direct_ingress_enabled:
             logger.info(
                 "Direct ingress is enabled in AnyscaleServeController, enabling proxy "
                 "on head node only."
@@ -90,7 +96,7 @@ class AnyscaleServeController(ServeController):
         one target group per application with unique route prefix.
         """
         proxy_target_groups = super().get_target_groups()
-        if not self._direct_ingress_enabled:
+        if not self._direct_ingress_enabled or self._ha_proxy_enabled:
             return proxy_target_groups
 
         # Get all applications and their metadata

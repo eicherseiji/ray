@@ -35,6 +35,11 @@ ANYSCALE_TRACING_SAMPLING_RATIO = float(
     os.environ.get("ANYSCALE_TRACING_SAMPLING_RATIO", 0.01)
 )
 
+# Feature flag to use HAProxy.
+ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY = (
+    os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
+)
+
 # For now, this is used only for testing. In the suite of tests that
 # use gRPC to send requests, we flip this flag on.
 ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = (
@@ -104,6 +109,10 @@ ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S = float(
 ANYSCALE_FREEZE_GC_ON_STARTUP = (
     os.environ.get("ANYSCALE_FREEZE_GC_ON_STARTUP", "0") == "1"
 )
+
+# Direct ingress must be enabled if HAProxy is enabled.
+if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = True
 
 # If throughput optimized Ray Serve is enabled, set the following constants.
 # This should be at the end.
