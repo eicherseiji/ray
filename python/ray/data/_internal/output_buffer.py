@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -120,10 +121,6 @@ class BlockOutputBuffer:
     def has_next(self) -> bool:
         """Returns true when a complete output block is produced."""
 
-        # NOTE: Output buffer should yield immediately in either of 2 cases
-        #   - When it's finalized and buffer is non-empty (or no blocks been emitted)
-        #   - When block-sizing is disabled and buffer is non-empty
-        #
         # TODO remove emitting empty blocks
         if self._finalized:
             return not self._has_yielded_blocks or self._buffer.num_rows() > 0
@@ -169,10 +166,10 @@ class BlockOutputBuffer:
         if self._exceeded_block_row_slice_limit(accessor):
             target_num_rows = self._max_num_rows_per_block()
         elif self._exceeded_block_size_slice_limit(accessor):
-            num_bytes_per_row = accessor.size_bytes() // accessor.num_rows()
+            assert accessor.num_rows() > 0, "Block may not be empty"
+            num_bytes_per_row = accessor.size_bytes() / accessor.num_rows()
             target_num_rows = max(
-                1,
-                self._max_bytes_per_block() // num_bytes_per_row,
+                1, math.ceil(self._max_bytes_per_block() / num_bytes_per_row)
             )
 
         if target_num_rows is not None and target_num_rows < accessor.num_rows():
