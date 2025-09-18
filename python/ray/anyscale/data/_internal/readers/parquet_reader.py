@@ -20,11 +20,11 @@ from ray.anyscale.data._internal.file_indexer import (
 from ray.data._internal.datasource.parquet_datasource import (
     PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT,
     ParquetDatasource,
-    _infer_schema,
     check_for_legacy_tensor_type,
     emit_file_extensions_future_warning,
     get_parquet_dataset,
     _read_batches_from,
+    _get_partition_columns_schema,
 )
 from ray.data._internal.util import (
     call_with_retry,
@@ -806,12 +806,15 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         )
 
         if not schema:
-            schema = _infer_schema(
-                parquet_dataset,
-                None,
-                columns,
-                self._partitioning,
-                self._block_udf,
+            schema = ParquetDatasource._derive_schema(
+                read_schema=self._schema,
+                file_schema=parquet_dataset.schema,
+                partition_schema=_get_partition_columns_schema(
+                    partitioning=self._partitioning,
+                    file_paths=file_manifest.paths[:1].tolist(),
+                ),
+                projected_columns=columns,
+                _block_udf=self._block_udf,
             )
 
         # Add row ID column to schema if requested
