@@ -215,6 +215,9 @@ if __name__ == "__main__":
                 "train": DatasetCheckpointConfig(
                     id_column=id_column,
                     generate_id_column=args.generate_id_column,
+                    # Do not delete checkpoints after each epoch, since we want to
+                    # inspect the checkpoint contents for correctness.
+                    delete_checkpoints_after_epoch=False,
                 ),
             },
         ),

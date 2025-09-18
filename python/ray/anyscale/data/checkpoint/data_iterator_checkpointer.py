@@ -556,7 +556,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         from ray.train.v2._internal.execution.storage import (
             _exists_at_fs_path,
             _create_directory,
-            _delete_fs_path,
+            delete_fs_path,
         )
 
         if _exists_at_fs_path(self._fs, new_checkpoint_dir):
@@ -564,7 +564,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
                 f"Found an existing directory at {new_checkpoint_dir}. "
                 "Deleting this directory before writing new checkpoint files."
             )
-            _delete_fs_path(self._fs, new_checkpoint_dir)
+            delete_fs_path(self._fs, new_checkpoint_dir)
 
         _create_directory(self._fs, new_checkpoint_dir)
 
@@ -572,7 +572,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         """Delete checkpoint files for the completed epoch.
 
         Every worker is responsible for deleting its own checkpoint files."""
-        from ray.train.v2._internal.execution.storage import _delete_fs_path
+        from ray.train.v2._internal.execution.storage import delete_fs_path
 
         fs = self._fs
         checkpoint_path = os.path.join(
@@ -583,7 +583,7 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
 
         def _delete_checkpoint_files():
             try:
-                _delete_fs_path(fs, checkpoint_path)
+                delete_fs_path(fs, checkpoint_path)
             except Exception:
                 logger.exception(
                     f"Failed to delete checkpoint files: {checkpoint_path}"
