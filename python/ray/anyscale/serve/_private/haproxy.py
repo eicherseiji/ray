@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import Optional, Any, Set
 
 import ray
@@ -8,7 +9,10 @@ from ray.serve._private.common import (
     ReplicaID,
     RequestMetadata,
 )
-from ray.serve._private.constants import SERVE_LOGGER_NAME
+from ray.serve._private.constants import (
+    PROXY_MIN_DRAINING_PERIOD_S,
+    SERVE_LOGGER_NAME,
+)
 from ray.serve._private.logging_utils import get_component_logger_file_path
 from ray.serve._private.long_poll import LongPollClient
 from ray.serve._private.proxy import ProxyActorInterface
@@ -39,7 +43,15 @@ class HAProxyManager(ProxyActorInterface):
         self._grpc_options = grpc_options
         self._http_options = http_options
 
+        # The time when the node starts to drain.
+        # The node is not draining if it's None.
+        self._draining_start_time: Optional[float] = None
+
+        # TODO: create async task to start haproxy
+
     async def ready(self) -> str:
+        # TODO: wait for haproxy task to finish and health check to pass
+
         # Return proxy metadata used by the controller.
         # NOTE(zcin): We need to convert the metadata to a json string because
         # of cross-language scenarios. Java can't deserialize a Python tuple.
@@ -50,16 +62,66 @@ class HAProxyManager(ProxyActorInterface):
             ]
         )
 
+    def _is_draining(self) -> bool:
+        """Whether is haproxy is in the draining status or not."""
+        return self._draining_start_time is not None
+
+    async def _fail_health_check(self) -> None:
+        """Fail the health check."""
+        # TODO: tell haproxy to fail the health check
+        pass
+
+    async def _pass_health_check(self) -> None:
+        """Pass the health check."""
+        # TODO: tell haproxy to pass the health check
+        pass
+
+    async def _has_ongoing_requests(self) -> bool:
+        """Check whether the haproxy has ongoing requests or not."""
+        # TODO: check whether the haproxy has ongoing requests
+        return False
+
     async def update_draining(
         self, draining: bool, _after: Optional[Any] = None
     ) -> None:
-        pass
+        """Update the draining status of the proxy.
+
+        This is called by the proxy state manager
+        to drain or un-drain the haproxy.
+        """
+
+        if draining and (not self._is_draining()):
+            logger.info(
+                f"Start to drain the HAProxy on node {self._node_id}.",
+                extra={"log_to_stderr": False},
+            )
+            await self._fail_health_check()
+            self._draining_start_time = time.time()
+        if (not draining) and self._is_draining():
+            logger.info(
+                f"Stop draining the HAProxy on node {self._node_id}.",
+                extra={"log_to_stderr": False},
+            )
+            await self._pass_health_check()
+            self._draining_start_time = None
 
     async def is_drained(self, _after: Optional[Any] = None) -> bool:
-        return True
+        """Check whether the haproxy is drained or not.
+
+        An haproxy is drained if it has no ongoing requests
+        AND it has been draining for more than
+        `PROXY_MIN_DRAINING_PERIOD_S` seconds.
+        """
+        if not self._is_draining():
+            return False
+
+        return (not self._has_ongoing_requests()) and (
+            (time.time() - self._draining_start_time) > PROXY_MIN_DRAINING_PERIOD_S
+        )
 
     async def check_health(self) -> None:
         logger.debug("Received health check.", extra={"log_to_stderr": False})
+        # TODO: implement haproxy health check
 
     def pong(self) -> str:
         pass
