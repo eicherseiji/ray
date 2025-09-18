@@ -40,14 +40,23 @@ def _hash_partition_vectorized(
     )  # zero-copy wrapper
 
     try:
+        # NOTE: We special casing-scenario of single column with integer type
+        #       short-circuiting the need for hashing the column and instead
+        #       using values as is for partitioning
+        if len(df.columns) == 1 and df.dtypes[0].is_integer():
+            col_name = df.columns[0]
+            target_column = df[col_name]
+        else:
+            target_column = df.hash_rows(seed=0)
+
         # Hash the entire row (now all columns are already hashed integers)
-        return (df.hash_rows(seed=0).to_numpy() % num_partitions).astype(np.int64)
+        return (target_column.to_numpy() % num_partitions).astype(np.int64)
     except PolarsError as e:
         logger.warning(
             f"Optimized hash partitioning failed with error: {e}. Falling back to baseline implementation."
         )
         # As a fallback, use the original implementation.
-        return _hash_partition(projected_table, num_partitions=num_partitions)
+        return _hash_partition(projected_table, num_partitions)
 
 
 # Conditionally apply numba compilation if available
