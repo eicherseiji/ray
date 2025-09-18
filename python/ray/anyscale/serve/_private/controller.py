@@ -1,6 +1,6 @@
 import logging
 from collections import defaultdict
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
@@ -275,6 +275,14 @@ class AnyscaleServeController(ServeController):
         await super().run_control_loop_step(start_time, recovering_timeout, num_loops)
 
         if self._direct_ingress_enabled:
+            # Update port values for ingress replicas.
+            # Non-ingress replicas are not expected to have ports allocated.
+            ingress_replicas_info_list: List[
+                Tuple[str, str, int, int]
+            ] = self.deployment_state_manager.get_ingress_replicas_info()
+
+            NodePortManager.update_ports(ingress_replicas_info_list)
+
             # Clean up stale ports
             # get all alive replica ids and their node ids.
             NodePortManager.prune(self._get_node_id_to_alive_replica_ids())

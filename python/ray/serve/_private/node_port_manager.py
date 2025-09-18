@@ -1,6 +1,6 @@
 import heapq
 import logging
-from typing import Dict, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from ray.anyscale.serve._private.constants import (
     RAY_SERVE_DIRECT_INGRESS_MAX_GRPC_PORT,
@@ -33,6 +33,34 @@ class PortAllocator:
 
         self._allocated_ports: Dict[str, int] = {}
         self._blocked_ports: Set[int] = set()
+
+    def update_port_if_missing(self, replica_id: str, port: Optional[int]):
+        """Update port value for a replica."""
+        if replica_id in self._allocated_ports:
+            return
+        assert (
+            port is not None
+        ), f"Port is None for {self._protocol} protocol on replica {replica_id} on node {self._node_id}"
+        if self._protocol == RequestProtocol.HTTP:
+            if not (
+                RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT
+                <= port
+                <= RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT
+            ):
+                logger.warning(f"HTTP port out of range: {port}")
+        elif self._protocol == RequestProtocol.GRPC:
+            if not (
+                RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT
+                <= port
+                <= RAY_SERVE_DIRECT_INGRESS_MAX_GRPC_PORT
+            ):
+                logger.warning(f"GRPC port out of range: {port}")
+        self._allocated_ports[replica_id] = port
+
+        logger.info(
+            f"Recovered {self._protocol} port {port} for replica {replica_id} on node {self._node_id}"
+        )
+        return port
 
     def allocate(self, replica_id: str) -> int:
         if replica_id in self._allocated_ports:
@@ -156,6 +184,24 @@ class NodePortManager:
             else:
                 manager = cls._node_managers[node_id]
                 manager._prune_replica_ports(node_id_to_alive_replica_ids[node_id])
+
+    @classmethod
+    def update_ports(cls, ingress_replicas_info: List[Tuple[str, str, int, int]]):
+        """Update port values for ingress replicas."""
+        for node_id, replica_id, http_port, grpc_port in ingress_replicas_info:
+            if node_id is None:
+                continue
+            node_port_manager = cls.get_node_manager(node_id)
+            if http_port is not None:
+                node_port_manager._http_allocator.update_port_if_missing(
+                    replica_id,
+                    http_port,
+                )
+            if grpc_port is not None:
+                node_port_manager._grpc_allocator.update_port_if_missing(
+                    replica_id,
+                    grpc_port,
+                )
 
     def __init__(self, node_id: str):
         self._node_id = node_id

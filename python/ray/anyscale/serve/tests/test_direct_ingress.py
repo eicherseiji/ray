@@ -1068,6 +1068,30 @@ def test_some_replicas_not_running(_skip_if_ff_not_enabled, serve_instance):
     assert serve_details.applications["app-1"].status == ApplicationStatus.DEPLOYING
 
 
+def test_port_recovery_on_controller_restart(_skip_if_ff_not_enabled, serve_instance):
+    """Test that ports are recovered on controller restart."""
+    client = serve_instance
+    serve.run(Hybrid.options(num_replicas=4).bind(message="Hello world!"))
+    pre_controller_restart_http_ports = get_http_ports()
+    pre_controller_restart_grpc_ports = get_grpc_ports()
+
+    ray.kill(client._controller, no_restart=False)
+
+    def validate_port_recovery():
+        post_controller_restart_http_ports = get_http_ports()
+        post_controller_restart_grpc_ports = get_grpc_ports()
+
+        assert set(post_controller_restart_http_ports) == set(
+            pre_controller_restart_http_ports
+        )
+        assert set(post_controller_restart_grpc_ports) == set(
+            pre_controller_restart_grpc_ports
+        )
+        return True
+
+    wait_for_condition(validate_port_recovery)
+
+
 class TestDirectIngressBackpressure:
     def _do_http_request(self, url: str) -> bool:
         r = httpx.get(url, timeout=10)

@@ -33,10 +33,10 @@ class FakeReplicaActor:
 
     async def start(self):
         serve_proprietary_pb2_grpc.add_ASGIServiceServicer_to_server(self, self._server)
-        self._port = self._server.add_insecure_port("[::]:0")
+        self._internal_grpc_port = self._server.add_insecure_port("[::]:0")
         await self._server.start()
 
-        return self._port
+        return self._internal_grpc_port
 
     def set_replica_queue_length_info(self, info: ReplicaQueueLengthInfo):
         self._replica_queue_length_info = info
