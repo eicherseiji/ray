@@ -73,7 +73,9 @@ def plan_download_op(
                 disable_block_shaping=True,
             ),
         ]
-        partition_map_transformer = MapTransformer(partition_transform_fns, init_fn=init_fn)
+        partition_map_transformer = MapTransformer(
+            partition_transform_fns, init_fn=init_fn
+        )
         partition_map_operator = MapOperator.create(
             partition_map_transformer,
             input_physical_dag,
