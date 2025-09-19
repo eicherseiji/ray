@@ -1,6 +1,13 @@
+from unittest import mock
 import pytest
 import sys
 
+from ray.anyscale.serve._private.haproxy import (
+    BackendConfig,
+    HAProxyApi,
+    HAProxyConfig,
+    ServerConfig,
+)
 import ray
 from ray import serve
 from ray._common.test_utils import wait_for_condition
@@ -11,6 +18,8 @@ from ray.serve._private.constants import (
     DEFAULT_UVICORN_KEEP_ALIVE_TIMEOUT_S,
     SERVE_NAMESPACE,
 )
+import os
+import tempfile
 from ray.serve.context import _get_global_client
 from ray.serve.schema import (
     ProxyStatus,
@@ -340,6 +349,167 @@ def test_haproxy_failure(_skip_if_ff_not_enabled, ray_shutdown):
 
     wait_for_condition(check_new_proxy, timeout=30)
     serve.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_initialize_writes_config_file():
+    """Test that initialize writes the correct config_stub file content using the actual template."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+
+        config_stub = HAProxyConfig(
+            socket_path="/test/admin.sock",
+            maxconn=1000,
+            nbthread=2,
+            timeout_connect_s=5,
+            timeout_client_s=30,
+            timeout_server_s=30,
+            timeout_http_request_s=10,
+            timeout_http_keep_alive_s=55,
+            timeout_queue_s=1,
+            stats_port=8080,
+            stats_uri="/mystats",
+            frontend_port=8000,
+            frontend_host="0.0.0.0",
+            health_check_fall=3,
+            health_check_rise=2,
+            health_check_inter="2s",
+            health_check_path="/health",
+        )
+        backend_config_stub = {
+            "api_backend": BackendConfig(
+                name="api_backend",
+                path_prefix="/api",
+                timeout_http_keep_alive_s=60,
+                timeout_tunnel_s=60,
+                health_check_path="/api/health",
+                health_check_fall=2,
+                health_check_rise=3,
+                health_check_inter="5s",
+                servers=[
+                    ServerConfig(name="api_server1", host="127.0.0.1", port=8001),
+                    ServerConfig(name="api_server2", host="127.0.0.1", port=8002),
+                ],
+            ),
+            "web_backend": BackendConfig(
+                name="web_backend",
+                path_prefix="/web",
+                timeout_connect_s=3,
+                timeout_server_s=25,
+                timeout_http_keep_alive_s=45,
+                timeout_tunnel_s=45,
+                servers=[
+                    ServerConfig(name="web_server1", host="127.0.0.1", port=8003),
+                ]
+                # No health check overrides - should use global defaults
+            ),
+        }
+
+        with mock.patch(
+            "ray.anyscale.serve._private.haproxy.HAPROXY_CONFIG_FILE_LOC",
+            config_file_path,
+        ), mock.patch("ray.anyscale.serve._private.haproxy.HAProxyApi._run_subprocess"):
+
+            api = HAProxyApi(cfg=config_stub, backend_configs=backend_config_stub)
+
+            try:
+                await api.initialize()
+
+                # Read and verify the generated file
+                with open(config_file_path, "r") as f:
+                    actual_content = f.read()
+
+                # Expected configuration stub (matching the actual template output)
+                expected_config = """global
+    # Log to the standard system log socket with debug level.
+    log /dev/log local0 debug
+    stats socket /test/admin.sock mode 666 level admin expose-fd listeners
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+    maxconn 1000
+    nbthread 2
+defaults
+    mode http
+    option log-health-checks
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+    timeout http-request 10s
+    timeout http-keep-alive 55s
+    timeout queue 1s
+    log global
+    option httplog
+frontend http_frontend
+    bind 0.0.0.0:8000
+    # Static routing based on path prefixes
+
+    acl is_api_backend path_beg /api
+    use_backend backend_api_backend if is_api_backend
+
+    acl is_web_backend path_beg /web
+    use_backend backend_web_backend if is_web_backend
+
+    default_backend default_backend
+backend default_backend
+    http-request deny deny_status 404
+
+backend backend_api_backend
+    log global
+    balance leastconn
+    # Enable HTTP connection reuse for better performance
+    http-reuse always
+    # Set backend-specific timeouts, overriding defaults if specified
+    # Set timeouts to support keep-alive connections
+    timeout http-keep-alive 60s
+    timeout tunnel 60s
+    # Health check configuration - use backend-specific or global defaults
+    # HTTP health check with custom path
+    option httpchk GET /api/health
+    http-check expect status 200
+    default-server fall 2 rise 3 inter 5s check
+    # Servers in this backend
+    server api_server1 127.0.0.1:8001 check
+    server api_server2 127.0.0.1:8002 check
+
+backend backend_web_backend
+    log global
+    balance leastconn
+    # Enable HTTP connection reuse for better performance
+    http-reuse always
+    # Set backend-specific timeouts, overriding defaults if specified
+    timeout connect 3s
+    timeout server 25s
+    # Set timeouts to support keep-alive connections
+    timeout http-keep-alive 45s
+    timeout tunnel 45s
+    # Health check configuration - use backend-specific or global defaults
+    # HTTP health check with custom path
+    option httpchk GET /health
+    http-check expect status 200
+    default-server fall 3 rise 2 inter 2s check
+    # Servers in this backend
+    server web_server1 127.0.0.1:8003 check
+
+listen stats
+  bind *:8080
+  stats enable
+  stats uri /mystats
+  stats refresh 10s
+"""
+
+                # Compare the entire configuration
+                assert actual_content.strip() == expected_config.strip()
+            finally:
+                # Clean up any temporary files created by initialize()
+                temp_files = ["haproxy.cfg", "routes.map"]
+                for temp_file in temp_files:
+                    try:
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+                    except (FileNotFoundError, OSError):
+                        pass  # File already removed or doesn't exist
 
 
 if __name__ == "__main__":

@@ -514,10 +514,11 @@ def get_controller_impl():  # noqa: F811
 
 def get_proxy_actor_class():  # noqa: F811
     from ray.anyscale.serve._private.constants import ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
-    from ray.anyscale.serve._private.haproxy import HAProxyManager
     from ray.serve._private.proxy import ProxyActor
 
     if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+        from ray.anyscale.serve._private.haproxy import HAProxyManager
+
         return HAProxyManager
     else:
         return ProxyActor

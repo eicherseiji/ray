@@ -40,6 +40,22 @@ ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY = (
     os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
 )
 
+# HAProxy configuration defaults
+# Maximum number of concurrent connections
+ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN", "20000")
+)
+
+# Number of threads for HAProxy
+ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD", "4")
+)
+
+# HAProxy admin socket path
+ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH = os.environ.get(
+    "ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH", "/run/haproxy/admin.sock"
+)
+
 # For now, this is used only for testing. In the suite of tests that
 # use gRPC to send requests, we flip this flag on.
 ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = (
