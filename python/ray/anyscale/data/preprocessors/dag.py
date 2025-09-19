@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import List, Set, Callable, Sequence
 
-from ray.data import Preprocessor
+from ray.data.preprocessor import Preprocessor
 from ray.data.aggregate import AggregateFnV2
 
 

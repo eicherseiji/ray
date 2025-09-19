@@ -70,7 +70,7 @@ from ray.types import ObjectRef
 from ray.data.datasource.path_util import _unwrap_protocol
 from ray.data.tests.conftest import *  # noqa
 from ray.tests.conftest import *  # noqa
-from ray.data import DataContext
+from ray.data.context import DataContext
 
 
 # User-provided ID column name

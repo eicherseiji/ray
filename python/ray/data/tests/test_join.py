@@ -5,11 +5,12 @@ import pandas as pd
 import pytest
 
 import ray
-from ray.data import DataContext, Dataset
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.operators.join import JoinOperator
 from ray.data._internal.logical.operators.join_operator import JoinType
 from ray.data._internal.util import GiB, MiB
+from ray.data.context import DataContext
+from ray.data.dataset import Dataset
 from ray.exceptions import RayTaskError
 from ray.tests.conftest import *  # noqa
 

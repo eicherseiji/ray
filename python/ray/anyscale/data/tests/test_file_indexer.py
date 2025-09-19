@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import pyarrow as pa
 
-from ray.data import DataContext
+from ray.data.context import DataContext
 from ray.anyscale.data._internal.file_indexer import (
     LineDelimitedFileChunker,
     WholeFileChunker,

@@ -2,7 +2,6 @@ import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple, Type
 
-from ray.data import DataContext
 from ray.data._internal.arrow_block import ArrowBlockBuilder
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.operators.hash_shuffle import (
@@ -12,6 +11,7 @@ from ray.data._internal.execution.operators.hash_shuffle import (
 from ray.data._internal.logical.operators.join_operator import JoinType
 from ray.data._internal.util import GiB
 from ray.data.block import Block
+from ray.data.context import DataContext
 
 _JOIN_TYPE_TO_ARROW_JOIN_VERB_MAP = {
     JoinType.INNER: "inner",

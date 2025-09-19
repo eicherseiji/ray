@@ -5,7 +5,7 @@ from ray.anyscale.data.checkpoint.checkpoint_writer import CheckpointWriter
 from ray.anyscale.data.checkpoint.interfaces import (
     InvalidCheckpointingOperators,
 )
-from ray.data import DataContext
+from ray.data.context import DataContext
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data._internal.execution.operators.map_transformer import (

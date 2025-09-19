@@ -8,7 +8,7 @@ from ray.data._internal.execution.operators.join import (
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from ray.data import DataContext
+from ray.data.context import DataContext
 from ray.data._internal.logical.operators.join_operator import JoinType
 from ray.data.block import Block
 

@@ -45,7 +45,8 @@ from ray.anyscale.data._internal.readers import (
 from ray.anyscale.data._internal.readers.orjson_jsonl_reader import OrjsonJSONLReader
 from ray.anyscale.data._internal.readers.parquet_reader import ParquetFileChunker
 from ray.anyscale.data.datasource.snowflake_datasource import SnowflakeDatasource
-from ray.data import DataContext, FileShuffleConfig
+from ray.data.context import DataContext
+from ray.data.datasource.file_based_datasource import FileShuffleConfig
 from ray.data._internal.datasource.image_datasource import ImageDatasource
 from ray.data._internal.datasource.json_datasource import JSON_FILE_EXTENSIONS
 from ray.data._internal.datasource.numpy_datasource import NumpyDatasource

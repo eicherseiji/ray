@@ -17,7 +17,7 @@ from ray.data.block import (
 from ray.util.annotations import Deprecated, PublicAPI
 
 if TYPE_CHECKING:
-    from ray.data import Schema
+    from ray.data.dataset import Schema
 
 
 # _Optional implements container protocol similar to standalone Optional class

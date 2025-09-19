@@ -12,7 +12,7 @@ from ray.data._internal.execution.operators.hash_aggregate import (
     HashAggregateOperator,
 )
 from ray.core.generated import autoscaler_pb2
-from ray.data import DataContext
+from ray.data.context import DataContext
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.util import GiB
 from ray._private.arrow_utils import get_pyarrow_version

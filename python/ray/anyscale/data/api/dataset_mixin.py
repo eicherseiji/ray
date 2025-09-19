@@ -11,7 +11,7 @@ from ray.anyscale.data._internal.logical.operators.streaming_aggregate import (
 )
 from ray.anyscale.data.api.streaming_aggregate import StreamingAggFn
 from ray.anyscale.data.datasource.snowflake_datasink import SnowflakeDatasink
-from ray.data import Dataset
+from ray.data.dataset import Dataset
 from ray.data._internal.logical.interfaces.logical_plan import LogicalPlan
 from ray.data._internal.plan import ExecutionPlan
 from ray.data._internal.stats import DatasetStats

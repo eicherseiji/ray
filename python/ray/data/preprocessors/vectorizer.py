@@ -1,12 +1,14 @@
 from collections import Counter
-from typing import Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
 import pandas as pd
 
-from ray.data import Dataset
 from ray.data.preprocessor import Preprocessor
 from ray.data.preprocessors.utils import simple_hash, simple_split_tokenizer
 from ray.util.annotations import PublicAPI
+
+if TYPE_CHECKING:
+    from ray.data.dataset import Dataset
 
 
 @PublicAPI(stability="alpha")
@@ -254,7 +256,7 @@ class CountVectorizer(Preprocessor):
             columns, output_columns
         )
 
-    def _fit(self, dataset: Dataset) -> Preprocessor:
+    def _fit(self, dataset: "Dataset") -> Preprocessor:
         def stat_fn(key_gen):
             def get_pd_value_counts(df: pd.DataFrame) -> List[Counter]:
                 def get_token_counts(col):

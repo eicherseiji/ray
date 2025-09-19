@@ -5,7 +5,7 @@ from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_IDS_KWARG_NAME,
     filter_checkpointed_rows_for_blocks,
 )
-from ray.data import DataContext
+from ray.data.context import DataContext
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.operators.map_transformer import (
     BlockMapTransformFn,

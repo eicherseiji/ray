@@ -1,16 +1,18 @@
 from collections import Counter
 from functools import partial
-from typing import Any, Callable, Dict, Hashable, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Callable, Dict, Hashable, List, Optional, Set
 
 import numpy as np
 import pandas as pd
 import pandas.api.types
 
 from ray.air.util.data_batch_conversion import BatchFormat
-from ray.data import Dataset
 from ray.data.preprocessor import Preprocessor, PreprocessorNotFittedException
 from ray.data.preprocessors.utils import make_post_processor
 from ray.util.annotations import PublicAPI
+
+if TYPE_CHECKING:
+    from ray.data.dataset import Dataset
 
 
 @PublicAPI(stability="alpha")
@@ -115,7 +117,7 @@ class OrdinalEncoder(Preprocessor):
             columns, output_columns
         )
 
-    def _fit(self, dataset: Dataset) -> Preprocessor:
+    def _fit(self, dataset: "Dataset") -> Preprocessor:
         self.stat_computation_plan.add_callable_stat(
             stat_fn=lambda key_gen: compute_unique_value_indices(
                 dataset=dataset,
@@ -268,7 +270,7 @@ class OneHotEncoder(Preprocessor):
             columns, output_columns
         )
 
-    def _fit(self, dataset: Dataset) -> Preprocessor:
+    def _fit(self, dataset: "Dataset") -> Preprocessor:
         self.stat_computation_plan.add_callable_stat(
             stat_fn=lambda key_gen: compute_unique_value_indices(
                 dataset=dataset,
@@ -431,7 +433,7 @@ class MultiHotEncoder(Preprocessor):
             columns, output_columns
         )
 
-    def _fit(self, dataset: Dataset) -> Preprocessor:
+    def _fit(self, dataset: "Dataset") -> Preprocessor:
         self.stat_computation_plan.add_callable_stat(
             stat_fn=lambda key_gen: compute_unique_value_indices(
                 dataset=dataset,
@@ -543,7 +545,7 @@ class LabelEncoder(Preprocessor):
         self.label_column = label_column
         self.output_column = output_column or label_column
 
-    def _fit(self, dataset: Dataset) -> Preprocessor:
+    def _fit(self, dataset: "Dataset") -> Preprocessor:
         self.stat_computation_plan.add_callable_stat(
             stat_fn=lambda key_gen: compute_unique_value_indices(
                 dataset=dataset,
@@ -690,7 +692,7 @@ class Categorizer(Preprocessor):
             columns, output_columns
         )
 
-    def _fit(self, dataset: Dataset) -> Preprocessor:
+    def _fit(self, dataset: "Dataset") -> Preprocessor:
         columns_to_get = [
             column for column in self.columns if column not in self.dtypes
         ]
@@ -731,7 +733,7 @@ class Categorizer(Preprocessor):
 
 def compute_unique_value_indices(
     *,
-    dataset: Dataset,
+    dataset: "Dataset",
     columns: List[str],
     key_gen: Callable,
     encode_lists: bool = True,

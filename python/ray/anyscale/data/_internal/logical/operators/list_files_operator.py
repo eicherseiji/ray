@@ -5,7 +5,7 @@ import numpy as np
 import pyarrow as pa
 from packaging.version import parse as parse_version
 
-from ray.data import FileShuffleConfig
+from ray.data.datasource.file_based_datasource import FileShuffleConfig
 from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
 from ray.data.block import Block, BlockAccessor, BlockColumnAccessor
 from ray.data.datasource import PathPartitionFilter

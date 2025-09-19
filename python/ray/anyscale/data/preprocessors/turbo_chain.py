@@ -1,10 +1,16 @@
+from typing import TYPE_CHECKING
+
 from ray.anyscale.data.preprocessors.dag import _build_aggregation_dag
-from ray.data import Preprocessor, Dataset
+from ray.data.preprocessor import Preprocessor
 from ray.anyscale.data.preprocessors.turbo_preprocessor import TurboPreprocessor
 import ray.data.preprocessors as preprocessors_module
 
 # Store original reference before potential patching
 _OriginalChain = preprocessors_module.Chain
+
+
+if TYPE_CHECKING:
+    from ray.data import Dataset
 
 
 class Chain(_OriginalChain, TurboPreprocessor):
@@ -15,7 +21,7 @@ class Chain(_OriginalChain, TurboPreprocessor):
             p.is_chain = True
         self.is_chain = True
 
-    def transform(self, ds: Dataset, **kwargs) -> Dataset:
+    def transform(self, ds: "Dataset", **kwargs) -> "Dataset":
         """
         Transforms the dataset by executing dependency-aware lazy aggregations.
 

@@ -6,7 +6,7 @@ from pyarrow.fs import FileSystem
 
 import ray
 from ray.anyscale.data._internal.file_indexer import NonSamplingFileIndexer
-from ray.data import DataContext
+from ray.data.context import DataContext
 from ray.data.tests.conftest import (  # noqa
     CoreExecutionMetrics,
     assert_core_execution_metrics_equals,
