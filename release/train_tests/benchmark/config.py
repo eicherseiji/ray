@@ -81,6 +81,9 @@ class BenchmarkConfig(BaseModel):
     dataloader_config: DataLoaderConfig = Field(
         default_factory=lambda: DataLoaderConfig(),
     )
+    # Whether or not to skip batches until reaching the original batch index
+    # when resuming from a mid-epoch checkpoint.
+    skip_batches_upon_resume: bool = False
 
     # Training
     num_epochs: int = 1
