@@ -305,7 +305,7 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
             }
         )
 
-    def should_collect_metrics(self) -> bool:
+    def should_collect_ongoing_requests(self) -> bool:
         """
         For direct ingress deployments, metrics must be collected from replicas regardless
         of whether autoscaling metrics are being collected via handles. This is necessary
@@ -314,7 +314,7 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
         """
         return (
             self._is_direct_ingress and self._autoscaling_config
-        ) or super().should_collect_metrics()
+        ) or super().should_collect_ongoing_requests()
 
     def record_ingress_request_metrics(
         self,
