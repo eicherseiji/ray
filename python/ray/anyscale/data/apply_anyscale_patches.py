@@ -64,6 +64,23 @@ def _patch_aggregations():
         aggregate.Unique = aggregate_vectorized.UniqueVectorized
 
 
+def _patch_map_transformations():
+    """Patches ``MapTransformer`` implementation"""
+    from ray.anyscale.data._internal.execution.operators.map_transformer import (
+        OptimizedMapTransformer,
+        OptimizedBlockMapTransformFn,
+        OptimizedBatchMapTransformFn,
+        OptimizedRowMapTransformFn,
+    )
+
+    from ray.data._internal.execution.operators import map_transformer
+
+    map_transformer.MapTransformer = OptimizedMapTransformer
+    map_transformer.BlockMapTransformFn = OptimizedBlockMapTransformFn
+    map_transformer.BatchMapTransformFn = OptimizedBatchMapTransformFn
+    map_transformer.RowMapTransformFn = OptimizedRowMapTransformFn
+
+
 def _patch_preprocessors():
     if ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS:
 
@@ -197,6 +214,9 @@ def apply_anyscale_patches():
     from ._internal.logging import configure_anyscale_logging
 
     configure_anyscale_logging()
+
+    # Patches ``MapTransformer`` and ``MapTransformFn``s
+    _patch_map_transformations()
 
     # Patch observability metrics
     _patch_observability_metrics()
