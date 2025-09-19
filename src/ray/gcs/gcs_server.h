@@ -95,7 +95,9 @@ class GcsAutoscalerStateManager;
 /// `DoStart` call to `Stop`.
 class GcsServer {
  public:
-  GcsServer(const GcsServerConfig &config, instrumented_io_context &main_service);
+  GcsServer(const GcsServerConfig &config,
+            instrumented_io_context &main_service,
+            ray::observability::MetricInterface &event_recorder_dropped_events_counter);
   virtual ~GcsServer();
 
   /// Start gcs server.
