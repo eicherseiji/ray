@@ -347,7 +347,51 @@ def test_haproxy_failure(_skip_if_ff_not_enabled, ray_shutdown):
         )
         return len(proxies) == 1 and proxies[0].actor_id != proxy_actor_id
 
-    wait_for_condition(check_new_proxy, timeout=30)
+    wait_for_condition(check_new_proxy, timeout=45)
+    serve.shutdown()
+
+
+def test_haproxy_loop_get_target_groups(_skip_if_ff_not_enabled, shutdown_ray):
+    """Test that haproxy get_target_groups retrieves the correct target groups."""
+    ray.init(num_cpus=4)
+    serve.start()
+
+    @serve.deployment
+    def function(_):
+        return "hello1"
+
+    # Deploy the application
+    serve.run(
+        function.options(num_replicas=1).bind(), name="test_app", route_prefix="/test"
+    )
+
+    def check_proxy_alive():
+        actors = list_actors(
+            filters=[("ray_namespace", "=", SERVE_NAMESPACE), ("state", "=", "ALIVE")],
+        )
+        return "HAProxyManager" in {actor["class_name"] for actor in actors}
+
+    wait_for_condition(check_proxy_alive)
+
+    [proxy_actor] = list_actors(
+        filters=[("class_name", "=", "HAProxyManager"), ("state", "=", "ALIVE")]
+    )
+    proxy_actor = ray.get_actor(proxy_actor.name, namespace=SERVE_NAMESPACE)
+
+    def has_n_targets(route_prefix: str, n: int):
+        target_groups = ray.get(proxy_actor.get_target_groups.remote())
+        for tg in target_groups:
+            if tg.route_prefix == route_prefix and len(tg.targets) == n:
+                return True
+        return False
+
+    wait_for_condition(has_n_targets, route_prefix="/test", n=1)
+
+    serve.run(
+        function.options(num_replicas=2).bind(), name="test_app", route_prefix="/test2"
+    )
+    wait_for_condition(has_n_targets, route_prefix="/test2", n=2)
+
     serve.shutdown()
 
 

@@ -13,6 +13,7 @@ from ray.serve._private.constants import (
 )
 from ray.serve._private.controller import ServeController
 from ray.serve._private.deployment_state import DeploymentReplica
+from ray.serve._private.long_poll import LongPollNamespace
 from ray.serve._private.node_port_manager import NodePortManager
 from ray.serve._private.utils import is_grpc_enabled
 from ray.serve.config import DeploymentMode, HTTPOptions, gRPCOptions
@@ -73,11 +74,17 @@ class AnyscaleServeController(ServeController):
             grpc_options=grpc_options,
         )
 
-    def get_target_groups(self, app_name: Optional[str] = None) -> List[TargetGroup]:
+        self._last_broadcasted_target_groups: Dict[Tuple[str, str], TargetGroup] = []
+
+    def get_target_groups(
+        self,
+        app_name: Optional[str] = None,
+        from_proxy_manager: bool = False,
+    ) -> List[TargetGroup]:
         """Get target groups for direct ingress deployments.
         This overrides the base implementation to return target groups that
         point directly to replica ports rather than proxy ports when direct
-        ingress is enabled.
+        ingress is enabled or when called by an internal proxy manager.
 
         Following situations are possible:
         1. Direct ingress is not enabled. In this case, we just return the
@@ -94,9 +101,16 @@ class AnyscaleServeController(ServeController):
         that have running replicas, we return target groups for direct ingress.
         If there are multiple applications with no running replicas, we return
         one target group per application with unique route prefix.
+        5. HAProxy is enabled and the caller is not an internal proxy manager. In
+        this case, we return target groups containing the proxies (e.g. haproxy).
+        6. HAProxy is enabled and the caller is an internal proxy manager (e.g.
+        haproxy manager). In this case, we return target groups containing the
+        ingress replicas and possibly the Serve proxies.
         """
         proxy_target_groups = super().get_target_groups()
-        if not self._direct_ingress_enabled or self._ha_proxy_enabled:
+        if not self._direct_ingress_enabled or (
+            self._ha_proxy_enabled and not from_proxy_manager
+        ):
             return proxy_target_groups
 
         # Get all applications and their metadata
@@ -117,7 +131,9 @@ class AnyscaleServeController(ServeController):
         ]
 
         if not apps:
+            # TODO: Return the http/grpc proxy on the head node if from_proxy_manager is True
             return proxy_target_groups
+
         # Create target groups for each application
         target_groups = []
         for app_name in apps:
@@ -214,6 +230,7 @@ class AnyscaleServeController(ServeController):
         for proxy. This will allow applications to be discoverable via the
         proxy in situations where their replicas have scaled down to 0.
         """
+        # TODO: Return the http/grpc proxy on the head node if from_proxy_manager is True
         target_groups = []
         http_targets = self.proxy_state_manager.get_targets(RequestProtocol.HTTP)
         grpc_targets = self.proxy_state_manager.get_targets(RequestProtocol.GRPC)
@@ -286,6 +303,32 @@ class AnyscaleServeController(ServeController):
             # Clean up stale ports
             # get all alive replica ids and their node ids.
             NodePortManager.prune(self._get_node_id_to_alive_replica_ids())
+
+        if self._ha_proxy_enabled:
+            self.broadcast_target_groups_if_changed()
+
+    def broadcast_target_groups_if_changed(self) -> None:
+        """Broadcast target groups over long poll if they have changed.
+
+        Keeps an in-memory record of the last target groups that were broadcast
+        to determine if they have changed.
+        """
+        target_groups: List[TargetGroup] = self.get_target_groups(
+            from_proxy_manager=True,
+        )
+
+        protocol_route_to_target_group = {
+            (tg.protocol, tg.route_prefix): tg for tg in target_groups
+        }
+
+        # Check if target groups have changed by comparing the mappings directly
+        if self._last_broadcasted_target_groups == protocol_route_to_target_group:
+            return
+
+        self.long_poll_host.notify_changed(
+            {LongPollNamespace.TARGET_GROUPS: target_groups}
+        )
+        self._last_broadcasted_target_groups = protocol_route_to_target_group
 
     def allocate_replica_port(
         self, node_id: str, replica_id: str, protocol: RequestProtocol

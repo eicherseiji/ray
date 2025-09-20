@@ -1,14 +1,13 @@
+import asyncio
 import json
 import logging
-import time
-from typing import Optional, Any, Set
-import asyncio
 import os
+import time
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List
-
 from jinja2 import Environment
+from typing import Any, Dict, List, Optional, Set
 
 from ray.anyscale.serve._private.haproxy_templates import HAPROXY_CONFIG_TEMPLATE
 from ray.anyscale.serve._private.constants import (
@@ -17,6 +16,7 @@ from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH,
 )
 import ray
+from ray._common.utils import get_or_create_event_loop
 from ray.serve._private.common import (
     NodeId,
     ReplicaID,
@@ -24,13 +24,18 @@ from ray.serve._private.common import (
 )
 from ray.serve._private.constants import (
     PROXY_MIN_DRAINING_PERIOD_S,
+    SERVE_CONTROLLER_NAME,
     SERVE_LOGGER_NAME,
+    SERVE_NAMESPACE,
 )
 from ray.serve._private.logging_utils import get_component_logger_file_path
-from ray.serve._private.long_poll import LongPollClient
+from ray.serve._private.long_poll import LongPollClient, LongPollNamespace
 from ray.serve._private.proxy import ProxyActorInterface
 from ray.serve.config import HTTPOptions, gRPCOptions
-from ray.serve.schema import LoggingConfig
+from ray.serve.schema import (
+    LoggingConfig,
+    TargetGroup,
+)
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
 
@@ -340,11 +345,26 @@ class HAProxyManager(ProxyActorInterface):
         self._grpc_options = grpc_options
         self._http_options = http_options
 
+        self._controller_handle = ray.get_actor(
+            SERVE_CONTROLLER_NAME, namespace=SERVE_NAMESPACE
+        )
         # The time when the node starts to drain.
         # The node is not draining if it's None.
         self._draining_start_time: Optional[float] = None
 
+        event_loop = get_or_create_event_loop()
+
         # TODO: create async task to start haproxy
+
+        self._target_groups: List[TargetGroup] = []
+
+        self.long_poll_client = LongPollClient(
+            self._controller_handle,
+            {
+                LongPollNamespace.TARGET_GROUPS: self.update_target_groups,
+            },
+            call_in_event_loop=event_loop,
+        )
 
     async def ready(self) -> str:
         # TODO: wait for haproxy task to finish and health check to pass
@@ -436,6 +456,13 @@ class HAProxyManager(ProxyActorInterface):
             if isinstance(handler, logging.handlers.MemoryHandler):
                 log_file_path = handler.target.baseFilename
         return log_file_path
+
+    def update_target_groups(self, target_groups: List[TargetGroup]) -> None:
+        self._target_groups = target_groups
+
+    def get_target_groups(self) -> List[TargetGroup]:
+        """Get current target groups."""
+        return self._target_groups
 
     def _dump_ingress_replicas_for_testing(self, route: str) -> Set[ReplicaID]:
         return set()
