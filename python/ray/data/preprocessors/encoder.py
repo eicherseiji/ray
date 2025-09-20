@@ -298,15 +298,6 @@ class OneHotEncoder(Preprocessor):
         _validate_df(df, *self.columns)
 
         # This is a copy of self.safe_get for the apply() call below.
-        from typing import Any
-
-        def safe_get(v: Any, stats: Dict[str, int]):
-            from collections.abc import Hashable
-
-            if isinstance(v, Hashable):
-                return stats.get(v, -1)
-            else:
-                return -1  # Unhashable type treated as a missing category
 
         # Compute new one-hot encoded columns
         for column, output_column in zip(self.columns, self.output_columns):
@@ -314,7 +305,7 @@ class OneHotEncoder(Preprocessor):
             num_categories = len(stats)
             one_hot = np.zeros((len(df), num_categories), dtype=np.uint8)
             # Integer indices for each category in the column
-            codes = df[column].apply(lambda v: safe_get(v, stats)).to_numpy()
+            codes = df[column].apply(lambda v: self.safe_get(v, stats)).to_numpy()
             # Filter to only the rows that have a valid category
             valid_category_mask = codes != -1
             # Dimension should be (num_rows, ) - 1D boolean array
