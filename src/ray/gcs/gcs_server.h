@@ -17,6 +17,7 @@
 #include <memory>
 #include <string>
 
+#include "ray/anyscale/gcs/gcs_server/gcs_server_io_context_policy.h"
 #include "ray/common/asio/asio_util.h"
 #include "ray/common/asio/instrumented_io_context.h"
 #include "ray/common/asio/postable.h"
@@ -220,7 +221,7 @@ class GcsServer {
 
   void TryGlobalGC();
 
-  IOContextProvider<GcsServerIOContextPolicy> io_context_provider_;
+  IOContextProvider<AnyscaleGcsServerIOContextPolicy> io_context_provider_;
 
   /// NOTICE: The declaration order for data members should follow dependency.
   ///

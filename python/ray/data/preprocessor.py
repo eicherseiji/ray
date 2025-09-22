@@ -47,6 +47,12 @@ class Preprocessor(abc.ABC):
       implemented method.
     """
 
+    def __init__(self):
+        from ray.data.preprocessors.utils import StatComputationPlan
+
+        self.stat_computation_plan = StatComputationPlan()
+        self.stats_ = {}
+
     class FitStatus(str, Enum):
         """The fit status of preprocessor."""
 
@@ -72,7 +78,7 @@ class Preprocessor(abc.ABC):
         used to transform data in newer versions.
         """
 
-        fitted_vars = [v for v in vars(self) if v.endswith("_")]
+        fitted_vars = [v for v in vars(self) if v.endswith("_") and getattr(self, v)]
         return bool(fitted_vars)
 
     def fit_status(self) -> "Preprocessor.FitStatus":
@@ -114,9 +120,14 @@ class Preprocessor(abc.ABC):
                 "All previously fitted state will be overwritten!"
             )
 
-        fitted_ds = self._fit(ds)
+        self.stat_computation_plan.reset()
+        fitted_ds = self._fit(ds)._fit_execute(ds)
         self._fitted = True
         return fitted_ds
+
+    def _fit_execute(self, dataset: "Dataset"):
+        self.stats_ |= self.stat_computation_plan.compute(dataset)
+        return self
 
     def fit_transform(
         self,
@@ -277,11 +288,17 @@ class Preprocessor(abc.ABC):
 
         if transform_type == BatchFormat.PANDAS:
             return ds.map_batches(
-                self._transform_pandas, batch_format=BatchFormat.PANDAS, **kwargs
+                self._transform_pandas,
+                batch_format=BatchFormat.PANDAS,
+                zero_copy_batch=True,
+                **kwargs,
             )
         elif transform_type == BatchFormat.NUMPY:
             return ds.map_batches(
-                self._transform_numpy, batch_format=BatchFormat.NUMPY, **kwargs
+                self._transform_numpy,
+                batch_format=BatchFormat.NUMPY,
+                zero_copy_batch=True,
+                **kwargs,
             )
         else:
             raise ValueError(
@@ -372,6 +389,18 @@ class Preprocessor(abc.ABC):
         path is the most optimal.
         """
         return BatchFormat.PANDAS
+
+    def __getstate__(self) -> Dict[str, Any]:
+        state = self.__dict__.copy()
+        # Exclude unpicklable attributes
+        state.pop("stat_computation_plan", None)
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]):
+        from ray.data.preprocessors.utils import StatComputationPlan
+
+        self.__dict__.update(state)
+        self.stat_computation_plan = StatComputationPlan()
 
     @DeveloperAPI
     def serialize(self) -> str:
