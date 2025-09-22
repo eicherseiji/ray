@@ -4,6 +4,7 @@ release_byod:
   ray_ml_cr_repo: runtime-ml
   ray_llm_cr_repo: runtime-llm
   byod_ecr: 830883877497.dkr.ecr.us-west-2.amazonaws.com
+  byod_ecr_region: us-west-2
   aws_cr: 830883877497.dkr.ecr.us-west-2.amazonaws.com
   gcp_cr: us-west1-docker.pkg.dev/anyscale-oss-ci
   aws2gce_credentials: release/aws2gce_runtime_iam.json
@@ -18,3 +19,7 @@ state_machine:
   disabled: 1
 kuberay:
   disabled: 1
+release_image_step:
+  ray: rayturbo-release-test-image
+  ray_ml: rayturbo-ml-release-test-image
+  ray_llm: rayturbo-llm-release-test-image
