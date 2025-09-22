@@ -193,7 +193,6 @@ class PandasBlockColumnAccessor(BlockColumnAccessor):
     def unique(self) -> BlockColumn:
 
         pd = lazy_import_pandas()
-
         try:
             return pd.Series(self._column.unique())
         except ValueError as e:

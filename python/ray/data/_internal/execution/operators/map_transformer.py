@@ -38,9 +38,9 @@ class MapTransformFn(ABC):
     ):
         """
         Args:
-            callable: the underlying Python callable object.
-            input_type: the type of the input data.
-            output_type: the type of the output data.
+            input_type: Expected type of the input data.
+            is_udf: Whether this transformation is UDF or not.
+            output_block_size_option: (Optional) Output block size configuration.
         """
         self._input_type = input_type
         self._output_block_size_option = output_block_size_option
@@ -109,7 +109,7 @@ class MapTransformFn(ABC):
     def output_block_size_option(self):
         return self._output_block_size_option
 
-    def set_target_max_block_size(self, target_max_block_size: Optional[int]):
+    def override_target_max_block_size(self, target_max_block_size: Optional[int]):
         self._output_block_size_option = OutputBlockSizeOption.of(
             target_max_block_size=target_max_block_size
         )
@@ -147,10 +147,11 @@ class MapTransformer:
     ):
         """
         Args:
-        transform_fns: A list of `MapTransformFn`s that will be executed sequentially
-            to transform data.
-        init_fn: A function that will be called before transforming data.
-            Used for the actor-based map operator.
+            transform_fns: A list of `MapTransformFn`s that will be executed sequentially
+                to transform data.
+            init_fn: A function that will be called before transforming data.
+                Used for the actor-based map operator.
+            output_block_size_option_override: (Optional) Output block size configuration.
         """
 
         self._transform_fns = []
@@ -215,7 +216,7 @@ class MapTransformer:
         last_transform = self._transform_fns[-1]
 
         if self.target_max_block_size_override is not None:
-            last_transform.set_target_max_block_size(
+            last_transform.override_target_max_block_size(
                 self.target_max_block_size_override
             )
 

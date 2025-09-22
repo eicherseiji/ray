@@ -66,6 +66,7 @@ def plan_download_op(
             PartitionActor, (), {}, (uri_column_name, data_context), {}
         )
         block_fn = _generate_transform_fn_for_map_batches(fn)
+
         partition_transform_fns = [
             BlockMapTransformFn(
                 block_fn,
@@ -74,8 +75,10 @@ def plan_download_op(
             ),
         ]
         partition_map_transformer = MapTransformer(
-            partition_transform_fns, init_fn=init_fn
+            partition_transform_fns,
+            init_fn=init_fn,
         )
+
         partition_map_operator = MapOperator.create(
             partition_map_transformer,
             input_physical_dag,
