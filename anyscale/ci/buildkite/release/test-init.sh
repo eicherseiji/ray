@@ -22,9 +22,11 @@ RAY_WANT_COMMIT_IN_IMAGE="$(cat .UPSTREAM)"
 export RAY_WANT_COMMIT_IN_IMAGE
 export RELEASE_AWS_BUCKET="runtime-release-test-artifacts"
 
-curl -sSfL -o /tmp/bazel https://github.com/bazelbuild/bazelisk/releases/download/v1.19.0/bazelisk-linux-amd64
-chmod +x /tmp/bazel
-/tmp/bazel run //release:build_pipeline -- \
+curl -sSfL -o /tmp/bazelisk https://github.com/bazelbuild/bazelisk/releases/download/v1.19.0/bazelisk-linux-amd64
+chmod +x /tmp/bazelisk
+
+# Keep in sync with build-init.sh
+/tmp/bazelisk run //release:build_pipeline -- \
     --test-collection-file release/release_runtime_tests.yaml \
     --test-collection-file release/release_data_tests.yaml \
     --test-collection-file release/release_tests.yaml \

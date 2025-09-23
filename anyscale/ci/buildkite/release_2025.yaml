@@ -43,15 +43,4 @@ steps:
   - label: "build init"
     priority: 10
     commands:
-      - curl -sSfL "https://raw.githubusercontent.com/ray-project/rayci/stable/run_rayci.sh" > /tmp/run_rayci.sh
-      - RAY_WANT_COMMIT_IN_IMAGE="$(cat .UPSTREAM)"
-      - export RAY_WANT_COMMIT_IN_IMAGE
-      - export RELEASE_AWS_BUCKET="runtime-release-test-artifacts"
-      - export RELEASE_QUEUE_DEFAULT="rayturbo_small_queue"
-      - echo "Generate custom build steps"
-      - echo "Downloading Bazel"
-      - curl -sSfLo /tmp/bazel https://github.com/bazelbuild/bazelisk/releases/download/v1.19.0/bazelisk-linux-amd64
-      - echo "Making Bazel executable"
-      - chmod +x /tmp/bazel
-      - /tmp/bazel run //release:custom_byod_build_init -- $([ "${AUTOMATIC-0}" -eq 0 ] && echo "--run-jailed-tests") $([[ "${BUILDKITE_BRANCH}" != "releases/"* ]] && echo "--run-unstable-tests") $([[ "${BUILDKITE_BRANCH}" == "releases/"* ]] && echo "--run-jailed-tests") --test-collection-file release/release_runtime_tests.yaml --test-collection-file release/release_data_tests.yaml --test-collection-file release/release_tests.yaml --global-config runtime_config.yaml
-      - /bin/bash /tmp/run_rayci.sh -upload -config anyscale/ci/config-release.yaml
+      - /bin/bash anyscale/ci/buildkite/release/build-init.sh
