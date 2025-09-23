@@ -24,7 +24,6 @@
 //python/ray/serve/tests:test_deployment_version
 //python/ray/serve/tests:test_http_cancellation
 //python/ray/serve/tests:test_http_headers
-//python/ray/serve/tests:test_controller
 //python/ray/serve/tests:test_controller_recovery
 //python/ray/serve/tests:test_http_routes
 //python/ray/serve/tests:test_backpressure

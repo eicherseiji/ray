@@ -73,9 +73,10 @@ class FakeDeploymentReplica:
 
 
 class FakeProxyState:
-    def __init__(self, node_id, node_ip):
+    def __init__(self, node_id, node_ip, name):
         self.node_id = node_id
         self.node_ip = node_ip
+        self.name = name
 
 
 class FakeProxyStateManager:
@@ -86,11 +87,12 @@ class FakeProxyStateManager:
             grpc_servicer_functions=["f1"],
         )
 
-    def add_proxy_details(self, node_id, node_ip):
+    def add_proxy_details(self, node_id, node_ip, name):
 
         self.proxy_details[node_id] = FakeProxyState(
             node_id=node_id,
             node_ip=node_ip,
+            name=name,
         )
 
     def get_proxy_details(self):
@@ -102,7 +104,12 @@ class FakeProxyStateManager:
         else:
             port = self._grpc_options.port
         return [
-            Target(ip=proxy_details.node_ip, port=port, instance_id="")
+            Target(
+                ip=proxy_details.node_ip,
+                port=port,
+                instance_id="",
+                name=proxy_details.name,
+            )
             for node_id, proxy_details in self.proxy_details.items()
         ]
 
@@ -151,6 +158,7 @@ class FakeDeploymentStateManager:
             node_instance_id="",
             start_time_s=0,
             state=ReplicaState.RUNNING,
+            actor_name=replica_info.replica_id.unique_id,
         )
 
     def get_deployment_details(self, id: DeploymentID) -> Optional[DeploymentDetails]:
@@ -189,6 +197,7 @@ class FakeDirectIngressController(AnyscaleServeController):
         self.deployment_state_manager = deployment_state_manager
         self.proxy_state_manager = proxy_state_manager
         self._direct_ingress_enabled = True
+        self._ha_proxy_enabled = False
         self._controller_node_id = "head_node_id"
 
         self._shutting_down = False
@@ -253,28 +262,33 @@ def test_direct_ingress_is_disabled(
 ):
     """Test that get_target_groups returns empty list when direct ingress is disabled."""
     direct_ingress_controller._direct_ingress_enabled = False
+    direct_ingress_controller._ha_proxy_enabled = False
     target_groups = direct_ingress_controller.get_target_groups()
     assert target_groups == []
 
     # proxy has nodes
-    direct_ingress_controller.proxy_state_manager.add_proxy_details("node1", "10.0.0.1")
-    direct_ingress_controller.proxy_state_manager.add_proxy_details("node2", "10.0.0.2")
+    direct_ingress_controller.proxy_state_manager.add_proxy_details(
+        "node1", "10.0.0.1", "proxy1"
+    )
+    direct_ingress_controller.proxy_state_manager.add_proxy_details(
+        "node2", "10.0.0.2", "proxy2"
+    )
     target_groups = direct_ingress_controller.get_target_groups()
     expected_target_groups = [
         TargetGroup(
             protocol=RequestProtocol.HTTP,
             route_prefix="/",
             targets=[
-                Target(ip="10.0.0.1", port=8000, instance_id=""),
-                Target(ip="10.0.0.2", port=8000, instance_id=""),
+                Target(ip="10.0.0.1", port=8000, instance_id="", name="proxy1"),
+                Target(ip="10.0.0.2", port=8000, instance_id="", name="proxy2"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.GRPC,
             route_prefix="/",
             targets=[
-                Target(ip="10.0.0.1", port=9000, instance_id=""),
-                Target(ip="10.0.0.2", port=9000, instance_id=""),
+                Target(ip="10.0.0.1", port=9000, instance_id="", name="proxy1"),
+                Target(ip="10.0.0.2", port=9000, instance_id="", name="proxy2"),
             ],
         ),
     ]
@@ -290,24 +304,28 @@ def test_get_target_groups_empty_when_no_apps(
     assert target_groups == []
 
     # proxy has nodes
-    direct_ingress_controller.proxy_state_manager.add_proxy_details("node1", "10.0.0.1")
-    direct_ingress_controller.proxy_state_manager.add_proxy_details("node2", "10.0.0.2")
+    direct_ingress_controller.proxy_state_manager.add_proxy_details(
+        "node1", "10.0.0.1", "proxy1"
+    )
+    direct_ingress_controller.proxy_state_manager.add_proxy_details(
+        "node2", "10.0.0.2", "proxy2"
+    )
     target_groups = direct_ingress_controller.get_target_groups()
     expected_target_groups = [
         TargetGroup(
             protocol=RequestProtocol.HTTP,
             route_prefix="/",
             targets=[
-                Target(ip="10.0.0.1", port=8000, instance_id=""),
-                Target(ip="10.0.0.2", port=8000, instance_id=""),
+                Target(ip="10.0.0.1", port=8000, instance_id="", name="proxy1"),
+                Target(ip="10.0.0.2", port=8000, instance_id="", name="proxy2"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.GRPC,
             route_prefix="/",
             targets=[
-                Target(ip="10.0.0.1", port=9000, instance_id=""),
-                Target(ip="10.0.0.2", port=9000, instance_id=""),
+                Target(ip="10.0.0.1", port=9000, instance_id="", name="proxy1"),
+                Target(ip="10.0.0.2", port=9000, instance_id="", name="proxy2"),
             ],
         ),
     ]
@@ -375,8 +393,12 @@ def test_get_target_groups_with_running_apps(
     )
 
     # setup proxy state manager
-    direct_ingress_controller.proxy_state_manager.add_proxy_details("node1", "10.0.0.1")
-    direct_ingress_controller.proxy_state_manager.add_proxy_details("node2", "10.0.0.2")
+    direct_ingress_controller.proxy_state_manager.add_proxy_details(
+        "node1", "10.0.0.1", "proxy1"
+    )
+    direct_ingress_controller.proxy_state_manager.add_proxy_details(
+        "node2", "10.0.0.2", "proxy2"
+    )
 
     # Allocate ports for replicas using controller's methods
     http_port1 = direct_ingress_controller.allocate_replica_port(
@@ -401,28 +423,28 @@ def test_get_target_groups_with_running_apps(
             protocol=RequestProtocol.HTTP,
             route_prefix="/app1",
             targets=[
-                Target(ip="10.0.0.1", port=http_port1, instance_id=""),
+                Target(ip="10.0.0.1", port=http_port1, instance_id="", name="replica1"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.GRPC,
             route_prefix="/app1",
             targets=[
-                Target(ip="10.0.0.1", port=grpc_port1, instance_id=""),
+                Target(ip="10.0.0.1", port=grpc_port1, instance_id="", name="replica1"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.HTTP,
             route_prefix="/app2",
             targets=[
-                Target(ip="10.0.0.2", port=http_port2, instance_id=""),
+                Target(ip="10.0.0.2", port=http_port2, instance_id="", name="replica2"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.GRPC,
             route_prefix="/app2",
             targets=[
-                Target(ip="10.0.0.2", port=grpc_port2, instance_id=""),
+                Target(ip="10.0.0.2", port=grpc_port2, instance_id="", name="replica2"),
             ],
         ),
     ]
@@ -463,14 +485,14 @@ def test_get_target_groups_with_running_apps(
             protocol=RequestProtocol.GRPC,
             route_prefix="/app1",
             targets=[
-                Target(ip="10.0.0.1", port=grpc_port1, instance_id=""),
+                Target(ip="10.0.0.1", port=grpc_port1, instance_id="", name="replica1"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.HTTP,
             route_prefix="/app2",
             targets=[
-                Target(ip="10.0.0.2", port=http_port2, instance_id=""),
+                Target(ip="10.0.0.2", port=http_port2, instance_id="", name="replica2"),
             ],
         ),
     ]
@@ -546,14 +568,14 @@ def test_get_target_groups_with_port_not_allocated(
             protocol=RequestProtocol.HTTP,
             route_prefix="/app1",
             targets=[
-                Target(ip="10.0.0.1", port=http_port1, instance_id=""),
+                Target(ip="10.0.0.1", port=http_port1, instance_id="", name="replica1"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.GRPC,
             route_prefix="/app1",
             targets=[
-                Target(ip="10.0.0.1", port=grpc_port1, instance_id=""),
+                Target(ip="10.0.0.1", port=grpc_port1, instance_id="", name="replica1"),
             ],
         ),
     ]
@@ -644,14 +666,24 @@ def test_get_target_groups_only_includes_ingress_deployments(
             protocol=RequestProtocol.HTTP,
             route_prefix="/app1",
             targets=[
-                Target(ip="10.0.0.1", port=ingress_http_port, instance_id=""),
+                Target(
+                    ip="10.0.0.1",
+                    port=ingress_http_port,
+                    instance_id="",
+                    name="ingress_replica",
+                ),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.GRPC,
             route_prefix="/app1",
             targets=[
-                Target(ip="10.0.0.1", port=ingress_grpc_port, instance_id=""),
+                Target(
+                    ip="10.0.0.1",
+                    port=ingress_grpc_port,
+                    instance_id="",
+                    name="ingress_replica",
+                ),
             ],
         ),
     ]
@@ -741,8 +773,12 @@ def test_get_target_groups_app_with_no_running_replicas(
     )
 
     # setup proxy state manager
-    direct_ingress_controller.proxy_state_manager.add_proxy_details("node1", "10.0.0.1")
-    direct_ingress_controller.proxy_state_manager.add_proxy_details("node2", "10.0.0.2")
+    direct_ingress_controller.proxy_state_manager.add_proxy_details(
+        "node1", "10.0.0.1", "proxy1"
+    )
+    direct_ingress_controller.proxy_state_manager.add_proxy_details(
+        "node2", "10.0.0.2", "proxy2"
+    )
 
     # Allocate ports for the only existing replica
     http_port = direct_ingress_controller.allocate_replica_port(
@@ -761,30 +797,30 @@ def test_get_target_groups_app_with_no_running_replicas(
             protocol=RequestProtocol.HTTP,
             route_prefix="/app1",
             targets=[
-                Target(ip="10.0.0.1", port=http_port, instance_id=""),
+                Target(ip="10.0.0.1", port=http_port, instance_id="", name="replica1"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.GRPC,
             route_prefix="/app1",
             targets=[
-                Target(ip="10.0.0.1", port=grpc_port, instance_id=""),
+                Target(ip="10.0.0.1", port=grpc_port, instance_id="", name="replica1"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.HTTP,
             route_prefix="/app2",
             targets=[
-                Target(ip="10.0.0.1", port=8000, instance_id=""),
-                Target(ip="10.0.0.2", port=8000, instance_id=""),
+                Target(ip="10.0.0.1", port=8000, instance_id="", name="proxy1"),
+                Target(ip="10.0.0.2", port=8000, instance_id="", name="proxy2"),
             ],
         ),
         TargetGroup(
             protocol=RequestProtocol.GRPC,
             route_prefix="/app2",
             targets=[
-                Target(ip="10.0.0.1", port=9000, instance_id=""),
-                Target(ip="10.0.0.2", port=9000, instance_id=""),
+                Target(ip="10.0.0.1", port=9000, instance_id="", name="proxy1"),
+                Target(ip="10.0.0.2", port=9000, instance_id="", name="proxy2"),
             ],
         ),
     ]

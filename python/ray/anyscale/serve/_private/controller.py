@@ -261,6 +261,7 @@ class AnyscaleServeController(ServeController):
                 ip=replica_detail.node_ip,
                 port=self.get_port(replica_detail, protocol),
                 instance_id=replica_detail.node_instance_id,
+                name=replica_detail.actor_name,
             )
             for replica_detail in replica_details
             if self.is_port_allocated(replica_detail, protocol)
