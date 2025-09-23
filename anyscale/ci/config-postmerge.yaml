@@ -30,6 +30,7 @@ env:
   RAYCI_DISABLE_CPP_WHEEL: "true"
   RAYCI_DISABLE_JAVA: "true"
   RAYCI_GLOBAL_CONFIG: "ci/ray_ci/runtime_config.yaml"
+  RAYCI_STAGE: "postmerge"
 build_env_keys:
   - RAY_RELEASE_BUILD
 tag_filter_command:
