@@ -1,6 +1,14 @@
 from unittest import mock
+import http.server
+import os
 import pytest
+import requests
+import socketserver
+import subprocess
 import sys
+import tempfile
+import threading
+import time
 
 from ray.anyscale.serve._private.haproxy import (
     BackendConfig,
@@ -11,6 +19,7 @@ from ray.anyscale.serve._private.haproxy import (
 import ray
 from ray import serve
 from ray._common.test_utils import wait_for_condition
+from ray._private.test_utils import find_free_port
 from ray.actor import ActorHandle
 from ray.anyscale.serve._private.constants import ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
 from ray.cluster_utils import Cluster
@@ -18,8 +27,6 @@ from ray.serve._private.constants import (
     DEFAULT_UVICORN_KEEP_ALIVE_TIMEOUT_S,
     SERVE_NAMESPACE,
 )
-import os
-import tempfile
 from ray.serve.context import _get_global_client
 from ray.serve.schema import (
     ProxyStatus,
@@ -454,7 +461,11 @@ async def test_initialize_writes_config_file():
             config_file_path,
         ), mock.patch("ray.anyscale.serve._private.haproxy.HAProxyApi._run_subprocess"):
 
-            api = HAProxyApi(cfg=config_stub, backend_configs=backend_config_stub)
+            api = HAProxyApi(
+                cfg=config_stub,
+                backend_configs=backend_config_stub,
+                config_file_path=config_file_path,
+            )
 
             try:
                 await api.initialize()
@@ -554,6 +565,186 @@ listen stats
                             os.remove(temp_file)
                     except (FileNotFoundError, OSError):
                         pass  # File already removed or doesn't exist
+
+
+@pytest.mark.asyncio
+async def test_graceful_reload():
+    """Test that graceful reload preserves long-running connections."""
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Setup ports
+        haproxy_port = find_free_port()
+        backend_port = find_free_port()
+
+        # Create backend server with slow endpoint
+        class RequestHandler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/slow":
+                    # arbitrary time.sleep, a bit smaller than read timeout.
+                    # this should ensure the old process still exists
+                    # and is trying to finish existing requests.
+                    time.sleep(3)
+                    self.send_response(200)
+                    self.send_header("Content-type", "text/plain")
+                    self.end_headers()
+                    self.wfile.write(b"Slow response completed")
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-type", "text/plain")
+                    self.send_header(
+                        "x-haproxy-reload-id", self.headers["x-haproxy-reload-id"]
+                    )
+                    self.end_headers()
+                    self.wfile.write(b"Fast response")
+
+        # Start backend server
+        backend_server = socketserver.TCPServer(("", backend_port), RequestHandler)
+        backend_thread = threading.Thread(
+            target=backend_server.serve_forever, daemon=True
+        )
+        backend_thread.start()
+
+        # Configure HAProxy
+
+        config = HAProxyConfig(
+            frontend_port=haproxy_port,
+            frontend_host="127.0.0.1",
+            stats_port=find_free_port(),
+            pid_file_path=os.path.join(temp_dir, "haproxy.pid"),
+            inject_process_id_header=True,  # Enable for testing graceful reload
+            reload_id=f"initial-{int(time.time() * 1000)}",  # Set initial reload ID
+        )
+
+        backend_config = BackendConfig(
+            name="test_backend",
+            path_prefix="/",
+            servers=[ServerConfig(name="backend", host="127.0.0.1", port=backend_port)],
+        )
+
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+
+        api = HAProxyApi(
+            cfg=config,
+            backend_configs={"test_backend": backend_config},
+            config_file_path=config_file_path,
+        )
+
+        try:
+            # Start HAProxy process using standard approach
+            await api.initialize()
+
+            # Start HAProxy with PID files
+            await api._run_subprocess(
+                ["sudo", "haproxy", "-f", config_file_path, "-p", api.cfg.pid_file_path]
+            )
+
+            # Wait for HAProxy to be ready (check stats endpoint)
+            def check_stats_ready():
+                try:
+                    response = requests.get(
+                        f"http://127.0.0.1:{config.stats_port}/stats", timeout=2
+                    )
+                    return response.status_code == 200
+                except Exception:
+                    return False
+
+            wait_for_condition(check_stats_ready, timeout=10, retry_interval_ms=100)
+
+            # Track slow request results
+            slow_results = []
+            request_started = threading.Event()
+
+            def make_slow_request():
+                try:
+                    request_started.set()
+                    start_time = time.time()
+                    response = requests.get(
+                        f"http://127.0.0.1:{haproxy_port}/slow", timeout=10
+                    )
+                    end_time = time.time()
+                    slow_results.append(
+                        {
+                            "status": response.status_code,
+                            "duration": end_time - start_time,
+                            "content": response.content,
+                        }
+                    )
+                except Exception as ex:
+                    slow_results.append({"error": str(ex)})
+
+            # Start slow request in the background
+            slow_thread = threading.Thread(target=make_slow_request)
+            slow_thread.start()
+            wait_for_condition(
+                lambda: request_started.is_set(), timeout=5, retry_interval_ms=10
+            )
+
+            with open(api.cfg.pid_file_path, "r") as f:
+                original_pid = f.read().strip()
+
+            await api._graceful_reload()
+
+            with open(api.cfg.pid_file_path, "r") as f:
+                new_pid = f.read().strip()
+
+            # Verify new HAProxy process can serve requests during graceful reload
+            expected_reload_id = api.cfg.reload_id
+            fast_response = requests.get(
+                f"http://127.0.0.1:{haproxy_port}/fast", timeout=5
+            )
+            haproxy_reload_id = fast_response.headers.get("x-haproxy-reload-id")
+
+            assert fast_response.status_code == 200, "Fast request should succeed"
+            assert (
+                haproxy_reload_id == expected_reload_id
+            ), f"Fast request should be handled by NEW HAProxy instance {expected_reload_id}, but was handled by {haproxy_reload_id}"
+
+            slow_thread.join(timeout=10)
+
+            assert (
+                original_pid != new_pid
+            ), "Process should have been reloaded with new PID"
+            assert len(slow_results) == 1, "Slow request should have completed"
+
+            result = slow_results[0]
+            assert "error" not in result, f"Slow request failed: {result.get('error')}"
+            assert result["status"] == 200, "Slow request should have succeeded"
+            assert result["duration"] >= 3.0, "Slow request should have taken full time"
+            assert (
+                b"Slow response completed" in result["content"]
+            ), "Slow request should have completed"
+
+        finally:
+            # Cleanup - stop HAProxy using PID files
+            try:
+                if os.path.exists(api.cfg.pid_file_path):
+                    # Use shell command substitution to read PID directly
+                    subprocess.run(
+                        [
+                            "sudo",
+                            "bash",
+                            "-c",
+                            f"kill -TERM $(cat {api.cfg.pid_file_path})",
+                        ],
+                        timeout=5,
+                    )
+                    print(
+                        f"Stopped HAProxy process using PID file: {api.cfg.pid_file_path}"
+                    )
+
+                    # Remove PID files
+                    os.unlink(api.cfg.pid_file_path)
+            except Exception as e:
+                print(f"Error during HAProxy cleanup: {e}")
+
+            # Confirm HAProxy is stopped
+            assert not api._is_running(), "HAProxy should be stopped after cleanup"
+
+            try:
+                backend_server.shutdown()
+                backend_server.server_close()
+            except Exception as e:
+                print(f"Error occurred while shutting down server stub. Error: {e}")
 
 
 if __name__ == "__main__":

@@ -38,9 +38,6 @@ from ray.serve.schema import (
 )
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
-
-
-HAPROXY_MAP_ENTRY_FILE = "/etc/haproxy/routes.map"
 HAPROXY_CONFIG_FILE_LOC = "/etc/haproxy/haproxy.cfg"
 
 
@@ -71,10 +68,13 @@ class HAProxyConfig:
     timeout_http_keep_alive_s: Optional[int] = None
     custom_global: Dict[str, str] = field(default_factory=dict)
     custom_defaults: Dict[str, str] = field(default_factory=dict)
-
+    pid_file_path: str = "/var/run/haproxy.pid"
     # Configurable frontend parameters
     frontend_port: int = 80
     frontend_host: str = "*"
+    # Testing/debugging options
+    inject_process_id_header: bool = False
+    reload_id: Optional[str] = None  # Unique ID for each reload
 
     # Global health check parameters (used as defaults for backends)
     # Number of consecutive failed health checks that must occur before a service instance is marked as unhealthy
@@ -114,7 +114,7 @@ class BackendConfig:
     timeout_queue_s: Optional[int] = None
 
     # Maximum time HAProxy will keep the connection alive.
-    # This has to be same or greater than the client side keep-alive timeout.
+    # This has to be the same or greater than the client side keep-alive timeout.
     timeout_http_keep_alive_s: Optional[int] = None
 
     # Control the inactivity timeout for established WebSocket connections.
@@ -123,7 +123,7 @@ class BackendConfig:
     # which are intended for the initial phases of a connection.
     timeout_tunnel_s: Optional[int] = None
 
-    # Number of consecutive failed health checks that must occur before a service instance is marked as unhealthy
+    # The number of consecutive failed health checks that must occur before a service instance is marked as unhealthy
     health_check_fall: Optional[int] = None
 
     # Number of consecutive successful health checks required to mark an unhealthy service instance as healthy again
@@ -216,11 +216,83 @@ class HAProxyApi(ProxyApi):
         cfg: HAProxyConfig = None,
         backend_configs: Dict[str, BackendConfig] = None,
         http_options: Optional[HTTPOptions] = None,
+        config_file_path: str = HAPROXY_CONFIG_FILE_LOC,
     ):
         self.cfg = HAProxyConfig() if cfg is None else cfg
         self.backend_configs = backend_configs or {}
         self.socket_path = socket_path
         self.http_options = http_options
+        self.config_file_path = config_file_path
+        # Lock to prevent concurrent config modifications
+        self._config_lock = asyncio.Lock()
+
+    def _is_running(self) -> bool:
+        """Check if HAProxy is running based on PID file existence."""
+        try:
+            # HAProxy manages the PID file - if it exists and has content,
+            # HAProxy is running
+            if not os.path.exists(self.cfg.pid_file_path):
+                return False
+
+            # Check if a PID file has content (not empty)
+            return os.path.getsize(self.cfg.pid_file_path) > 0
+
+        except Exception as e:
+            raise RuntimeError(f"Could not check if HAProxy is running: {e}")
+
+    async def _graceful_reload(self) -> None:
+        """Perform a graceful reload of HAProxy using the `-sf` flag.
+        This method uses HAProxy's graceful reload mechanism where:
+        - a New process starts with updated configuration
+        - an Old process receives soft stop signal after socket handover
+        - Existing connections finish naturally on old process
+        - New connections go to a new process
+        Usage:
+            # After modifying configuration,
+            await self._generate_config_file()
+            await self._graceful_reload()
+        """
+        async with self._config_lock:
+            try:
+                # Check if HAProxy is currently running
+                if not self._is_running():
+                    logger.info("HAProxy not running, cannot perform graceful reload")
+                    return
+
+                # Read PID from file for the -sf parameter
+                with open(self.cfg.pid_file_path, "r") as f:
+                    old_pid = f.read().strip()
+
+                if not old_pid:
+                    logger.warning("PID file was empty, cannot perform graceful reload")
+                    return
+
+                # Generate unique reload ID for tracking
+                if self.cfg.inject_process_id_header:
+                    self.cfg.reload_id = (
+                        f"reload-{int(time.time() * 1000)}"  # Timestamp-based ID
+                    )
+                    # Regenerate config with new reload ID (call internal method to avoid deadlock)
+                    await self._generate_config_file_internal()
+
+                # Start new HAProxy process with graceful handover
+                await self._run_subprocess(
+                    [
+                        "sudo",
+                        "haproxy",
+                        "-f",
+                        self.config_file_path,
+                        "-p",
+                        self.cfg.pid_file_path,
+                        "-sf",
+                        old_pid,  # Gracefully stop old process after handover
+                    ]
+                )
+                logger.info("Successfully performed graceful HAProxy reload")
+
+            except Exception as e:
+                logger.error(f"HAProxy graceful reload failed: {e}")
+                raise
 
     # TODO: (ok-scale) Add implementation for socket connection for add/remove servers
     #   instead of using subprocess. In event of rapid up-scaling/down-scaling,
@@ -263,7 +335,8 @@ class HAProxyApi(ProxyApi):
             logger.error(f"Subprocess execution failed: {e}")
             raise
 
-    async def initialize(self) -> None:
+    async def _generate_config_file_internal(self) -> None:
+        """Internal config generation without locking (for use within locked sections)."""
         try:
             env = Environment()
             template = env.from_string(HAPROXY_CONFIG_TEMPLATE)
@@ -286,18 +359,21 @@ class HAProxyApi(ProxyApi):
             if not config_content.endswith("\n"):
                 config_content += "\n"
 
-            with open(HAPROXY_CONFIG_FILE_LOC, "w") as f:
+            with open(self.config_file_path, "w") as f:
                 f.write(config_content)
 
-            logger.debug(f"Generated HAProxy configuration: {HAPROXY_CONFIG_FILE_LOC}")
-
-            # Ensure routes map file exists
-            if not os.path.exists(HAPROXY_MAP_ENTRY_FILE):
-                await self._run_subprocess(["sudo", "touch", HAPROXY_MAP_ENTRY_FILE])
-                logger.debug(f"Created empty routes map file: {HAPROXY_MAP_ENTRY_FILE}")
+            logger.debug(f"Generated HAProxy configuration: {self.config_file_path}")
         except Exception as e:
             logger.error(f"Failed to create HAProxy configuration files: {e}")
             raise
+
+    async def initialize(self) -> None:
+        async with self._config_lock:
+            # Set initial reload ID if header injection is enabled and ID is not set
+            if self.cfg.inject_process_id_header and self.cfg.reload_id is None:
+                self.cfg.reload_id = f"initial-{int(time.time() * 1000)}"
+
+            await self._generate_config_file_internal()
 
     async def add_servers(self, backend: str, servers: List[ServerConfig]) -> None:
         raise NotImplementedError()

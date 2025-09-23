@@ -21,6 +21,10 @@ defaults
     option httplog
 frontend http_frontend
     bind {{ config.frontend_host }}:{{ config.frontend_port }}
+    {%- if config.inject_process_id_header and config.reload_id %}
+    # Inject unique reload ID as header to track which HAProxy instance handled the request (testing only)
+    http-request set-header x-haproxy-reload-id {{ config.reload_id }}
+    {%- endif %}
     # Static routing based on path prefixes
 {% for backend in backends %}
     acl is_{{ backend.name or 'unknown' }} path_beg {{ backend.path_prefix or '/' }}
