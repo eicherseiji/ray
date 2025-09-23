@@ -4,6 +4,7 @@ import pprint
 import time
 
 import ray.train
+from ray._private.test_utils import safe_write_to_results_json
 from ray.train.torch import TorchTrainer
 from ray.train.v2._internal.util import date_str
 
@@ -83,8 +84,8 @@ def main():
     metrics["e2e_throughput"] = e2e_throughput
     metrics["e2e_time"] = e2e_time
 
-    with open(METRICS_OUTPUT_PATH, "w") as f:
-        json.dump(metrics, f)
+    # Write to release test result file.
+    safe_write_to_results_json(metrics)
 
     final_metrics_str = (
         f"\nTotal training time: {e2e_time} seconds\n"
