@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import time
 
 from abc import ABC, abstractmethod
@@ -68,7 +67,6 @@ class HAProxyConfig:
     timeout_http_keep_alive_s: Optional[int] = None
     custom_global: Dict[str, str] = field(default_factory=dict)
     custom_defaults: Dict[str, str] = field(default_factory=dict)
-    pid_file_path: str = "/var/run/haproxy.pid"
     # Configurable frontend parameters
     frontend_port: int = 80
     frontend_host: str = "*"
@@ -76,6 +74,7 @@ class HAProxyConfig:
     inject_process_id_header: bool = False
     reload_id: Optional[str] = None  # Unique ID for each reload
 
+    pass_health_checks: bool = True
     # Global health check parameters (used as defaults for backends)
     # Number of consecutive failed health checks that must occur before a service instance is marked as unhealthy
     health_check_fall: Optional[int] = 2
@@ -162,7 +161,7 @@ class ProxyApi(ABC):
     """Generic interface for load balancer management operations."""
 
     @abstractmethod
-    async def initialize(self) -> None:
+    async def start(self) -> None:
         """Initializes proxy configuration files."""
         pass
 
@@ -187,12 +186,7 @@ class ProxyApi(ABC):
         pass
 
     @abstractmethod
-    async def start_proxy(self) -> None:
-        """Start the proxy."""
-        pass
-
-    @abstractmethod
-    async def stop_proxy(self) -> None:
+    async def stop(self) -> None:
         """Stop the proxy."""
         pass
 
@@ -212,7 +206,6 @@ class HAProxyApi(ProxyApi):
 
     def __init__(
         self,
-        socket_path: str = ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH,
         cfg: HAProxyConfig = None,
         backend_configs: Dict[str, BackendConfig] = None,
         http_options: Optional[HTTPOptions] = None,
@@ -220,120 +213,73 @@ class HAProxyApi(ProxyApi):
     ):
         self.cfg = HAProxyConfig() if cfg is None else cfg
         self.backend_configs = backend_configs or {}
-        self.socket_path = socket_path
         self.http_options = http_options
         self.config_file_path = config_file_path
         # Lock to prevent concurrent config modifications
         self._config_lock = asyncio.Lock()
+        self.proc = None
 
     def _is_running(self) -> bool:
-        """Check if HAProxy is running based on PID file existence."""
-        try:
-            # HAProxy manages the PID file - if it exists and has content,
-            # HAProxy is running
-            if not os.path.exists(self.cfg.pid_file_path):
-                return False
+        """Check if the HAProxy process is still running."""
+        return self.proc is not None and self.proc.returncode is None
 
-            # Check if a PID file has content (not empty)
-            return os.path.getsize(self.cfg.pid_file_path) > 0
+    async def _spawn_haproxy(self, *extra_args: str) -> asyncio.subprocess.Process:
+        proc = await asyncio.create_subprocess_exec(
+            "haproxy",
+            "-db",
+            "-f",
+            self.config_file_path,
+            *extra_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
 
-        except Exception as e:
-            raise RuntimeError(f"Could not check if HAProxy is running: {e}")
+        waited = 0.0
+        max_wait = 5.0
+
+        while waited < max_wait:
+            if proc.returncode is not None:
+                stdout = await proc.stdout.read() if proc.stdout else b""
+                stderr = await proc.stderr.read() if proc.stderr else b""
+                output = (
+                    stderr.decode("utf-8", errors="ignore").strip()
+                    or stdout.decode("utf-8", errors="ignore").strip()
+                )
+                raise RuntimeError(
+                    f"HAProxy exited during startup: {output or proc.returncode}"
+                )
+
+            # TODO: After get-stats API is implemented, check if HAProxy is ready by checking the stats API.
+            await asyncio.sleep(0.1)
+            waited += 0.1
+
+        return proc
 
     async def _graceful_reload(self) -> None:
-        """Perform a graceful reload of HAProxy using the `-sf` flag.
-        This method uses HAProxy's graceful reload mechanism where:
-        - a New process starts with updated configuration
-        - an Old process receives soft stop signal after socket handover
-        - Existing connections finish naturally on old process
-        - New connections go to a new process
-        Usage:
-            # After modifying configuration,
-            await self._generate_config_file()
-            await self._graceful_reload()
-        """
+        """Perform a graceful reload of HAProxy using the `-sf` flag."""
         async with self._config_lock:
             try:
-                # Check if HAProxy is currently running
                 if not self._is_running():
                     logger.info("HAProxy not running, cannot perform graceful reload")
                     return
 
-                # Read PID from file for the -sf parameter
-                with open(self.cfg.pid_file_path, "r") as f:
-                    old_pid = f.read().strip()
-
-                if not old_pid:
-                    logger.warning("PID file was empty, cannot perform graceful reload")
+                old_proc = self.proc
+                if old_proc is None or old_proc.returncode is not None:
+                    logger.warning(
+                        "Existing HAProxy process already exited; skipping reload"
+                    )
                     return
 
-                # Generate unique reload ID for tracking
                 if self.cfg.inject_process_id_header:
-                    self.cfg.reload_id = (
-                        f"reload-{int(time.time() * 1000)}"  # Timestamp-based ID
-                    )
-                    # Regenerate config with new reload ID (call internal method to avoid deadlock)
+                    self.cfg.reload_id = f"reload-{int(time.time() * 1000)}"
                     await self._generate_config_file_internal()
 
-                # Start new HAProxy process with graceful handover
-                await self._run_subprocess(
-                    [
-                        "sudo",
-                        "haproxy",
-                        "-f",
-                        self.config_file_path,
-                        "-p",
-                        self.cfg.pid_file_path,
-                        "-sf",
-                        old_pid,  # Gracefully stop old process after handover
-                    ]
-                )
+                self.proc = await self._spawn_haproxy("-sf", str(old_proc.pid))
                 logger.info("Successfully performed graceful HAProxy reload")
 
             except Exception as e:
                 logger.error(f"HAProxy graceful reload failed: {e}")
                 raise
-
-    # TODO: (ok-scale) Add implementation for socket connection for add/remove servers
-    #   instead of using subprocess. In event of rapid up-scaling/down-scaling,
-    #   subprocess, specially in case of large stdout's can lag.
-    @staticmethod
-    async def _run_subprocess(
-        cmd: List[str], input_data: Optional[bytes] = None, timeout: float = 10.0
-    ) -> str:
-        """
-        Run a subprocess command and return its output.
-
-        Args:
-            cmd: List of command arguments.
-            input_data: Optional input data to pass to the subprocess.
-            timeout: Timeout in seconds.
-
-        Returns:
-            Output string of the subprocess.
-        """
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE if input_data else None,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=input_data), timeout=timeout
-            )
-
-            if proc.returncode != 0:
-                error_msg = stderr.decode("utf-8").strip()
-                raise Exception(f"Command failed: {error_msg}")
-
-            return stdout.decode("utf-8").strip()
-        except asyncio.TimeoutError:
-            raise Exception(f"Command timed out after {timeout}s")
-        except Exception as e:
-            logger.error(f"Subprocess execution failed: {e}")
-            raise
 
     async def _generate_config_file_internal(self) -> None:
         """Internal config generation without locking (for use within locked sections)."""
@@ -367,13 +313,28 @@ class HAProxyApi(ProxyApi):
             logger.error(f"Failed to create HAProxy configuration files: {e}")
             raise
 
-    async def initialize(self) -> None:
-        async with self._config_lock:
-            # Set initial reload ID if header injection is enabled and ID is not set
-            if self.cfg.inject_process_id_header and self.cfg.reload_id is None:
-                self.cfg.reload_id = f"initial-{int(time.time() * 1000)}"
+    async def start(self) -> None:
+        """
+        Generate HAProxy configuration files and start the HAProxy server process.
 
-            await self._generate_config_file_internal()
+        This method creates the necessary configuration files and launches the HAProxy
+        process in foreground mode, ensuring that the proxy is running with the latest
+        configuration and that the parent retains control of the subprocess handle.
+        """
+        try:
+            async with self._config_lock:
+                # Set initial reload ID if header injection is enabled and ID is not set
+                if self.cfg.inject_process_id_header and self.cfg.reload_id is None:
+                    self.cfg.reload_id = f"initial-{int(time.time() * 1000)}"
+
+                await self._generate_config_file_internal()
+            logger.debug("Generated HAProxy config file")
+
+            self.proc = await self._spawn_haproxy()
+            logger.debug("HAProxy started successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize and start HAProxy configuration: {e}")
+            raise
 
     async def add_servers(self, backend: str, servers: List[ServerConfig]) -> None:
         raise NotImplementedError()
@@ -387,11 +348,21 @@ class HAProxyApi(ProxyApi):
     async def get_server_stats(self, backend: str, server: str) -> ServerStats:
         raise NotImplementedError()
 
-    async def start_proxy(self) -> None:
-        raise NotImplementedError()
+    async def stop(self) -> None:
+        proc = self.proc
+        if proc is None:
+            logger.info("HAProxy process not running, skipping shutdown")
+            return
 
-    async def stop_proxy(self) -> None:
-        raise NotImplementedError()
+        try:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+                self.proc = None
+
+            logger.info("Stopped HAProxy process")
+        except RuntimeError as e:
+            logger.error(f"Error during HAProxy shutdown: {e}")
 
     async def add_backend(self, backend_config: BackendConfig) -> None:
         raise NotImplementedError()

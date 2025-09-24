@@ -1,28 +1,28 @@
-from unittest import mock
+import asyncio
 import http.server
-import os
-import pytest
-import requests
 import socketserver
-import subprocess
 import sys
-import tempfile
 import threading
 import time
-
+from unittest import mock
+import os
+import pytest
+import pytest_asyncio
+import tempfile
+from ray._common.test_utils import wait_for_condition
+import requests
+from ray.cluster_utils import Cluster
+import ray
+from ray import serve
+from ray._private.test_utils import find_free_port
+from ray.actor import ActorHandle
+from ray.anyscale.serve._private.constants import ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
 from ray.anyscale.serve._private.haproxy import (
     BackendConfig,
     HAProxyApi,
     HAProxyConfig,
     ServerConfig,
 )
-import ray
-from ray import serve
-from ray._common.test_utils import wait_for_condition
-from ray._private.test_utils import find_free_port
-from ray.actor import ActorHandle
-from ray.anyscale.serve._private.constants import ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
-from ray.cluster_utils import Cluster
 from ray.serve._private.constants import (
     DEFAULT_UVICORN_KEEP_ALIVE_TIMEOUT_S,
     SERVE_NAMESPACE,
@@ -36,6 +36,36 @@ from ray.serve.schema import (
 from ray.serve.tests.conftest import *  # noqa
 from ray.tests.conftest import call_ray_stop_only  # noqa: F401
 from ray.util.state import list_actors
+from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def create_test_backend_server(port: int):
+    """Create a test backend server with slow and fast endpoints."""
+
+    class TestHandler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/slow":
+                time.sleep(3)  # 3-second delay
+                self.send_response(200)
+                self.send_header("Content-type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"Slow response completed")
+            else:
+                self.send_response(200)
+                self.send_header("Content-type", "text/plain")
+                self.send_header(
+                    "x-haproxy-reload-id", self.headers["x-haproxy-reload-id"]
+                )
+                self.end_headers()
+                self.wfile.write(b"Fast response")
+
+    server = socketserver.TCPServer(("", port), TestHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
 
 
 @pytest.fixture
@@ -402,8 +432,36 @@ def test_haproxy_loop_get_target_groups(_skip_if_ff_not_enabled, shutdown_ray):
     serve.shutdown()
 
 
+@pytest_asyncio.fixture
+async def haproxy_api_cleanup():
+    registered_apis = []
+
+    def register(api: Optional[HAProxyApi]) -> None:
+        if api is not None:
+            registered_apis.append(api)
+
+    yield register
+
+    for api in registered_apis:
+        proc = getattr(api, "proc", None)
+        if proc and proc.returncode is None:
+            try:
+                await api.stop()
+            except Exception as exc:  # pragma: no cover - best effort cleanup
+                logger.warning(f"Failed to stop HAProxy API cleanly: {exc}")
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception as kill_exc:
+                    logger.error(
+                        f"Failed to kill HAProxy process {proc.pid}: {kill_exc}"
+                    )
+        elif proc and proc.returncode is not None:
+            continue
+
+
 @pytest.mark.asyncio
-async def test_initialize_writes_config_file():
+async def test_generate_config_file_internal(haproxy_api_cleanup):
     """Test that initialize writes the correct config_stub file content using the actual template."""
     with tempfile.TemporaryDirectory() as temp_dir:
         config_file_path = os.path.join(temp_dir, "haproxy.cfg")
@@ -459,7 +517,7 @@ async def test_initialize_writes_config_file():
         with mock.patch(
             "ray.anyscale.serve._private.haproxy.HAPROXY_CONFIG_FILE_LOC",
             config_file_path,
-        ), mock.patch("ray.anyscale.serve._private.haproxy.HAProxyApi._run_subprocess"):
+        ):
 
             api = HAProxyApi(
                 cfg=config_stub,
@@ -467,22 +525,22 @@ async def test_initialize_writes_config_file():
                 config_file_path=config_file_path,
             )
 
+            haproxy_api_cleanup(api)
+
             try:
-                await api.initialize()
+                await api._generate_config_file_internal()
 
                 # Read and verify the generated file
                 with open(config_file_path, "r") as f:
                     actual_content = f.read()
 
                 # Expected configuration stub (matching the actual template output)
-                expected_config = """global
+                expected_config = """
+global
     # Log to the standard system log socket with debug level.
     log /dev/log local0 debug
     stats socket /test/admin.sock mode 666 level admin expose-fd listeners
     stats timeout 30s
-    user haproxy
-    group haproxy
-    daemon
     maxconn 1000
     nbthread 2
 defaults
@@ -498,18 +556,17 @@ defaults
     option httplog
 frontend http_frontend
     bind 0.0.0.0:8000
+    # Health check endpoint
+    acl healthcheck path -i /haproxy_health
+    http-request return status 200 content-type text/plain string "OK" if healthcheck
     # Static routing based on path prefixes
-
     acl is_api_backend path_beg /api
     use_backend backend_api_backend if is_api_backend
-
     acl is_web_backend path_beg /web
     use_backend backend_web_backend if is_web_backend
-
     default_backend default_backend
 backend default_backend
     http-request deny deny_status 404
-
 backend backend_api_backend
     log global
     balance leastconn
@@ -527,7 +584,6 @@ backend backend_api_backend
     # Servers in this backend
     server api_server1 127.0.0.1:8001 check
     server api_server2 127.0.0.1:8002 check
-
 backend backend_web_backend
     log global
     balance leastconn
@@ -546,12 +602,11 @@ backend backend_web_backend
     default-server fall 3 rise 2 inter 2s check
     # Servers in this backend
     server web_server1 127.0.0.1:8003 check
-
 listen stats
   bind *:8080
   stats enable
   stats uri /mystats
-  stats refresh 10s
+  stats refresh 1s
 """
 
                 # Compare the entire configuration
@@ -568,7 +623,7 @@ listen stats
 
 
 @pytest.mark.asyncio
-async def test_graceful_reload():
+async def test_graceful_reload(haproxy_api_cleanup):
     """Test that graceful reload preserves long-running connections."""
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -576,33 +631,8 @@ async def test_graceful_reload():
         haproxy_port = find_free_port()
         backend_port = find_free_port()
 
-        # Create backend server with slow endpoint
-        class RequestHandler(http.server.SimpleHTTPRequestHandler):
-            def do_GET(self):
-                if self.path == "/slow":
-                    # arbitrary time.sleep, a bit smaller than read timeout.
-                    # this should ensure the old process still exists
-                    # and is trying to finish existing requests.
-                    time.sleep(3)
-                    self.send_response(200)
-                    self.send_header("Content-type", "text/plain")
-                    self.end_headers()
-                    self.wfile.write(b"Slow response completed")
-                else:
-                    self.send_response(200)
-                    self.send_header("Content-type", "text/plain")
-                    self.send_header(
-                        "x-haproxy-reload-id", self.headers["x-haproxy-reload-id"]
-                    )
-                    self.end_headers()
-                    self.wfile.write(b"Fast response")
-
-        # Start backend server
-        backend_server = socketserver.TCPServer(("", backend_port), RequestHandler)
-        backend_thread = threading.Thread(
-            target=backend_server.serve_forever, daemon=True
-        )
-        backend_thread.start()
+        # Create and start a backend server
+        backend_server, backend_thread = create_test_backend_server(backend_port)
 
         # Configure HAProxy
 
@@ -610,9 +640,9 @@ async def test_graceful_reload():
             frontend_port=haproxy_port,
             frontend_host="127.0.0.1",
             stats_port=find_free_port(),
-            pid_file_path=os.path.join(temp_dir, "haproxy.pid"),
             inject_process_id_header=True,  # Enable for testing graceful reload
             reload_id=f"initial-{int(time.time() * 1000)}",  # Set initial reload ID
+            socket_path=os.path.join(temp_dir, "admin.sock"),
         )
 
         backend_config = BackendConfig(
@@ -629,14 +659,10 @@ async def test_graceful_reload():
             config_file_path=config_file_path,
         )
 
-        try:
-            # Start HAProxy process using standard approach
-            await api.initialize()
+        haproxy_api_cleanup(api)
 
-            # Start HAProxy with PID files
-            await api._run_subprocess(
-                ["sudo", "haproxy", "-f", config_file_path, "-p", api.cfg.pid_file_path]
-            )
+        try:
+            await api.start()
 
             # Wait for HAProxy to be ready (check stats endpoint)
             def check_stats_ready():
@@ -679,13 +705,16 @@ async def test_graceful_reload():
                 lambda: request_started.is_set(), timeout=5, retry_interval_ms=10
             )
 
-            with open(api.cfg.pid_file_path, "r") as f:
-                original_pid = f.read().strip()
+            assert api.proc is not None
+            original_proc = api.proc
+            original_pid = original_proc.pid
 
             await api._graceful_reload()
 
-            with open(api.cfg.pid_file_path, "r") as f:
-                new_pid = f.read().strip()
+            await asyncio.sleep(0.5)
+
+            assert api.proc is not None
+            new_pid = api.proc.pid
 
             # Verify new HAProxy process can serve requests during graceful reload
             expected_reload_id = api.cfg.reload_id
@@ -704,6 +733,8 @@ async def test_graceful_reload():
             assert (
                 original_pid != new_pid
             ), "Process should have been reloaded with new PID"
+            await asyncio.sleep(0.5)
+            assert original_proc.returncode is not None
             assert len(slow_results) == 1, "Slow request should have completed"
 
             result = slow_results[0]
@@ -715,36 +746,132 @@ async def test_graceful_reload():
             ), "Slow request should have completed"
 
         finally:
-            # Cleanup - stop HAProxy using PID files
-            try:
-                if os.path.exists(api.cfg.pid_file_path):
-                    # Use shell command substitution to read PID directly
-                    subprocess.run(
-                        [
-                            "sudo",
-                            "bash",
-                            "-c",
-                            f"kill -TERM $(cat {api.cfg.pid_file_path})",
-                        ],
-                        timeout=5,
-                    )
-                    print(
-                        f"Stopped HAProxy process using PID file: {api.cfg.pid_file_path}"
-                    )
-
-                    # Remove PID files
-                    os.unlink(api.cfg.pid_file_path)
-            except Exception as e:
-                print(f"Error during HAProxy cleanup: {e}")
-
-            # Confirm HAProxy is stopped
-            assert not api._is_running(), "HAProxy should be stopped after cleanup"
-
+            # Backend server cleanup
             try:
                 backend_server.shutdown()
                 backend_server.server_close()
             except Exception as e:
                 print(f"Error occurred while shutting down server stub. Error: {e}")
+
+            # HAProxy cleanup handled by fixture
+
+
+@pytest.mark.asyncio
+async def test_start(haproxy_api_cleanup):
+    """Test HAProxy start functionality."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+        socket_path = os.path.join(temp_dir, "admin.sock")
+
+        # Create HAProxy config
+        config = HAProxyConfig(
+            frontend_port=find_free_port(),
+            frontend_host="127.0.0.1",
+            stats_port=find_free_port(),
+            pass_health_checks=True,
+            socket_path=socket_path,
+        )
+
+        api = HAProxyApi(cfg=config, config_file_path=config_file_path)
+
+        haproxy_api_cleanup(api)
+
+        await api.start()
+        await asyncio.sleep(0.5)
+
+        assert api.proc is not None, "HAProxy process should exist"
+        assert api._is_running(), "HAProxy should be running"
+
+        # Verify config file contains expected content
+        with open(config_file_path, "r") as f:
+            config_content = f.read()
+            assert "frontend http_frontend" in config_content
+            assert f"bind 127.0.0.1:{config.frontend_port}" in config_content
+            assert "acl healthcheck path -i /haproxy_health" in config_content
+            assert (
+                "http-request return status 200" in config_content
+            )  # Health checks enabled
+
+        health_response = requests.get(
+            f"http://127.0.0.1:{config.frontend_port}/haproxy_health", timeout=5
+        )
+        assert health_response.status_code == 200, "Health check should return 200"
+        assert b"OK" in health_response.content, "Health check should return 'OK'"
+
+        await api.stop()
+
+        assert api.proc is None
+        assert not api._is_running()
+
+
+@pytest.mark.asyncio
+async def test_stop(haproxy_api_cleanup):
+    """Test HAProxy stop functionality."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+
+        config = HAProxyConfig(
+            frontend_port=find_free_port(),
+            frontend_host="127.0.0.1",
+            stats_port=find_free_port(),
+            socket_path=os.path.join(temp_dir, "admin.sock"),
+        )
+
+        api = HAProxyApi(cfg=config, config_file_path=config_file_path)
+
+        haproxy_api_cleanup(api)
+
+        # Start HAProxy
+        await api.start()
+
+        haproxy_api_cleanup(api)
+
+        await api.stop()
+
+        # Verify it's stopped
+        assert not api._is_running(), "HAProxy should be stopped after shutdown"
+
+
+@pytest.mark.asyncio
+async def test_graceful_reload_simple(haproxy_api_cleanup):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+        socket_path = os.path.join(temp_dir, "admin.sock")
+
+        config = HAProxyConfig(
+            frontend_port=find_free_port(),
+            frontend_host="127.0.0.1",
+            stats_port=find_free_port(),
+            socket_path=socket_path,
+        )
+
+        backend_config = BackendConfig(
+            name="test_backend",
+            path_prefix="/",
+            servers=[
+                ServerConfig(name="backend", host="127.0.0.1", port=find_free_port())
+            ],
+        )
+
+        api = HAProxyApi(
+            cfg=config,
+            backend_configs={"test_backend": backend_config},
+            config_file_path=config_file_path,
+        )
+
+        haproxy_api_cleanup(api)
+
+        await api.start()
+        await asyncio.sleep(0.2)
+
+        assert api.proc is not None
+        original_pid = api.proc.pid
+
+        await api._graceful_reload()
+        await asyncio.sleep(0.2)
+
+        assert api.proc is not None
+        assert api.proc.pid != original_pid
 
 
 if __name__ == "__main__":

@@ -3,9 +3,6 @@ HAPROXY_CONFIG_TEMPLATE = """global
     log /dev/log local0 debug
     stats socket {{ config.socket_path }} mode 666 level admin expose-fd listeners
     stats timeout 30s
-    user haproxy
-    group haproxy
-    daemon
     maxconn {{ config.maxconn }}
     nbthread {{ config.nbthread }}
 defaults
@@ -21,19 +18,28 @@ defaults
     option httplog
 frontend http_frontend
     bind {{ config.frontend_host }}:{{ config.frontend_port }}
+    # Health check endpoint
+    acl healthcheck path -i /haproxy_health
+    {%- if config.pass_health_checks %}
+    http-request return status 200 content-type text/plain string "OK" if healthcheck
+    {%- else %}
+    http-request return status 503 content-type text/plain string "Service Unavailable" if healthcheck
+    http-request deny deny_status 403
+    {%- endif %}
+
     {%- if config.inject_process_id_header and config.reload_id %}
     # Inject unique reload ID as header to track which HAProxy instance handled the request (testing only)
     http-request set-header x-haproxy-reload-id {{ config.reload_id }}
     {%- endif %}
     # Static routing based on path prefixes
-{% for backend in backends %}
+{%- for backend in backends %}
     acl is_{{ backend.name or 'unknown' }} path_beg {{ backend.path_prefix or '/' }}
     use_backend backend_{{ backend.name or 'unknown' }} if is_{{ backend.name or 'unknown' }}
-{% endfor %}
+{%- endfor %}
     default_backend default_backend
 backend default_backend
     http-request deny deny_status 404
-{% for backend in backends %}
+{%- for backend in backends %}
 backend backend_{{ backend.name or 'unknown' }}
     log global
     balance leastconn
@@ -83,10 +89,10 @@ backend backend_{{ backend.name or 'unknown' }}
     {%- for server in backend.servers %}
     server {{ server.name }} {{ server.host }}:{{ server.port }} check
     {%- endfor %}
-{% endfor %}
+{%- endfor %}
 listen stats
   bind *:{{ config.stats_port }}
   stats enable
   stats uri {{ config.stats_uri }}
-  stats refresh 10s
+  stats refresh 1s
 """
