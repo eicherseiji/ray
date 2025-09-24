@@ -47,3 +47,7 @@ class FileReader(abc.ABC):
     def supports_predicate_pushdown(self) -> bool:
         """Whether expressions can be handled upon reading"""
         return False
+
+    def produces_one_row_per_file(self) -> bool:
+        """Whether each file produces 1 row"""
+        return False

@@ -118,9 +118,7 @@ class ReadFiles(SourceOperator, AbstractMap):
         return super().infer_schema()
 
     def can_modify_num_rows(self) -> bool:
-        # NOTE: Returns true, since most of the readers expands its input
-        # and produce many rows for every single row of the input
-        return True
+        return not self.reader.produces_one_row_per_file()
 
     def output_data(self) -> Optional[List["RefBundle"]]:
         """The output data of this operator if already known, or ``None``."""

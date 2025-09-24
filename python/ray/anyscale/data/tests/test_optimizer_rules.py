@@ -1,9 +1,12 @@
 import re
-from typing import List
+from typing import List, Callable
 
 import pandas as pd
 import pyarrow.compute as pc
 import pytest
+import numpy as np
+from PIL import Image
+import soundfile as sf
 
 import ray
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
@@ -1031,7 +1034,8 @@ def test_projection_pushdown_multiple_exprs_with_select(ray_start_regular_shared
 
 
 def test_limit_pushdown_dont_push_through_readfiles(ray_start_regular_shared):
-    """Test that limit is NOT incorrectly pushed through ReadFiles operator.
+    """Test that limit is NOT incorrectly pushed through ReadFiles operator
+       for Datasources that produce more than 1 row per file.
 
     This test reproduces the specific bug scenario where:
     - Original correct pipeline: ListFiles -> ReadFiles -> Limit
@@ -1064,6 +1068,103 @@ def test_limit_pushdown_dont_push_through_readfiles(ray_start_regular_shared):
         f"Expected exactly 1 row after limit(1), but got {len(ds_rows)} rows. "
         f"This suggests limit was incorrectly pushed through ReadFiles."
     )
+
+
+@pytest.fixture
+def image_files_fixture(tmp_path) -> str:
+    """Create test image files fixture."""
+    # Create 3 test image files
+    for i in range(3):
+        img = Image.new("RGB", (100, 100), color=(i * 50, i * 50, i * 50))
+        img_path = tmp_path / f"test_{i}.jpg"
+        img.save(img_path)
+
+    return str(tmp_path)
+
+
+@pytest.fixture
+def audio_files_fixture(tmp_path) -> str:
+    """Create test audio files fixture."""
+    # Create 3 test audio files
+    for i in range(3):
+        # Generate a simple sine wave
+        sample_rate = 44100
+        duration = 1.0  # 1 second
+        frequency = 440 + i * 100  # Different frequencies
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        audio_data = np.sin(2 * np.pi * frequency * t)
+
+        audio_path = tmp_path / f"test_{i}.wav"
+        sf.write(audio_path, audio_data, sample_rate)
+
+    return str(tmp_path)
+
+
+@pytest.fixture
+def binary_files_fixture(tmp_path) -> str:
+    """Create test binary files fixture."""
+    # Create 3 test binary files
+    for i in range(3):
+        # Create binary data with different content for each file
+        binary_data = (
+            b"Binary file content " + str(i).encode() + b" " + b"x" * (100 + i * 10)
+        )
+        binary_path = tmp_path / f"test_{i}.bin"
+        with open(binary_path, "wb") as f:
+            f.write(binary_data)
+
+    return str(tmp_path)
+
+
+def _test_single_row_file_limit_pushdown(
+    file_type: str,
+    read_func: Callable[[str], Dataset],
+    temp_dir: str,
+    expected_rows: int = 2,
+) -> None:
+    """Helper function to test limit pushdown for single-row file types."""
+    ds = read_func(temp_dir)
+    ds = ds.limit(expected_rows)
+
+    # Verify correctness: should get exactly expected_rows
+    rows = ds.take_all()
+
+    # Verify the pipeline structure allows pushdown
+    plan_str = ds._plan._logical_plan.dag.dag_str
+    expected_optimized_order = (
+        "ListFiles[ListFiles] -> Limit[limit=2] -> ReadFiles[ReadFiles]"
+    )
+
+    assert plan_str == expected_optimized_order, (
+        f"Limit pushdown should be allowed for {file_type} files!\n"
+        f"Expected: {expected_optimized_order}\n"
+        f"Got:      {plan_str}\n"
+        f"{file_type} files produce 1 row per file, so pushdown is safe."
+    )
+
+    assert len(rows) == expected_rows, (
+        f"Expected exactly {expected_rows} rows after limit({expected_rows}) on {file_type}, "
+        f"but got {len(rows)} rows."
+    )
+
+
+@pytest.mark.parametrize(
+    "file_type,read_func,fixture_name",
+    [
+        ("image", ray.data.read_images, "image_files_fixture"),
+        ("audio", ray.data.read_audio, "audio_files_fixture"),
+        ("binary", ray.data.read_binary_files, "binary_files_fixture"),
+    ],
+)
+def test_limit_pushdown_allows_single_row_files(
+    ray_start_regular_shared, request, file_type, read_func, fixture_name
+):
+    """Test that limit IS correctly pushed through ReadFiles for Datasources that produce 1 row per file.
+
+    Image, audio, and binary Datasources produce 1 row per file, so limit pushdown is safe and beneficial.
+    """
+    fixture = request.getfixturevalue(fixture_name)
+    _test_single_row_file_limit_pushdown(file_type, read_func, fixture)
 
 
 if __name__ == "__main__":

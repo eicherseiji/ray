@@ -45,6 +45,10 @@ class BinaryReader(NativeFileReader, SupportsMetadata):
         # Since we just return the number of paths, we don't need to batch.
         return None
 
+    def produces_one_row_per_file(self) -> bool:
+        """Each binary file produces 1 row"""
+        return True
+
 
 class BinaryInMemorySizeEstimator(InMemorySizeEstimator):
     def estimate_in_memory_sizes(self, manifest: FileManifest) -> np.array:

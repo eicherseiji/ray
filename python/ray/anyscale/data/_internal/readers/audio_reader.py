@@ -36,3 +36,7 @@ class AudioReader(NativeFileReader):
 
         batch = {"amplitude": [amplitude], "sample_rate": [sample_rate]}
         yield batch
+
+    def produces_one_row_per_file(self) -> bool:
+        """Each audio file produces 1 row"""
+        return True

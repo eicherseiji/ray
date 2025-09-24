@@ -83,3 +83,7 @@ class ImageReader(NativeFileReader, SupportsMetadata):
     def get_target_metadata_batch_size(self) -> Optional[int]:
         # Since we just return the number of paths, we don't need to batch.
         return None
+
+    def produces_one_row_per_file(self) -> bool:
+        """Each image file produces 1 row"""
+        return True
