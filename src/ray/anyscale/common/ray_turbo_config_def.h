@@ -24,3 +24,5 @@ RAY_CONFIG(bool, experimental_object_manager_enable_multiple_connections, false)
 // TODO(dayshah): Delete this config variable after it's on for a while. See
 // https://github.com/anyscale/rayturbo/issues/2090
 RAY_CONFIG(bool, lazy_subscribe_core_workers, true)
+
+RAY_CONFIG(bool, gcs_enable_node_manager_dedicated_io_context, false)

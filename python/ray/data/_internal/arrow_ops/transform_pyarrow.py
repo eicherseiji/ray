@@ -185,7 +185,7 @@ def _reconcile_diverging_fields(
     from ray.air.util.object_extensions.arrow import ArrowPythonObjectType
 
     reconciled_fields = {}
-    field_types = defaultdict(set)  # field_name -> set of types seen so far
+    field_types = defaultdict(list)  # field_name -> list of types seen so far
     field_flags = defaultdict(
         lambda: defaultdict(bool)
     )  # field_name -> dict of boolean flags
@@ -198,7 +198,8 @@ def _reconcile_diverging_fields(
                 continue
 
             field_type = schema.field(field_name).type
-            field_types[field_name].add(field_type)
+            if field_type not in field_types[field_name]:
+                field_types[field_name].append(field_type)
             flags = field_flags[field_name]
 
             # Update flags
