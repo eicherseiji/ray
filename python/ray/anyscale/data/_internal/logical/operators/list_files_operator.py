@@ -9,7 +9,14 @@ from ray.data.datasource.file_based_datasource import FileShuffleConfig
 from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
 from ray.data.block import Block, BlockAccessor, BlockColumnAccessor
 from ray.data.datasource import PathPartitionFilter
-from ray.anyscale.data.checkpoint.util import CHECKPOINTED_FILE_FRAGMENTS_TYPE
+from ray.anyscale.data.checkpoint.util import (
+    CHECKPOINTED_FILE_FRAGMENTS_TYPE,
+    CheckpointFragmentsInfo,
+)
+from ray._private.arrow_utils import get_pyarrow_version
+
+# PyArrow version constant for compatibility checks
+PYARROW_VERSION_10 = "10.0.0"
 
 if TYPE_CHECKING:
     from ray.anyscale.data._internal.file_indexer import FileIndexer
@@ -91,7 +98,7 @@ class FileManifest:
         paths: List[str],
         sizes: List[int],
         chunk_metadatas: List[Optional[dict]],
-        checkpoint_file_fragments: List[Optional[pa.StructScalar]],
+        checkpoint_file_fragments: List[Optional[CheckpointFragmentsInfo]],
     ) -> "FileManifest":
         assert (
             len(paths)
@@ -100,16 +107,38 @@ class FileManifest:
             == len(checkpoint_file_fragments)
         )
 
-        processed_fragments = []
-        for fragment in checkpoint_file_fragments:
-            if isinstance(fragment, pa.StructScalar) and fragment.is_valid:
-                # Convert StructScalar to dict for PyArrow 9 compatibility
-                if parse_version(pa.__version__) < parse_version("10.0.0"):
-                    processed_fragments.append(fragment.as_py())
-                else:
-                    processed_fragments.append(fragment)
+        def _process_fragment(
+            fragment_info: Optional[CheckpointFragmentsInfo],
+        ) -> Optional[Union[pa.StructScalar, dict]]:
+            if fragment_info is None:
+                return None
+
+            fragment = fragment_info.checkpointed_file_fragments
+            if (
+                fragment is None
+                or not isinstance(fragment, pa.StructScalar)
+                or not fragment.is_valid
+            ):
+                return None
+
+            # Convert StructScalar to dict for PyArrow 9 compatibility.
+            # Note: In PyArrow 10+, can pass a pa.StructScalar directly into
+            # pa.array(..., type=<struct type>) and it's accepted/preserved.
+            # In PyArrow 9 (and earlier), constructing a struct array expects
+            # Python mappings (dicts) for the elements; passing a StructScalar
+            # raises a type/conversion error (e.g., "expected dict for struct type").
+            pyarrow_version = get_pyarrow_version()
+            if pyarrow_version is not None and pyarrow_version < parse_version(
+                PYARROW_VERSION_10
+            ):
+                return fragment.as_py()
             else:
-                processed_fragments.append(None)
+                return fragment
+
+        processed_fragments = [
+            _process_fragment(fragment_info)
+            for fragment_info in checkpoint_file_fragments
+        ]
 
         checkpoint_file_fragments_array = pa.array(
             processed_fragments, type=CHECKPOINTED_FILE_FRAGMENTS_TYPE

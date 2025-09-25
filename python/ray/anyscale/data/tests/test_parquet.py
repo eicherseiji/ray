@@ -1385,12 +1385,15 @@ def test_read_files_with_checkpoint_ids_fully_skip_fragment(
     from ray.anyscale.data.checkpoint.util import index_checkpointed_fragments
 
     checkpointed_fragments_by_path = index_checkpointed_fragments(checkpointed_ids)
-    checkpoint_ids_scalar = get_checkpoint_fragments_info_for_file(
+    checkpoint_fragments_info = get_checkpoint_fragments_info_for_file(
         checkpointed_ids, str(file_path), checkpointed_fragments_by_path
     )
 
     file_manifest = FileManifest.construct_manifest(
-        [file_path], [file_size], [None], [checkpoint_ids_scalar]
+        [file_path],
+        [file_size],
+        [None],
+        [checkpoint_fragments_info],
     )
 
     tables = list(
@@ -1459,12 +1462,15 @@ def test_read_files_with_checkpoint_ids_partial_skip_fragment(
     from ray.anyscale.data.checkpoint.util import index_checkpointed_fragments
 
     checkpointed_fragments_by_path = index_checkpointed_fragments(checkpointed_ids)
-    checkpoint_ids_scalar = get_checkpoint_fragments_info_for_file(
+    checkpoint_fragments_info = get_checkpoint_fragments_info_for_file(
         checkpointed_ids, str(file_path), checkpointed_fragments_by_path
     )
 
     file_manifest = FileManifest.construct_manifest(
-        [file_path], [file_size], [None], [checkpoint_ids_scalar]
+        [file_path],
+        [file_size],
+        [None],
+        [checkpoint_fragments_info],
     )
     tables = list(
         parquet_reader.read_files(
@@ -1523,12 +1529,15 @@ def test_read_files_with_checkpoint_ids_no_skip_fragment(
     checkpointed_fragments_by_path = index_checkpointed_fragments(
         checkpointed_ids_table
     )
-    checkpoint_ids_scalar = get_checkpoint_fragments_info_for_file(
+    checkpoint_fragments_info = get_checkpoint_fragments_info_for_file(
         checkpointed_ids_table, str(file_path), checkpointed_fragments_by_path
     )
 
     file_manifest = FileManifest.construct_manifest(
-        [file_path], [file_size], [None], [checkpoint_ids_scalar]
+        [file_path],
+        [file_size],
+        [None],
+        [checkpoint_fragments_info],
     )
 
     tables = list(

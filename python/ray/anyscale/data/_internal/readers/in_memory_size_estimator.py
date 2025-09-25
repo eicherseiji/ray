@@ -95,7 +95,10 @@ class SamplingInMemorySizeEstimator(InMemorySizeEstimator):
             return None
 
         manifest = FileManifest.construct_manifest(
-            [path], [file_size], [metadata], [None]
+            [path],
+            [file_size],
+            [metadata],
+            [None],
         )
         batches = self._reader.read_files(manifest, filesystem=self._filesystem)
 

@@ -1291,7 +1291,7 @@ class TestCheckpointFragmentRestore:
                 checkpointed_fragments
             )
             # Get the checkpoint fragments for this specific file
-            checkpointed_ids_struct = get_checkpoint_fragments_info_for_file(
+            checkpointed_fragments_info = get_checkpoint_fragments_info_for_file(
                 checkpointed_fragments, fragment_path, checkpointed_fragments_by_path
             )
             # Create a file manifest with the processed checkpoint data
@@ -1299,7 +1299,7 @@ class TestCheckpointFragmentRestore:
                 [fragment_path],  # Single path
                 [expected_num_rows],  # File size
                 [None],  # No chunk metadata
-                [checkpointed_ids_struct],
+                [checkpointed_fragments_info],
             )
         else:
             # No checkpoint data available - create manifest with None checkpoint data

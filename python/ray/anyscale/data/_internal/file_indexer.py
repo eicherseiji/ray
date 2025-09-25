@@ -233,18 +233,19 @@ class NonSamplingFileIndexer(FileIndexer):
                     filtered_paths_count += 1
                     continue
 
-                checkpoint_file_fragments = None
+                checkpoint_fragments_info = None
                 if checkpoint_ids is not None:
                     # Get checkpoint file fragments for this file
-                    checkpoint_file_fragments = get_checkpoint_fragments_info_for_file(
+                    checkpoint_fragments_info = get_checkpoint_fragments_info_for_file(
                         checkpoint_ids, path, checkpointed_fragments_by_path
                     )
 
                     # Check if the file is fully checkpointed
                     if (
-                        checkpoint_file_fragments is not None
+                        checkpoint_fragments_info.checkpointed_file_fragments
+                        is not None
                         and is_file_fragments_fully_checkpointed(
-                            checkpoint_file_fragments
+                            checkpoint_fragments_info
                         )
                     ):
                         logger.debug(
@@ -258,7 +259,7 @@ class NonSamplingFileIndexer(FileIndexer):
                     running_paths.append(path)
                     running_file_sizes.append(size)
                     running_file_chunk_metadatas.append(chunk_metadata)
-                    running_file_fragments_checkpoint.append(checkpoint_file_fragments)
+                    running_file_fragments_checkpoint.append(checkpoint_fragments_info)
                     file_chunks_count += 1
                     if len(running_paths) >= self._MAX_PATHS_PER_LIST_FILES_OUTPUT:
                         manifests_count += 1

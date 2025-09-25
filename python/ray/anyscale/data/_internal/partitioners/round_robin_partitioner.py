@@ -6,6 +6,7 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
 from ray.anyscale.data._internal.readers import InMemorySizeEstimator
+from ray.anyscale.data.checkpoint.util import CheckpointFragmentsInfo
 
 from .file_partitioner import FilePartitioner
 
@@ -19,7 +20,7 @@ class _FileBucket:
         self._paths = []
         self._file_sizes = []
         self._file_chunk_metadatas = []
-        self._checkpoint_file_fragments = []
+        self._checkpoint_fragments_info = []
         self._in_memory_size = 0
 
     @property
@@ -39,8 +40,8 @@ class _FileBucket:
         return self._file_chunk_metadatas
 
     @property
-    def checkpoint_file_fragments(self):
-        return self._checkpoint_file_fragments
+    def checkpoint_fragments_info(self):
+        return self._checkpoint_fragments_info
 
     def add(
         self,
@@ -48,19 +49,19 @@ class _FileBucket:
         file_size: int,
         file_chunk_metadata: Tuple[int, int],
         in_memory_size: int,
-        checkpoint_file_fragments=None,
+        checkpoint_fragments_info=None,
     ):
         self._paths.append(path)
         self._file_sizes.append(file_size)
         self._file_chunk_metadatas.append(file_chunk_metadata)
-        self._checkpoint_file_fragments.append(checkpoint_file_fragments)
+        self._checkpoint_fragments_info.append(checkpoint_fragments_info)
         self._in_memory_size += in_memory_size
 
     def clear(self):
         self._paths.clear()
         self._file_sizes.clear()
         self._file_chunk_metadatas.clear()
-        self._checkpoint_file_fragments.clear()
+        self._checkpoint_fragments_info.clear()
         self._in_memory_size = 0
 
 
@@ -120,6 +121,13 @@ class RoundRobinPartitioner(FilePartitioner):
             in_memory_size_estimates,
             input.file_fragments_checkpoint,
         ):
+            if checkpoint_file_fragments is not None:
+                checkpoint_fragments_info = CheckpointFragmentsInfo(
+                    path=file_path,
+                    checkpointed_file_fragments=checkpoint_file_fragments,
+                )
+            else:
+                checkpoint_fragments_info = None
             current_bucket = self._buckets[self._current_bucket_index]
 
             # If an in-memory size estimate isn't available, add the file to the current
@@ -135,7 +143,7 @@ class RoundRobinPartitioner(FilePartitioner):
                     file_size,
                     file_chunk_metadata,
                     0,
-                    checkpoint_file_fragments,
+                    checkpoint_fragments_info,
                 )
                 self._current_bucket_index = (
                     self._current_bucket_index + 1
@@ -147,14 +155,14 @@ class RoundRobinPartitioner(FilePartitioner):
                 file_size,
                 file_chunk_metadata,
                 in_memory_size_estimate,
-                checkpoint_file_fragments,
+                checkpoint_fragments_info,
             )
             if current_bucket.in_memory_size >= self._max_bucket_size:
                 manifest = FileManifest.construct_manifest(
                     current_bucket.paths,
                     current_bucket.file_sizes,
                     current_bucket.file_chunk_metadatas,
-                    current_bucket.checkpoint_file_fragments,
+                    current_bucket.checkpoint_fragments_info,
                 )
                 self._output_queue.append(manifest)
                 self._current_bucket_index = (
@@ -179,6 +187,6 @@ class RoundRobinPartitioner(FilePartitioner):
                     bucket.paths,
                     bucket.file_sizes,
                     bucket.file_chunk_metadatas,
-                    bucket.checkpoint_file_fragments,
+                    bucket.checkpoint_fragments_info,
                 )
                 self._output_queue.append(manifest)

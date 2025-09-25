@@ -252,6 +252,16 @@ class CheckpointedFragmentInfo:
     checkpointed_row_count: int
 
 
+@dataclass
+class CheckpointFragmentsInfo:
+    """Dataclass for checkpoint fragments info for a file."""
+
+    # The file path
+    path: str
+    # The checkpointed file fragments struct scalar
+    checkpointed_file_fragments: Optional[pa.StructScalar]
+
+
 def _create_empty_checkpointed_fragment_info(
     fragment: pa.dataset.ParquetFileFragment,
     row_group_idx: int,
@@ -522,7 +532,7 @@ def get_checkpoint_fragments_info_for_file(
     checkpointed_ids: Block,
     path: str,
     checkpointed_fragments_by_path: dict[str, int],
-) -> Optional[pa.StructScalar]:
+) -> CheckpointFragmentsInfo:
     """Filter checkpointed fragments based on the checkpointed IDs. Here we extract checkpointed fragments info for a specific file.
 
     Args:
@@ -531,29 +541,41 @@ def get_checkpoint_fragments_info_for_file(
         checkpointed_fragments_by_path: A dictionary mapping file path to the index of the file in the checkpointed IDs block
 
     Returns:
-        A PyArrow StructScalar with schema CHECKPOINTED_FILE_FRAGMENTS_TYPE
+        CheckpointFragmentsInfo containing the checkpointed file fragments info
 
     """
     if checkpointed_ids is None:
         # No checkpointed IDs
-        return None
+        return CheckpointFragmentsInfo(
+            path=path,
+            checkpointed_file_fragments=None,
+        )
 
     accessor = ArrowBlockAccessor.for_block(checkpointed_ids)
     checkpointed_ids_table = accessor.to_arrow()
     if checkpointed_ids_table.num_rows == 0:
         # No checkpointed files
-        return None
+        return CheckpointFragmentsInfo(
+            path=path,
+            checkpointed_file_fragments=None,
+        )
 
     if path not in checkpointed_fragments_by_path:
         # No checkpointed fragments for this path
-        return None
+        return CheckpointFragmentsInfo(
+            path=path,
+            checkpointed_file_fragments=None,
+        )
 
     file_index = checkpointed_fragments_by_path[path]
     checkpointed_file_fragments_col = checkpointed_ids_table[
         CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME
     ]
     checkpointed_file_fragments = checkpointed_file_fragments_col[file_index]
-    return checkpointed_file_fragments
+    return CheckpointFragmentsInfo(
+        path=path,
+        checkpointed_file_fragments=checkpointed_file_fragments,
+    )
 
 
 def index_checkpointed_fragments(
@@ -582,22 +604,23 @@ def index_checkpointed_fragments(
 
 
 def is_file_fragments_fully_checkpointed(
-    checkpointed_file_fragments: pa.StructScalar,
+    checkpointed_fragments_info: CheckpointFragmentsInfo,
 ) -> bool:
     """Check if the file fragments are fully checkpointed.
 
     Args:
-        checkpointed_file_fragments: A PyArrow StructScalar with schema CHECKPOINTED_FILE_FRAGMENTS_TYPE
+        checkpointed_fragments_info: A CheckpointFragmentsInfo containing the checkpointed file fragments info
 
     Returns:
         True if the file fragments are fully checkpointed, False otherwise
     """
     fully_checkpointed_field_idx = get_struct_field_index(
-        checkpointed_file_fragments,
+        checkpointed_fragments_info.checkpointed_file_fragments,
         CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
     )
     fully_checkpointed = pc.struct_field(
-        checkpointed_file_fragments, [fully_checkpointed_field_idx]
+        checkpointed_fragments_info.checkpointed_file_fragments,
+        [fully_checkpointed_field_idx],
     ).as_py()
     return fully_checkpointed
 
