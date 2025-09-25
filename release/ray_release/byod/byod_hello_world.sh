@@ -2,4 +2,5 @@
 
 set -exo pipefail
 
-echo "Hello World"
+# Install Python dependencies
+uv pip install -r python_depset.lock --system --no-deps --index-strategy unsafe-best-match
