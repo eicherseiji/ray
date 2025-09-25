@@ -19,7 +19,7 @@ defaults
 frontend http_frontend
     bind {{ config.frontend_host }}:{{ config.frontend_port }}
     # Health check endpoint
-    acl healthcheck path -i /haproxy_health
+    acl healthcheck path -i {{ config.health_check_endpoint }}
     {%- if config.pass_health_checks %}
     http-request return status 200 content-type text/plain string "OK" if healthcheck
     {%- else %}
