@@ -512,6 +512,7 @@ ray_cc_library(
         ":grpc_services",
         "//src/ray/core_worker_rpc_client:core_worker_client",
         "//src/ray/core_worker_rpc_client:core_worker_client_pool",
+        "//src/ray/anyscale/gcs/gcs_server:gcs_server_io_context_policy",
         "//src/ray/gcs/store_client",
         "//src/ray/gcs/store_client:in_memory_store_client",
         "//src/ray/gcs/store_client:observable_store_client",

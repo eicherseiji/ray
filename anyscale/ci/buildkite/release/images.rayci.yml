@@ -1,0 +1,112 @@
+group: rayturbo release test images
+steps:
+  - label: ":tapioca: go download helper"
+    key: rayturbo-helper
+    instance_type: small
+    commands:
+      - bash anyscale/go/build-on-buildkite.sh
+    depends_on:
+      - forge
+    job_env: forge
+    tags:
+      - gotools
+
+  - label: ":tapioca: rayturbo py{{matrix}} wheel amd64"
+    key: rayturbo-wheels
+    commands:
+      - bazel run //ci/ray_ci:build_in_docker -- wheel --python-version {{matrix}}
+      - bash anyscale/ci/upload-wheels.sh
+    instance_type: medium
+    depends_on:
+      - manylinux
+      - forge
+    job_env: forge
+    tags: docker
+    matrix:
+      - "3.9"
+      - "3.11"
+      - "3.12"
+
+  - label: "Check ray wheels"
+    key: check-ray-wheels
+    commands:
+      - source anyscale/ci/setup-env.sh
+      - bazel run //anyscale/ci:check_wheels_exist_s3 -- --branch="$$UPSTREAM_BRANCH" --ray_version="$$RAY_VERSION"  --commit_hash="$(cat .UPSTREAM)"
+    depends_on:
+      - forge
+
+  - label: ":tapioca: rayturbo py{{matrix.py}} {{matrix.base}} release test image (amd64)"
+    key: rayturbo-release-test-image
+    tags: docker
+    commands:
+      - export PUSH_COMMIT_TAGS=false
+      - export RAY_INLINE_SITE_PKG=true
+      - export REPO_SERIES_NAME=ray
+      - export LAYER_TYPE=base-extra-testdeps
+      - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}}
+    instance_type: medium
+    depends_on:
+      - rayturbo-wheels
+      - rayturbo-helper
+      - raycpubaseextra-testdeps
+      - raycudabaseextra-testdeps
+      - check-ray-wheels
+    job_env: forge
+    mount_buildkite_agent: true
+    matrix:
+      setup:
+        py:
+          - "3.9"
+          - "3.11"
+          - "3.12"
+        base:
+          - "cpu"
+          - "cu12.3.2-cudnn9"
+
+  - label: ":tapioca: rayturbo llm py{{matrix.py}} {{matrix.base}} release test image"
+    key: rayturbo-llm-release-test-image
+    tags: docker
+    commands:
+      - export PUSH_COMMIT_TAGS=false
+      - export RAY_INLINE_SITE_PKG=true
+      - export REPO_SERIES_NAME=ray
+      - export LAYER_TYPE=base-extra-testdeps
+      - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray-llm
+    instance_type: medium
+    depends_on:
+      - rayturbo-wheels
+      - rayturbo-helper
+      - ray-llmbaseextra-testdeps
+      - check-ray-wheels
+    job_env: forge
+    mount_buildkite_agent: true
+    matrix:
+      setup:
+        py:
+          - "3.11"
+        base:
+          - "cu12.8.1-cudnn"
+
+  - label: ":tapioca: rayturbo ml py{{matrix.py}} {{matrix.base}} release test image"
+    key: rayturbo-ml-release-test-image
+    tags: docker
+    commands:
+      - export PUSH_COMMIT_TAGS=false
+      - export RAY_INLINE_SITE_PKG=true
+      - export REPO_SERIES_NAME=ray
+      - export LAYER_TYPE=base-extra-testdeps
+      - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray-ml
+    instance_type: medium
+    depends_on:
+      - rayturbo-wheels
+      - rayturbo-helper
+      - ray-mlcudabaseextra-testdeps
+      - check-ray-wheels
+    job_env: forge
+    mount_buildkite_agent: true
+    matrix:
+      setup:
+        py:
+          - "3.9"
+        base:
+          - "cu12.1.1-cudnn8"
