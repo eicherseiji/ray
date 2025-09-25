@@ -1,0 +1,25 @@
+- name: DEFAULTS
+  group: daft-benchmarks
+  working_dir: nightly_tests/daft_benchmarks
+
+  frequency: manual
+  team: data
+
+- name: image_classification
+
+  cluster:
+    cluster_compute: image_classification/compute.yaml
+    byod:
+      post_build_script: byod_install_daft_image_classification.sh
+
+  run:
+    timeout: 3600
+
+  variations:
+    - __suffix__: ray
+      run:
+        script: python image_classification/ray_data_main.py
+
+    - __suffix__: daft
+      run:
+        script: python image_classification/daft_main.py

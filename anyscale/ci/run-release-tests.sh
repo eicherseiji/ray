@@ -64,6 +64,7 @@ export RAYCI_BUILD_ID="${RAYCI_BUILD_ID:-${BUILDKITE_COMMIT:0:6}}"
 /tmp/bazel run //release:build_pipeline -- \
     --test-collection-file release/release_runtime_tests.yaml \
     --test-collection-file release/release_data_tests.yaml \
+    --test-collection-file release/release_daft_tests.yaml \
     --test-collection-file release/release_tests.yaml \
     --run-jailed-tests \
     --global-config runtime_config.yaml \
