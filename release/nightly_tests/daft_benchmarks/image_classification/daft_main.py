@@ -6,21 +6,31 @@ import uuid
 import daft
 from daft import col
 import numpy as np
+import ray
 import torch
 from torchvision import transforms
 from torchvision.models import ResNet18_Weights, resnet18
 
-from util import warmup_ray
-
 
 NUM_GPU_NODES = 8
+# TODO: Copy this over to `s3://ray-example-data`.
 INPUT_PATH = "s3://ray-benchmark-data-internal-us-west-2/imagenet_metadata.parquet"
 OUTPUT_PATH = f"s3://ray-data-write-benchmark/{uuid.uuid4().hex}"
 BATCH_SIZE = 100
 IMAGE_DIM = (3, 224, 224)
 
 daft.context.set_runner_ray()
-warmup_ray()
+
+
+@ray.remote
+def warmup():
+    pass
+
+
+# NOTE: On a fresh Ray cluster, it can take a minute or longer to schedule the first
+#       task. To ensure benchmarks compare data processing speed and not cluster startup
+#       overhead, this code launches a several tasks as warmup.
+ray.get([warmup.remote() for _ in range(64)])
 
 
 weights = ResNet18_Weights.DEFAULT

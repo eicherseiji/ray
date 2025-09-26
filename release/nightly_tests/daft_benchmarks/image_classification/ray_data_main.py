@@ -12,11 +12,6 @@ import numpy as np
 import uuid
 import ray
 
-from util import warmup_ray
-
-
-ray.init()
-warmup_ray()
 
 NUM_GPU_NODES = 8
 # TODO: Copy this over to `s3://ray-example-data`.
@@ -26,6 +21,19 @@ BATCH_SIZE = 100
 
 weights = ResNet18_Weights.DEFAULT
 transform = transforms.Compose([transforms.ToTensor(), weights.transforms()])
+
+ray.init()
+
+
+@ray.remote
+def warmup():
+    pass
+
+
+# NOTE: On a fresh Ray cluster, it can take a minute or longer to schedule the first
+#       task. To ensure benchmarks compare data processing speed and not cluster startup
+#       overhead, this code launches a several tasks as warmup.
+ray.get([warmup.remote() for _ in range(64)])
 
 
 def deserialize_image(row):
