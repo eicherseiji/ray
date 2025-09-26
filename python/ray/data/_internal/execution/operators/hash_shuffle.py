@@ -1194,7 +1194,7 @@ class HashShuffleOperator(HashShufflingOperatorBase):
                     key_columns=key_columns,
                 )
             ),
-            shuffle_progress_bar_name="Shufle",
+            shuffle_progress_bar_name="Shuffle",
         )
 
     def _get_operator_num_cpus_override(self) -> float:
