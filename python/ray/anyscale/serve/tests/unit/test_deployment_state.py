@@ -2,6 +2,7 @@ import sys
 
 import pytest
 
+from ray._raylet import NodeID
 from ray.serve._private.common import DeploymentID, DeploymentStatus, ReplicaState
 from ray.serve._private.config import ReplicaConfig
 from ray.serve._private.deployment_state import DeploymentStateManager
@@ -25,9 +26,12 @@ def rconfig(**config_opts):
 def test_compact_node(mock_deployment_state_manager):  # noqa: F811
     create_dsm, timer, cluster_node_info_cache, _ = mock_deployment_state_manager
     timer.reset(0)
-    cluster_node_info_cache.add_node("node1", {"CPU": 9})
-    cluster_node_info_cache.add_node("node2", {"CPU": 4})
-    cluster_node_info_cache.add_node("node3", {"CPU": 5})
+    node1 = NodeID.from_random().hex()
+    node2 = NodeID.from_random().hex()
+    node3 = NodeID.from_random().hex()
+    cluster_node_info_cache.add_node(node1, {"CPU": 9})
+    cluster_node_info_cache.add_node(node2, {"CPU": 4})
+    cluster_node_info_cache.add_node(node3, {"CPU": 5})
 
     dsm: DeploymentStateManager = create_dsm()
     dA = DeploymentID("a", "app")
@@ -57,17 +61,17 @@ def test_compact_node(mock_deployment_state_manager):  # noqa: F811
     # Node 2: (A1) (A1) -> 2/4 CPUs used
     # Node 3: (B2) -> 2/5 CPUs used -> should get compacted
     dsm.update()
-    dsA._replicas.get()[0]._actor.set_node_id("node2")
+    dsA._replicas.get()[0]._actor.set_node_id(node2)
     dsA._replicas.get()[0]._actor.set_ready()
-    dsA._replicas.get()[1]._actor.set_node_id("node2")
+    dsA._replicas.get()[1]._actor.set_node_id(node2)
     dsA._replicas.get()[1]._actor.set_ready()
 
-    dsB._replicas.get()[0]._actor.set_node_id("node3")
+    dsB._replicas.get()[0]._actor.set_node_id(node3)
     dsB._replicas.get()[0]._actor.set_ready()
 
-    dsC._replicas.get()[0]._actor.set_node_id("node1")
+    dsC._replicas.get()[0]._actor.set_node_id(node1)
     dsC._replicas.get()[0]._actor.set_ready()
-    dsC._replicas.get()[1]._actor.set_node_id("node1")
+    dsC._replicas.get()[1]._actor.set_node_id(node1)
     dsC._replicas.get()[1]._actor.set_ready()
 
     # Deployment transitions to healthy
@@ -90,7 +94,7 @@ def test_compact_node(mock_deployment_state_manager):  # noqa: F811
         ],
     )
 
-    dsB._replicas.get([ReplicaState.STARTING])[0]._actor.set_node_id("node2")
+    dsB._replicas.get([ReplicaState.STARTING])[0]._actor.set_node_id(node2)
     dsB._replicas.get([ReplicaState.STARTING])[0]._actor.set_ready()
     dsm.update()
     check_counts(
@@ -122,8 +126,10 @@ def test_compact_node(mock_deployment_state_manager):  # noqa: F811
 def test_compaction_cancelled(mock_deployment_state_manager):  # noqa: F811
     create_dsm, timer, cluster_node_info_cache, _ = mock_deployment_state_manager
     timer.reset(0)
-    cluster_node_info_cache.add_node("node1", {"CPU": 3})
-    cluster_node_info_cache.add_node("node2", {"CPU": 3})
+    node1 = NodeID.from_random().hex()
+    node2 = NodeID.from_random().hex()
+    cluster_node_info_cache.add_node(node1, {"CPU": 3})
+    cluster_node_info_cache.add_node(node2, {"CPU": 3})
 
     dsm: DeploymentStateManager = create_dsm()
 
@@ -134,11 +140,11 @@ def test_compaction_cancelled(mock_deployment_state_manager):  # noqa: F811
     # Node 1: (1) (1) -> 2/3 CPUs
     # Node 2: (1) -> 1/3 CPUs
     dsm.update()
-    ds._replicas.get()[0]._actor.set_node_id("node1")
+    ds._replicas.get()[0]._actor.set_node_id(node1)
     ds._replicas.get()[0]._actor.set_ready()
-    ds._replicas.get()[1]._actor.set_node_id("node1")
+    ds._replicas.get()[1]._actor.set_node_id(node1)
     ds._replicas.get()[1]._actor.set_ready()
-    ds._replicas.get()[2]._actor.set_node_id("node2")
+    ds._replicas.get()[2]._actor.set_node_id(node2)
     ds._replicas.get()[2]._actor.set_ready()
 
     # Deployment transitions to healthy
@@ -174,7 +180,7 @@ def test_compaction_cancelled(mock_deployment_state_manager):  # noqa: F811
 
     # Since there is no more space on node 1, the 4th replica must be
     # scheduled on node 2. This should cancel the ongoing compaction.
-    ds._replicas.get([ReplicaState.STARTING])[0]._actor.set_node_id("node2")
+    ds._replicas.get([ReplicaState.STARTING])[0]._actor.set_node_id(node2)
     ds._replicas.get([ReplicaState.STARTING])[0]._actor.set_ready()
     dsm.update()
     check_counts(

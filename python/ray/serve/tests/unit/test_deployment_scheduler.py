@@ -1161,8 +1161,11 @@ class TestCompactScheduling:
         max_replicas_per_node = {d_id1: 2, d_id2: 3}
 
         cluster_node_info_cache = MockClusterNodeInfoCache()
-        cluster_node_info_cache.add_node("node1", {"GPU": 8, "CPU": 32})
-        cluster_node_info_cache.add_node("node2", {"GPU": 10, "CPU": 32})
+        node1 = NodeID.from_random().hex()
+        node2 = NodeID.from_random().hex()
+
+        cluster_node_info_cache.add_node(node1, {"GPU": 8, "CPU": 32})
+        cluster_node_info_cache.add_node(node2, {"GPU": 10, "CPU": 32})
         scheduler = default_impl.create_deployment_scheduler(
             cluster_node_info_cache,
             head_node_id_override="fake-head-node-id",
@@ -1224,9 +1227,9 @@ class TestCompactScheduling:
             },
             downscales={},
         )
-        assert state["node1"].count(d_id1) == 1
-        assert state["node1"].count(d_id2) == 1
-        assert len(state["node2"]) == 0
+        assert state[node1].count(d_id1) == 1
+        assert state[node1].count(d_id2) == 1
+        assert len(state[node2]) == 0
 
         # Schedule two more d1
         scheduler.schedule(
@@ -1249,12 +1252,12 @@ class TestCompactScheduling:
             downscales={},
         )
         # 2 d1 + 1 d2 on node1
-        assert state["node1"].count(d_id1) == 2
-        assert state["node1"].count(d_id2) == 1
+        assert state[node1].count(d_id1) == 2
+        assert state[node1].count(d_id2) == 1
 
         # 1 d1 on node2 because of max_replicas_per_node=2 (otherwise node1 could have fit both new d1 replicas)
-        assert state["node2"].count(d_id1) == 1
-        assert state["node2"].count(d_id2) == 0
+        assert state[node2].count(d_id1) == 1
+        assert state[node2].count(d_id2) == 0
 
     def test_custom_resources(self):
         d_id = DeploymentID(name="deployment1")
