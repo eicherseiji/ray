@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from ray.anyscale.serve._private.haproxy_templates import HAPROXY_CONFIG_TEMPLATE
 from ray.anyscale.serve._private.constants import (
+    ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
     ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN,
     ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD,
     ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH,
@@ -38,10 +39,10 @@ from ray.serve.config import HTTPOptions, gRPCOptions
 from ray.serve.schema import (
     LoggingConfig,
     TargetGroup,
+    Target,
 )
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
-HAPROXY_CONFIG_FILE_LOC = "/etc/haproxy/haproxy.cfg"
 
 
 @dataclass
@@ -173,7 +174,7 @@ class HAProxyConfig:
     custom_global: Dict[str, str] = field(default_factory=dict)
     custom_defaults: Dict[str, str] = field(default_factory=dict)
     # Configurable frontend parameters
-    frontend_port: int = 80
+    frontend_port: int = 8000
     frontend_host: str = "*"
     # Testing/debugging options
     inject_process_id_header: bool = False
@@ -238,7 +239,7 @@ class BackendConfig:
     health_check_inter: Optional[str] = None
 
     # Endpoint path that the health check mechanism will send a request to. It's typically an HTTP path.
-    health_check_path: Optional[str] = None
+    health_check_path: Optional[str] = "/-/healthz"
 
     # List of servers in this backend
     servers: List[ServerConfig] = field(default_factory=list)
@@ -307,7 +308,7 @@ class HAProxyApi(ProxyApi):
         cfg: HAProxyConfig = None,
         backend_configs: Dict[str, BackendConfig] = None,
         http_options: Optional[HTTPOptions] = None,
-        config_file_path: str = HAPROXY_CONFIG_FILE_LOC,
+        config_file_path: str = ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
     ):
         self.cfg = HAProxyConfig() if cfg is None else cfg
         self.backend_configs = backend_configs or {}
@@ -316,6 +317,19 @@ class HAProxyApi(ProxyApi):
         # Lock to prevent concurrent config modifications
         self._config_lock = asyncio.Lock()
         self.proc = None
+
+        # Ensure required directories exist during initialization
+        self._initialize_directories()
+
+    def _initialize_directories(self) -> None:
+        """Ensure all required directories exist (called once during initialization)."""
+        # Create config file directory
+        config_dir = os.path.dirname(self.config_file_path)
+        os.makedirs(config_dir, exist_ok=True)
+
+        # Create socket directory
+        socket_dir = os.path.dirname(self.cfg.socket_path)
+        os.makedirs(socket_dir, exist_ok=True)
 
     def _is_running(self) -> bool:
         """Check if the HAProxy process is still running."""
@@ -355,28 +369,19 @@ class HAProxyApi(ProxyApi):
             except Exception:
                 pass
 
-        raise RuntimeError(f"HAProxy startup timed out after {timeout_s} seconds")
+            await asyncio.sleep(0.2)
 
-    async def has_stats(self) -> bool:
-        """Check if the HAProxy process is running and has stats."""
-        try:
-            stats_output = await self._send_socket_command("show stat")
-            return len(stats_output) > 0
-        except RuntimeError as e:
-            logger.error(f"HAProxy exited during startup: {e}")
-            return False
+        raise RuntimeError(f"HAProxy startup timed out after {timeout_s} seconds")
 
     async def _graceful_reload(self) -> None:
         """Perform a graceful reload of HAProxy using the `-sf` flag."""
         try:
-            if not self._is_running():
-                logger.info("HAProxy not running, cannot perform graceful reload")
-                return
+            await self._wait_for_running()
 
             old_proc = self.proc
             if old_proc is None or old_proc.returncode is not None:
                 logger.warning(
-                    "Existing HAProxy process already exited; skipping reload"
+                    "Existing HAProxy process already exited; skipping reload."
                 )
                 return
 
@@ -386,7 +391,7 @@ class HAProxyApi(ProxyApi):
 
             self.proc = await self._start_and_wait_for_haproxy("-sf", str(old_proc.pid))
 
-            logger.info("Successfully performed graceful HAProxy reload")
+            logger.info("Successfully performed graceful HAProxy reload.")
         except Exception as e:
             logger.error(f"HAProxy graceful reload failed: {e}")
             raise
@@ -406,10 +411,14 @@ class HAProxyApi(ProxyApi):
                 elif self.http_options.host:
                     self.cfg.frontend_host = self.http_options.host
 
-            # target groups = backend configs in haproxy lingo
-            config_content = template.render(
-                {"config": self.cfg, "backends": list(self.backend_configs.values())}
+            # Backends are sorted in decreasing order of length of path prefix
+            # to ensure that the longest path prefix match is taken first.
+            # Equal lengthed prefixes are then sorted alphabetically.
+            backends = sorted(
+                self.backend_configs.values(),
+                key=lambda be: (-len(be.path_prefix), be.path_prefix),
             )
+            config_content = template.render({"config": self.cfg, "backends": backends})
 
             # Ensure the config ends with a newline
             if not config_content.endswith("\n"):
@@ -418,7 +427,7 @@ class HAProxyApi(ProxyApi):
             with open(self.config_file_path, "w") as f:
                 f.write(config_content)
 
-            logger.debug(f"Generated HAProxy configuration: {self.config_file_path}")
+            logger.debug(f"Generated HAProxy configuration: {self.config_file_path}.")
         except Exception as e:
             logger.error(f"Failed to create HAProxy configuration files: {e}")
             raise
@@ -438,13 +447,33 @@ class HAProxyApi(ProxyApi):
                     self.cfg.reload_id = f"initial-{int(time.time() * 1000)}"
 
                 await self._generate_config_file_internal()
-            logger.debug("Generated HAProxy config file")
+            logger.info("Generated HAProxy config file.")
 
             self.proc = await self._start_and_wait_for_haproxy()
-            logger.debug("HAProxy started successfully")
+            logger.info("HAProxy started successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize and start HAProxy configuration: {e}")
             raise
+
+    async def has_stats(self) -> bool:
+        """Check if the HAProxy process is running and has stats."""
+        try:
+            stats_output = await self._send_socket_command("show stat")
+            return len(stats_output) > 0
+        except RuntimeError as e:
+            logger.error(f"HAProxy exited during startup: {e}")
+
+        return False
+
+    async def _wait_for_running(self, timeout_s: float = 5) -> None:
+        """Wait for the HAProxy process to be running."""
+        start_time = time.time()
+        while not await self.has_stats():
+            if time.time() - start_time > timeout_s:
+                raise RuntimeError(
+                    f"HAProxy did not enter running state within {timeout_s} seconds."
+                )
+            await asyncio.sleep(0.2)
 
     async def get_all_stats(self) -> Dict[str, Dict[str, ServerStats]]:
         """Get statistics for all servers in all backends (implements abstract method)."""
@@ -467,7 +496,7 @@ class HAProxyApi(ProxyApi):
             # Check if a socket file exists
             if not os.path.exists(self.cfg.socket_path):
                 logger.warning(
-                    f"HAProxy socket file does not exist: {self.cfg.socket_path}"
+                    f"HAProxy socket file does not exist: {self.cfg.socket_path}."
                 )
                 return ""
 
@@ -498,7 +527,7 @@ class HAProxyApi(ProxyApi):
                 )
 
             result = stdout.decode("utf-8", errors="ignore")
-            logger.debug(f"Socket command '{command}' returned {len(result)} chars")
+            logger.debug(f"Socket command '{command}' returned {len(result)} chars.")
             return result
         except Exception as e:
             raise RuntimeError(f"Failed to send socket command '{command}': {e}")
@@ -538,7 +567,7 @@ class HAProxyApi(ProxyApi):
     async def stop(self) -> None:
         proc = self.proc
         if proc is None:
-            logger.info("HAProxy process not running, skipping shutdown")
+            logger.info("HAProxy process not running, skipping shutdown.")
             return
 
         try:
@@ -547,7 +576,7 @@ class HAProxyApi(ProxyApi):
                 await proc.wait()
                 self.proc = None
 
-            logger.info("Stopped HAProxy process")
+            logger.info("Stopped HAProxy process.")
         except RuntimeError as e:
             logger.error(f"Error during HAProxy shutdown: {e}")
 
@@ -556,12 +585,15 @@ class HAProxyApi(ProxyApi):
     ) -> None:
         try:
             self.backend_configs = backend_configs
+            # To avoid dropping updates from long poll, we wait until HAProxy
+            # is up and running before attempting to generate config and reload.
+            await self._generate_config_file_internal()
             await self._graceful_reload()
         except Exception as e:
             raise RuntimeError(f"Failed to update and reload HAProxy: {e}")
 
     async def disable(self) -> None:
-        """Force health checks to fail by denying all requests at the frontend."""
+        """Force haproxy health checks to fail."""
         try:
             # Disable health checks (set to fail)
             self.cfg.pass_health_checks = False
@@ -571,20 +603,20 @@ class HAProxyApi(ProxyApi):
 
             # Perform a graceful reload to apply changes
             await self._graceful_reload()
-            logger.info("Successfully disabled health checks")
+            logger.info("Successfully disabled health checks.")
         except Exception as e:
             logger.error(f"Failed to disable health checks: {e}")
             raise
 
     async def enable(self) -> None:
-        """Force health checks to fail by denying all requests at the frontend."""
+        """Force haproxy health checks to pass."""
         try:
             self.cfg.pass_health_checks = True
 
             await self._generate_config_file_internal()
             # Perform a graceful reload to apply changes
             await self._graceful_reload()
-            logger.info("Successfully enabled health checks")
+            logger.info("Successfully enabled health checks.")
         except Exception as e:
             logger.error(f"Failed to disable health checks: {e}")
             raise
@@ -608,6 +640,7 @@ class HAProxyManager(ProxyActorInterface):
             logging_config=logging_config,
         )
 
+        # TODO: Use these options in the haproxy config file.
         self._grpc_options = grpc_options
         self._http_options = http_options
 
@@ -618,9 +651,7 @@ class HAProxyManager(ProxyActorInterface):
         # The node is not draining if it's None.
         self._draining_start_time: Optional[float] = None
 
-        event_loop = get_or_create_event_loop()
-
-        # TODO: create async task to start haproxy
+        self.event_loop = get_or_create_event_loop()
 
         self._target_groups: List[TargetGroup] = []
 
@@ -629,11 +660,19 @@ class HAProxyManager(ProxyActorInterface):
             {
                 LongPollNamespace.TARGET_GROUPS: self.update_target_groups,
             },
-            call_in_event_loop=event_loop,
+            call_in_event_loop=self.event_loop,
         )
 
+        startup_msg = f"HAProxy starting on node {self._node_id} (HTTP port: {self._http_options.port})."
+        logger.info(startup_msg)
+
+        self._haproxy = HAProxyApi()
+        self._haproxy_start_task = self.event_loop.create_task(self._haproxy.start())
+
     async def ready(self) -> str:
-        # TODO: wait for haproxy task to finish and health check to pass
+        # Wait for haproxy to start. Internally, this starts the process and
+        # waits for it to be running by querying the stats socket.
+        await self._haproxy_start_task
 
         # Return proxy metadata used by the controller.
         # NOTE(zcin): We need to convert the metadata to a json string because
@@ -649,21 +688,6 @@ class HAProxyManager(ProxyActorInterface):
         """Whether is haproxy is in the draining status or not."""
         return self._draining_start_time is not None
 
-    async def _fail_health_check(self) -> None:
-        """Fail the health check."""
-        # TODO: tell haproxy to fail the health check
-        pass
-
-    async def _pass_health_check(self) -> None:
-        """Pass the health check."""
-        # TODO: tell haproxy to pass the health check
-        pass
-
-    async def _has_ongoing_requests(self) -> bool:
-        """Check whether the haproxy has ongoing requests or not."""
-        # TODO: check whether the haproxy has ongoing requests
-        return False
-
     async def update_draining(
         self, draining: bool, _after: Optional[Any] = None
     ) -> None:
@@ -678,14 +702,14 @@ class HAProxyManager(ProxyActorInterface):
                 f"Start to drain the HAProxy on node {self._node_id}.",
                 extra={"log_to_stderr": False},
             )
-            await self._fail_health_check()
+            await self._haproxy.disable()
             self._draining_start_time = time.time()
         if (not draining) and self._is_draining():
             logger.info(
                 f"Stop draining the HAProxy on node {self._node_id}.",
                 extra={"log_to_stderr": False},
             )
-            await self._pass_health_check()
+            await self._haproxy.enable()
             self._draining_start_time = None
 
     async def is_drained(self, _after: Optional[Any] = None) -> bool:
@@ -698,13 +722,14 @@ class HAProxyManager(ProxyActorInterface):
         if not self._is_draining():
             return False
 
-        return (not self._has_ongoing_requests()) and (
+        haproxy_stats = await self._haproxy.get_haproxy_stats()
+        return haproxy_stats.is_system_idle and (
             (time.time() - self._draining_start_time) > PROXY_MIN_DRAINING_PERIOD_S
         )
 
     async def check_health(self) -> None:
         logger.debug("Received health check.", extra={"log_to_stderr": False})
-        # TODO: implement haproxy health check
+        return await self._haproxy.has_stats()
 
     def pong(self) -> str:
         pass
@@ -723,12 +748,60 @@ class HAProxyManager(ProxyActorInterface):
                 log_file_path = handler.target.baseFilename
         return log_file_path
 
+    def _targets_to_servers(self, targets: List[Target]) -> List[ServerConfig]:
+        """Convert a list of targets to a list of servers."""
+        # The server name is derived from the replica's actor name, with the
+        # format `SERVE_REPLICA::<app>#<deployment>#<replica_id>`, or the
+        # proxy's actor name, with the format `SERVE_PROXY_ACTOR-<node_id>`.
+        # Special characters in the names are converted to comply with haproxy
+        # config's allowed characters, e.g. `#` -> `-`.
+        return [
+            ServerConfig(
+                name=self.get_safe_name(target.name),
+                host=target.ip,
+                port=target.port,
+            )
+            for target in targets
+        ]
+
+    def _target_group_to_backend(self, target_group: TargetGroup) -> BackendConfig:
+        """Convert a target group to a backend name."""
+        servers = self._targets_to_servers(target_group.targets)
+        # The name is of format <protocol>:<route_prefix>, with slashes
+        # in the route prefix converted to dots and the leading slash
+        # removed from the route prefix, e.g. if the protocol is HTTP
+        # and the route prefix is /foo/bar, the backend label becomes
+        # `HTTP:foo.bar`, and if the route prefix is /, the label will
+        # be `HTTP:`.
+        route_prefix = target_group.route_prefix.lstrip("/")
+        return BackendConfig(
+            name=self.get_safe_name(f"{target_group.protocol.value}:{route_prefix}"),
+            path_prefix=target_group.route_prefix,
+            servers=servers,
+        )
+
     def update_target_groups(self, target_groups: List[TargetGroup]) -> None:
         self._target_groups = target_groups
+
+        backend_configs = [
+            self._target_group_to_backend(target_group)
+            for target_group in target_groups
+        ]
+        name_to_backend_configs = {
+            backend_config.name: backend_config for backend_config in backend_configs
+        }
+        self.event_loop.create_task(
+            self._haproxy.update_and_reload(name_to_backend_configs)
+        )
 
     def get_target_groups(self) -> List[TargetGroup]:
         """Get current target groups."""
         return self._target_groups
+
+    @staticmethod
+    def get_safe_name(name: str) -> str:
+        """Get a safe label name for the haproxy config."""
+        return name.replace("/", ".").replace("#", "-")
 
     def _dump_ingress_replicas_for_testing(self, route: str) -> Set[ReplicaID]:
         return set()

@@ -51,9 +51,14 @@ ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD = int(
     os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD", "4")
 )
 
+# HAProxy configuration file location
+ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC = os.environ.get(
+    "ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC", "/tmp/haproxy-serve/haproxy.cfg"
+)
+
 # HAProxy admin socket path
 ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH = os.environ.get(
-    "ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH", "/run/haproxy/admin.sock"
+    "ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH", "/tmp/haproxy-serve/admin.sock"
 )
 
 # For now, this is used only for testing. In the suite of tests that

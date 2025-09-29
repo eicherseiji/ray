@@ -31,9 +31,10 @@ frontend http_frontend
     # Inject unique reload ID as header to track which HAProxy instance handled the request (testing only)
     http-request set-header x-haproxy-reload-id {{ config.reload_id }}
     {%- endif %}
-    # Static routing based on path prefixes
+    # Static routing based on path prefixes in decreasing length then alphabetical order
 {%- for backend in backends %}
-    acl is_{{ backend.name or 'unknown' }} path_beg {{ backend.path_prefix or '/' }}
+    acl is_{{ backend.name or 'unknown' }} path_beg {{ '/' if not backend.path_prefix or backend.path_prefix == '/' else backend.path_prefix ~ '/' }}
+    acl is_{{ backend.name or 'unknown' }} path {{ backend.path_prefix or '/' }}
     use_backend backend_{{ backend.name or 'unknown' }} if is_{{ backend.name or 'unknown' }}
 {%- endfor %}
     default_backend default_backend
