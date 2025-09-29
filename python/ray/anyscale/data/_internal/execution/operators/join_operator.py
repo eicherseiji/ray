@@ -1,3 +1,7 @@
+from ray._private.arrow_utils import get_pyarrow_version
+from ray.data._internal.arrow_ops.transform_pyarrow import (
+    MIN_PYARROW_VERSION_RUN_END_ENCODED_TYPES,
+)
 from ray.data._internal.execution.interfaces.physical_operator import PhysicalOperator
 from ray.data._internal.execution.operators.join import (
     JoinOperator,
@@ -6,11 +10,14 @@ from ray.data._internal.execution.operators.join import (
 
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ray.data.context import DataContext
 from ray.data._internal.logical.operators.join_operator import JoinType
 from ray.data.block import Block
+
+if TYPE_CHECKING:
+    import pyarrow as pa
 
 _JOIN_TYPE_TO_POLARS_JOIN_TYPE_MAP = {
     JoinType.INNER: "inner",
@@ -75,20 +82,22 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
         assert (
             self.data_context.use_polars_join
         ), "use_polars_join must be set to True in the DataContext"
-        import pyarrow as pa
         import polars as pl
 
-        left_seq_partition: pa.Table = self._get_partition_builder(
-            input_seq_id=0, partition_id=partition_id
-        ).build()
-        right_seq_partition: pa.Table = self._get_partition_builder(
-            input_seq_id=1, partition_id=partition_id
-        ).build()
         left_on, right_on = list(self._left_key_col_names), list(
             self._right_key_col_names
         )
-        left_df: pl.LazyFrame = pl.from_arrow(left_seq_partition).lazy()
-        right_df: pl.LazyFrame = pl.from_arrow(right_seq_partition).lazy()
+
+        preprocess_result_l, preprocess_result_r = self._preprocess(
+            left_on, right_on, partition_id
+        )
+
+        left_df: pl.LazyFrame = pl.from_arrow(
+            preprocess_result_l.supported_projection
+        ).lazy()
+        right_df: pl.LazyFrame = pl.from_arrow(
+            preprocess_result_r.supported_projection
+        ).lazy()
 
         target_join_type = self._join_type
         left_cols_suffix = self._left_columns_suffix
@@ -149,7 +158,36 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
             if duplicate_columns:
                 joined = joined.drop(duplicate_columns)
 
-        return joined.collect().to_arrow()
+        supported = joined.collect().to_arrow()
+
+        # Add back unsupported columns (join type logic is in should_index_* variables)
+        supported = self._postprocess(
+            supported,
+            preprocess_result_l.unsupported_projection,
+            preprocess_result_r.unsupported_projection,
+        )
+
+        return supported
+
+    def _is_pa_join_not_supported(self, type: "pa.DataType") -> bool:
+        """
+        The latest pyarrow versions do not support joins where the
+        tables contain the following types below (lists,
+        structs, maps, unions, extension types, etc.)
+
+        Args:
+            type: The input type of column.
+
+        Returns:
+            True if the type cannot be present (non join-key) during joins.
+            False if the type can be present.
+        """
+        import pyarrow as pa
+
+        return pa.types.is_union(type) or (
+            get_pyarrow_version() >= MIN_PYARROW_VERSION_RUN_END_ENCODED_TYPES
+            and pa.types.is_run_end_encoded(type)
+        )
 
 
 class JoinOperatorWithPolars(JoinOperator):
