@@ -374,7 +374,7 @@ class JoinOperator(HashShufflingOperatorBase):
                     data_context=data_context,
                     left_columns_suffix=left_columns_suffix,
                     right_columns_suffix=right_columns_suffix,
-                ),
+                )
             ),
             aggregator_ray_remote_args_override=aggregator_ray_remote_args_override,
             shuffle_progress_bar_name="Shuffle",
