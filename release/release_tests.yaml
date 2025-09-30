@@ -2228,6 +2228,7 @@
 ########################
 
 - name: shuffle_100gb
+  python: "3.10"
   group: core-multi-test
   working_dir: nightly_tests
 
@@ -2235,9 +2236,7 @@
 
   team: core
   cluster:
-    byod:
-      runtime_env:
-        - RAY_worker_killing_policy=retriable_lifo
+    byod: {}
     cluster_compute: shuffle/shuffle_compute_multi.yaml
 
   run:
@@ -2256,6 +2255,7 @@
 
 
 - name: stress_test_placement_group
+  python: "3.10"
   group: core-multi-test
   working_dir: nightly_tests
   env: aws_perf
@@ -2280,6 +2280,7 @@
         cluster_compute: stress_tests/placement_group_tests_compute_gce.yaml
 
 - name: decision_tree_autoscaling_20_runs
+  python: "3.10"
   group: core-multi-test
   working_dir: nightly_tests
 
@@ -2303,6 +2304,7 @@
         cluster_compute: decision_tree/autoscaling_compute_gce.yaml
 
 - name: autoscaling_shuffle_1tb_1000_partitions
+  python: "3.10"
   group: core-multi-test
   working_dir: nightly_tests
 
@@ -2310,9 +2312,7 @@
 
   team: core
   cluster:
-    byod:
-      runtime_env:
-        - RAY_worker_killing_policy=retriable_lifo
+    byod: {}
     cluster_compute: shuffle/shuffle_compute_autoscaling.yaml
 
   run:
@@ -2464,9 +2464,7 @@
   team: core
 
   cluster:
-    byod:
-      runtime_env:
-        - RAY_worker_killing_policy=retriable_lifo
+    byod: {}
     cluster_compute: dask_on_ray/dask_on_ray_sort_compute_template.yaml
 
   run:
@@ -2491,9 +2489,7 @@
   team: data
 
   cluster:
-    byod:
-      runtime_env:
-        - RAY_worker_killing_policy=retriable_lifo
+    byod: {}
     cluster_compute: dask_on_ray/dask_on_ray_stress_compute.yaml
 
   run:
@@ -2816,9 +2812,7 @@
   team: core
 
   cluster:
-    byod:
-      runtime_env:
-        - RAY_worker_killing_policy=retriable_lifo
+    byod: {}
     cluster_compute: dask_on_ray/1tb_sort_compute.yaml
 
   run:
@@ -3253,6 +3247,7 @@
 ##################
 
 - name: chaos_many_tasks_kill_raylet
+  python: "3.10"
   group: core-nightly-test
   working_dir: nightly_tests
 
@@ -3278,6 +3273,7 @@
         cluster_compute: chaos_test/compute_template_gce.yaml
 
 - name: chaos_many_tasks_terminate_instance
+  python: "3.10"
   group: core-nightly-test
   working_dir: nightly_tests
 
@@ -3298,6 +3294,7 @@
     - __suffix__: aws
 
 - name: chaos_many_actors_kill_raylet
+  python: "3.10"
   group: core-nightly-test
   working_dir: nightly_tests
 
@@ -3323,6 +3320,7 @@
         cluster_compute: chaos_test/compute_template_gce.yaml
 
 - name: chaos_many_actors_terminate_instance
+  python: "3.10"
   group: core-nightly-test
   working_dir: nightly_tests
 
