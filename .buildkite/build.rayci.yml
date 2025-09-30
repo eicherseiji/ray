@@ -61,7 +61,9 @@ steps:
     depends_on: docbuild
     job_env: docbuild-py3.12
     tags:
+      - oss
       - doc
+      - skip-on-premerge
 
   - label: ":tapioca: build: ray py{{matrix}} docker (x86_64)"
     key: ray_images

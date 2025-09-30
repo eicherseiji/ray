@@ -105,7 +105,7 @@ if __name__ == "__main__":
         set(),
         ok,
         output,
-        ignore=["ray.tune", "ray.serve", "ray.anyscale"],
+        ignore=["ray.tune", "ray.serve"],
     )
     verify(ray.serve, set(), ok, output)
     assert len(ok) >= 500, len(ok)
