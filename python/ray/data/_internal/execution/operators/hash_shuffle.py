@@ -1,12 +1,10 @@
 import abc
 import functools
-import importlib.util
 import itertools
 import logging
 import math
 import threading
 import time
-import warnings
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import (
@@ -494,8 +492,6 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
 
         assert partition_size_hint is None or partition_size_hint > 0
 
-        self._emit_warning_if_numba_unavailable()
-
         if shuffle_progress_bar_name is None:
             shuffle_progress_bar_name = "Shuffle"
         if finalize_progress_bar_name is None:
@@ -597,19 +593,6 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
         self._health_monitoring_started: bool = False
         self._health_monitoring_start_time: float = 0.0
         self._pending_aggregators_refs: Optional[List[ObjectRef[ActorHandle]]] = None
-
-    def _emit_warning_if_numba_unavailable(self):
-        # NOTE: Ray workers perform the hash partitioning. So, if we emit a warning
-        #       in the hash partitioning code, each worker would repeat the same
-        #       warning, and the output becomes extremely spammy. To avoid this,
-        #       we emit the warning on the driver, even though it's not where the
-        #       fallback occurs.
-        if importlib.util.find_spec("numba") is None:
-            warnings.warn(
-                "Numba isn't available. Install numba>=0.61 to get better performance. "
-                "Falling back to slower Python implementation for hash partitioning "
-                "operations."
-            )
 
     def start(self, options: ExecutionOptions) -> None:
         super().start(options)

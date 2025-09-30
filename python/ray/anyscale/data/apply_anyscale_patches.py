@@ -203,6 +203,27 @@ def _add_optimization_rules():
         physical_ruleset.add(ConfigureMapTaskMemoryWithProfiling)
 
 
+def _patch_hash_shuffle_operator():
+    """Patch hash shuffle operator with RayTurbo-specific dependency checking."""
+    from ray.data._internal.execution.operators.hash_shuffle import (
+        HashShufflingOperatorBase,
+    )
+    from ._internal.util.dependencies import check_numba_for_hash_partitioning
+
+    # Store the original __init__ method
+    original_init = HashShufflingOperatorBase.__init__
+
+    def patched_init(self, *args, **kwargs):
+        # Call the original __init__
+        original_init(self, *args, **kwargs)
+
+        # Add RayTurbo-specific numba check
+        check_numba_for_hash_partitioning()
+
+    # Replace the __init__ method
+    HashShufflingOperatorBase.__init__ = patched_init
+
+
 def apply_anyscale_patches():
     """Apply Anyscale-specific patches for Ray Data.
 
@@ -230,6 +251,9 @@ def apply_anyscale_patches():
 
     # Patch preprocessors
     _patch_preprocessors()
+
+    # Add RayTurbo-specific dependency checking for hash shuffle
+    _patch_hash_shuffle_operator()
 
     # Add optimization rules
     _add_optimization_rules()
