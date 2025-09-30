@@ -20,6 +20,7 @@ from ray.serve._private.constants import (
     DEFAULT_UVICORN_KEEP_ALIVE_TIMEOUT_S,
     SERVE_NAMESPACE,
 )
+from ray.serve._private.test_utils import get_application_url
 from ray.serve.context import _get_global_client
 from ray.serve.schema import (
     ProxyStatus,
@@ -493,6 +494,28 @@ async def test_haproxy_update_draining_health_checks(ray_shutdown):
     assert not await proxy_actor._is_draining.remote()
 
     serve.shutdown()
+
+
+def test_haproxy_http_options(ray_shutdown):
+    """Test that the haproxy config file is generated correctly with http options."""
+    ray.init(num_cpus=4)
+    serve.start(
+        http_options={
+            "host": "0.0.0.0",
+            "port": 8001,
+            "keep_alive_timeout_s": 30,
+        },
+    )
+
+    @serve.deployment
+    def function(_):
+        return "hello1"
+
+    serve.run(function.bind(), name="test_app", route_prefix="/test")
+    url = get_application_url(app_name="test_app", use_localhost=False)
+    wait_for_condition(lambda: httpx.get(url).text == "hello1")
+    with pytest.raises(httpx.ConnectError):
+        _ = httpx.get(url.replace(":8001", ":8000")).status_code == 404
 
 
 def test_haproxy_safe_name():

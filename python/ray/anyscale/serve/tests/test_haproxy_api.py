@@ -24,6 +24,7 @@ from ray.anyscale.serve._private.haproxy import (
     HAProxyConfig,
     ServerConfig,
 )
+from ray.serve.config import HTTPOptions
 
 logger = logging.getLogger(__name__)
 
@@ -171,16 +172,18 @@ async def test_generate_config_file_internal(haproxy_api_cleanup):
             timeout_client_s=30,
             timeout_server_s=30,
             timeout_http_request_s=10,
-            timeout_http_keep_alive_s=55,
             timeout_queue_s=1,
             stats_port=8080,
             stats_uri="/mystats",
-            frontend_port=8000,
-            frontend_host="0.0.0.0",
             health_check_fall=3,
             health_check_rise=2,
             health_check_inter="2s",
             health_check_path="/health",
+            http_options=HTTPOptions(
+                host="0.0.0.0",
+                port=8000,
+                keep_alive_timeout_s=55,
+            ),
         )
         backend_config_stub = {
             "api_backend": BackendConfig(
@@ -250,7 +253,7 @@ defaults
     log global
     option httplog
 frontend http_frontend
-    bind 0.0.0.0:8000
+    bind *:8000
     # Health check endpoint
     acl healthcheck path -i /-/healthz
     http-request return status 200 content-type text/plain string "OK" if healthcheck
@@ -348,6 +351,7 @@ async def test_generate_backends_in_order(haproxy_api_cleanup):
             config_file_path,
         ):
             api = HAProxyApi(
+                cfg=HAProxyConfig(),
                 config_file_path=config_file_path,
                 backend_configs=backend_config_stub,
             )
@@ -409,10 +413,12 @@ async def test_graceful_reload(haproxy_api_cleanup):
         # Configure HAProxy
 
         config = HAProxyConfig(
-            frontend_port=haproxy_port,
-            frontend_host="127.0.0.1",
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=haproxy_port,
+                keep_alive_timeout_s=58,
+            ),
             stats_port=find_free_port(),
-            timeout_http_keep_alive_s=58,
             inject_process_id_header=True,  # Enable for testing graceful reload
             reload_id=f"initial-{int(time.time() * 1000)}",  # Set initial reload ID
             socket_path=os.path.join(temp_dir, "admin.sock"),
@@ -532,12 +538,14 @@ async def test_start(haproxy_api_cleanup):
 
         # Create HAProxy config
         config = HAProxyConfig(
-            frontend_port=find_free_port(),
-            frontend_host="127.0.0.1",
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=find_free_port(),
+                keep_alive_timeout_s=58,
+            ),
             stats_port=find_free_port(),
             pass_health_checks=True,
             socket_path=socket_path,
-            timeout_http_keep_alive_s=58,
         )
 
         api = HAProxyApi(cfg=config, config_file_path=config_file_path)
@@ -589,8 +597,10 @@ async def test_stop(haproxy_api_cleanup):
         config_file_path = os.path.join(temp_dir, "haproxy.cfg")
 
         config = HAProxyConfig(
-            frontend_port=find_free_port(),
-            frontend_host="127.0.0.1",
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=find_free_port(),
+            ),
             stats_port=find_free_port(),
             socket_path=os.path.join(temp_dir, "admin.sock"),
         )
@@ -624,10 +634,12 @@ async def test_get_stats_integration(haproxy_api_cleanup):
 
         # Configure HAProxy with multiple backends
         config = HAProxyConfig(
+            http_options=HTTPOptions(
+                port=find_free_port(),
+                keep_alive_timeout_s=58,
+            ),
             socket_path=socket_path,
-            frontend_port=find_free_port(),
             stats_port=find_free_port(),
-            timeout_http_keep_alive_s=58,
         )
 
         backend_configs = {
@@ -753,8 +765,10 @@ async def test_update_and_reload(haproxy_api_cleanup):
         )
 
         config = HAProxyConfig(
-            frontend_port=find_free_port(),
-            frontend_host="127.0.0.1",
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=find_free_port(),
+            ),
             stats_port=find_free_port(),
             socket_path=socket_path,
         )
@@ -814,8 +828,10 @@ async def test_toggle_health_checks(haproxy_api_cleanup):
         )
 
         config = HAProxyConfig(
-            frontend_port=find_free_port(),
-            frontend_host="127.0.0.1",
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=find_free_port(),
+            ),
             stats_port=find_free_port(),
             socket_path=socket_path,
             inject_process_id_header=True,

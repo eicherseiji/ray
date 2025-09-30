@@ -8,19 +8,19 @@ import time
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-
 from jinja2 import Environment
 from typing import Any, Dict, List, Optional, Set
 
-from ray.anyscale.serve._private.haproxy_templates import HAPROXY_CONFIG_TEMPLATE
+import ray
+
+from ray._common.utils import get_or_create_event_loop
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
     ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN,
     ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD,
     ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH,
 )
-import ray
-from ray._common.utils import get_or_create_event_loop
+from ray.anyscale.serve._private.haproxy_templates import HAPROXY_CONFIG_TEMPLATE
 from ray.serve._private.common import (
     NodeId,
     ReplicaID,
@@ -170,12 +170,8 @@ class HAProxyConfig:
     timeout_client_s: Optional[int] = None
     timeout_server_s: Optional[int] = None
     timeout_http_request_s: Optional[int] = None
-    timeout_http_keep_alive_s: Optional[int] = None
     custom_global: Dict[str, str] = field(default_factory=dict)
     custom_defaults: Dict[str, str] = field(default_factory=dict)
-    # Configurable frontend parameters
-    frontend_port: int = 8000
-    frontend_host: str = "*"
     # Testing/debugging options
     inject_process_id_header: bool = False
     reload_id: Optional[str] = None  # Unique ID for each reload
@@ -192,6 +188,25 @@ class HAProxyConfig:
     # Interval, or the amount of time, between each health check attempt
     health_check_inter: Optional[str] = "1s"
     health_check_path: Optional[str] = None  # For HTTP health checks
+
+    http_options: HTTPOptions = field(default_factory=HTTPOptions)
+
+    @property
+    def frontend_host(self) -> str:
+        if self.http_options.host is None or self.http_options.host == "0.0.0.0":
+            return "*"
+
+        return self.http_options.host
+
+    @property
+    def frontend_port(self) -> int:
+        return self.http_options.port
+
+    @property
+    def timeout_http_keep_alive_s(self) -> int:
+        return self.http_options.keep_alive_timeout_s
+
+    # TODO: support custom root_path and https
 
 
 @dataclass
@@ -245,25 +260,6 @@ class BackendConfig:
     servers: List[ServerConfig] = field(default_factory=list)
 
 
-@dataclass
-class ServerStats:
-    """Server statistics from HAProxy."""
-
-    backend: str
-    server: str
-    status: str
-    current_sessions: int = 0
-    queued: int = 0
-
-    @property
-    def is_up(self) -> bool:
-        return self.status == "UP"
-
-    @property
-    def is_draining(self) -> bool:
-        return self.status in ["DRAIN", "NOLB"]
-
-
 class ProxyApi(ABC):
     """Generic interface for load balancer management operations."""
 
@@ -305,14 +301,12 @@ class HAProxyApi(ProxyApi):
 
     def __init__(
         self,
-        cfg: HAProxyConfig = None,
+        cfg: HAProxyConfig,
         backend_configs: Dict[str, BackendConfig] = None,
-        http_options: Optional[HTTPOptions] = None,
         config_file_path: str = ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
     ):
-        self.cfg = HAProxyConfig() if cfg is None else cfg
+        self.cfg = cfg
         self.backend_configs = backend_configs or {}
-        self.http_options = http_options
         self.config_file_path = config_file_path
         # Lock to prevent concurrent config modifications
         self._config_lock = asyncio.Lock()
@@ -401,15 +395,6 @@ class HAProxyApi(ProxyApi):
         try:
             env = Environment()
             template = env.from_string(HAPROXY_CONFIG_TEMPLATE)
-
-            if self.http_options:
-                self.cfg.frontend_port = self.http_options.port
-
-                # Convert host format: HTTPOptions uses "0.0.0.0" while HAProxy uses "*"
-                if self.http_options.host == "0.0.0.0":
-                    self.cfg.frontend_host = "*"
-                elif self.http_options.host:
-                    self.cfg.frontend_host = self.http_options.host
 
             # Backends are sorted in decreasing order of length of path prefix
             # to ensure that the longest path prefix match is taken first.
@@ -666,7 +651,7 @@ class HAProxyManager(ProxyActorInterface):
         startup_msg = f"HAProxy starting on node {self._node_id} (HTTP port: {self._http_options.port})."
         logger.info(startup_msg)
 
-        self._haproxy = HAProxyApi()
+        self._haproxy = HAProxyApi(cfg=HAProxyConfig(http_options=http_options))
         self._haproxy_start_task = self.event_loop.create_task(self._haproxy.start())
 
     async def ready(self) -> str:
