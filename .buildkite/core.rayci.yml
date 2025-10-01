@@ -395,6 +395,18 @@ steps:
     depends_on: oss-ci-base_build
     job_env: oss-ci-base_build
 
+  - label: ":ray: core: java worker tests"
+    tags:
+      - java
+      - python
+      - oss
+    instance_type: medium
+    commands:
+      - bazel run //ci/ray_ci:test_in_docker -- //python/ray/tests/... core
+        --build-type java
+        --only-tags needs_java
+    depends_on: corebuild
+
   - label: ":ray: core: HA integration tests"
     tags:
       - python
@@ -439,9 +451,7 @@ steps:
         --build-type debug
         --test-env=RAY_ON_SPARK_BACKGROUND_JOB_STARTUP_WAIT=1
         --test-env=RAY_ON_SPARK_RAY_WORKER_NODE_STARTUP_INTERVAL=5
-        --parallelism-per-worker 3
         --only-tags spark_on_ray
-        --except-tags kubernetes
     depends_on:
       - corebuild
 
