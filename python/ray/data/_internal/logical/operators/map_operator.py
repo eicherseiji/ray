@@ -1,7 +1,7 @@
 import functools
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from ray.data._internal.compute import ComputeStrategy, TaskPoolStrategy
 from ray.data._internal.logical.interfaces import LogicalOperator
@@ -9,10 +9,6 @@ from ray.data._internal.logical.operators.one_to_one_operator import AbstractOne
 from ray.data.block import UserDefinedFunction
 from ray.data.expressions import Expr
 from ray.data.preprocessor import Preprocessor
-
-if TYPE_CHECKING:
-    import pyarrow as pa
-
 
 logger = logging.getLogger(__name__)
 
@@ -235,22 +231,25 @@ class Filter(AbstractUDFMap):
     def __init__(
         self,
         input_op: LogicalOperator,
+        predicate_expr: Optional[Expr] = None,
         fn: Optional[UserDefinedFunction] = None,
         fn_args: Optional[Iterable[Any]] = None,
         fn_kwargs: Optional[Dict[str, Any]] = None,
         fn_constructor_args: Optional[Iterable[Any]] = None,
         fn_constructor_kwargs: Optional[Dict[str, Any]] = None,
-        filter_expr: Optional["pa.dataset.Expression"] = None,
-        filter_expr_strs: Optional[List[str]] = None,
         compute: Optional[ComputeStrategy] = None,
         ray_remote_args_fn: Optional[Callable[[], Dict[str, Any]]] = None,
         ray_remote_args: Optional[Dict[str, Any]] = None,
     ):
-        # Ensure exactly one of fn or filter_expr is provided
-        if not ((fn is None) ^ (filter_expr is None)):
-            raise ValueError("Exactly one of 'fn' or 'filter_expr' must be provided")
-        self._filter_expr = filter_expr
-        self._filter_expr_strs = filter_expr_strs or []
+        # Ensure exactly one of fn, or predicate_expr is provided
+        provided_params = sum([fn is not None, predicate_expr is not None])
+        if provided_params != 1:
+            raise ValueError(
+                f"Exactly one of 'fn', or 'predicate_expr' must be provided (received fn={fn}, predicate_expr={predicate_expr})"
+            )
+
+        self._predicate_expr = predicate_expr
+
         super().__init__(
             "Filter",
             input_op,

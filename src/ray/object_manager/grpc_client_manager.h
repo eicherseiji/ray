@@ -62,7 +62,7 @@ class GrpcClientManagerImpl final : public GrpcClientManager<ServiceType> {
       args.SetInt(GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL, 1);
       for (int idx = 0; idx < conn_num; ++idx) {
         grpc_clients_.emplace_back(std::make_unique<GrpcClient<ServiceType>>(
-            address, port, client_call_manager, false, std::move(args)));
+            address, port, client_call_manager, std::move(args)));
       }
       // RAYTURBO ONLY END
     } else {
