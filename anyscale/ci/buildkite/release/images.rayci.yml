@@ -24,6 +24,7 @@ steps:
     tags: docker
     matrix:
       - "3.9"
+      - "3.10"
       - "3.11"
       - "3.12"
 
@@ -57,6 +58,7 @@ steps:
       setup:
         py:
           - "3.9"
+          - "3.10"
           - "3.11"
           - "3.12"
         base:
@@ -108,5 +110,6 @@ steps:
       setup:
         py:
           - "3.9"
+          - "3.10"
         base:
           - "cu12.1.1-cudnn8"
