@@ -24,7 +24,6 @@ frontend http_frontend
     http-request return status 200 content-type text/plain string "OK" if healthcheck
     {%- else %}
     http-request return status 503 content-type text/plain string "Service Unavailable" if healthcheck
-    http-request deny deny_status 403
     {%- endif %}
 
     {%- if config.inject_process_id_header and config.reload_id %}

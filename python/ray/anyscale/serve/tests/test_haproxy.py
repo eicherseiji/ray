@@ -515,7 +515,7 @@ def test_haproxy_http_options(ray_shutdown):
     url = get_application_url(app_name="test_app", use_localhost=False)
     wait_for_condition(lambda: httpx.get(url).text == "hello1")
     with pytest.raises(httpx.ConnectError):
-        _ = httpx.get(url.replace(":8001", ":8000")).status_code == 404
+        _ = httpx.get(url.replace(":8001", ":8000")).status_code
 
 
 def test_haproxy_safe_name():

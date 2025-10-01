@@ -289,9 +289,7 @@ class ProxyApi(ABC):
         pass
 
     @abstractmethod
-    async def update_and_reload(
-        self, backend_configs: Dict[str, BackendConfig]
-    ) -> None:
+    async def reload(self) -> None:
         """Gracefully reload the service."""
         pass
 
@@ -381,7 +379,7 @@ class HAProxyApi(ProxyApi):
 
             if self.cfg.inject_process_id_header:
                 self.cfg.reload_id = f"reload-{int(time.time() * 1000)}"
-                await self._generate_config_file_internal()
+                self._generate_config_file_internal()
 
             self.proc = await self._start_and_wait_for_haproxy("-sf", str(old_proc.pid))
 
@@ -390,7 +388,7 @@ class HAProxyApi(ProxyApi):
             logger.error(f"HAProxy graceful reload failed: {e}")
             raise
 
-    async def _generate_config_file_internal(self) -> None:
+    def _generate_config_file_internal(self) -> None:
         """Internal config generation without locking (for use within locked sections)."""
         try:
             env = Environment()
@@ -412,7 +410,9 @@ class HAProxyApi(ProxyApi):
             with open(self.config_file_path, "w") as f:
                 f.write(config_content)
 
-            logger.debug(f"Generated HAProxy configuration: {self.config_file_path}.")
+            logger.debug(
+                f"Succesfully generated HAProxy configuration: {self.config_file_path}."
+            )
         except Exception as e:
             logger.error(f"Failed to create HAProxy configuration files: {e}")
             raise
@@ -431,8 +431,8 @@ class HAProxyApi(ProxyApi):
                 if self.cfg.inject_process_id_header and self.cfg.reload_id is None:
                     self.cfg.reload_id = f"initial-{int(time.time() * 1000)}"
 
-                await self._generate_config_file_internal()
-            logger.info("Generated HAProxy config file.")
+                self._generate_config_file_internal()
+                logger.info("Successfully generated HAProxy config file.")
 
             self.proc = await self._start_and_wait_for_haproxy()
             logger.info("HAProxy started successfully.")
@@ -565,14 +565,9 @@ class HAProxyApi(ProxyApi):
         except RuntimeError as e:
             logger.error(f"Error during HAProxy shutdown: {e}")
 
-    async def update_and_reload(
-        self, backend_configs: Dict[str, BackendConfig]
-    ) -> None:
+    async def reload(self) -> None:
         try:
-            self.backend_configs = backend_configs
-            # To avoid dropping updates from long poll, we wait until HAProxy
-            # is up and running before attempting to generate config and reload.
-            await self._generate_config_file_internal()
+            self._generate_config_file_internal()
             await self._graceful_reload()
         except Exception as e:
             raise RuntimeError(f"Failed to update and reload HAProxy: {e}")
@@ -584,7 +579,7 @@ class HAProxyApi(ProxyApi):
             self.cfg.pass_health_checks = False
 
             # Regenerate the config file with the deny rule
-            await self._generate_config_file_internal()
+            self._generate_config_file_internal()
 
             # Perform a graceful reload to apply changes
             await self._graceful_reload()
@@ -598,13 +593,19 @@ class HAProxyApi(ProxyApi):
         try:
             self.cfg.pass_health_checks = True
 
-            await self._generate_config_file_internal()
+            self._generate_config_file_internal()
             # Perform a graceful reload to apply changes
             await self._graceful_reload()
             logger.info("Successfully enabled health checks.")
         except Exception as e:
             logger.error(f"Failed to disable health checks: {e}")
             raise
+
+    def set_backend_configs(
+        self,
+        backend_configs: Dict[str, BackendConfig],
+    ) -> None:
+        self.backend_configs = backend_configs
 
 
 @ray.remote(num_cpus=0)
@@ -765,6 +766,12 @@ class HAProxyManager(ProxyActorInterface):
             servers=servers,
         )
 
+    async def _reload_haproxy(self) -> None:
+        # To avoid dropping updates from long poll, we wait until HAProxy
+        # is up and running before attempting to generate config and reload.
+        await self._haproxy_start_task
+        await self._haproxy.reload()
+
     def update_target_groups(self, target_groups: List[TargetGroup]) -> None:
         self._target_groups = target_groups
 
@@ -775,9 +782,8 @@ class HAProxyManager(ProxyActorInterface):
         name_to_backend_configs = {
             backend_config.name: backend_config for backend_config in backend_configs
         }
-        self.event_loop.create_task(
-            self._haproxy.update_and_reload(name_to_backend_configs)
-        )
+        self._haproxy.set_backend_configs(name_to_backend_configs)
+        self.event_loop.create_task(self._reload_haproxy())
 
     def get_target_groups(self) -> List[TargetGroup]:
         """Get current target groups."""

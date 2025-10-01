@@ -157,8 +157,7 @@ async def haproxy_api_cleanup():
             continue
 
 
-@pytest.mark.asyncio
-async def test_generate_config_file_internal(haproxy_api_cleanup):
+def test_generate_config_file_internal(haproxy_api_cleanup):
     """Test that initialize writes the correct config_stub file content using the actual template."""
     with tempfile.TemporaryDirectory() as temp_dir:
         config_file_path = os.path.join(temp_dir, "haproxy.cfg")
@@ -226,7 +225,7 @@ async def test_generate_config_file_internal(haproxy_api_cleanup):
             )
 
             try:
-                await api._generate_config_file_internal()
+                api._generate_config_file_internal()
 
                 # Read and verify the generated file
                 with open(config_file_path, "r") as f:
@@ -322,8 +321,7 @@ listen stats
                         pass  # File already removed or doesn't exist
 
 
-@pytest.mark.asyncio
-async def test_generate_backends_in_order(haproxy_api_cleanup):
+def test_generate_backends_in_order(haproxy_api_cleanup):
     """Test that the backends are generated in the correct order."""
     with tempfile.TemporaryDirectory() as temp_dir:
         config_file_path = os.path.join(temp_dir, "haproxy.cfg")
@@ -356,7 +354,7 @@ async def test_generate_backends_in_order(haproxy_api_cleanup):
                 backend_configs=backend_config_stub,
             )
 
-            await api._generate_config_file_internal()
+            api._generate_config_file_internal()
 
         # Read and verify the generated file
         lines = []
@@ -798,7 +796,8 @@ async def test_update_and_reload(haproxy_api_cleanup):
             ],
         )
 
-        await api.update_and_reload({backend.name: backend, backend2.name: backend2})
+        api.set_backend_configs({backend.name: backend, backend2.name: backend2})
+        await api.reload()
 
         assert api.proc is not None
         assert api.proc.pid != original_pid
