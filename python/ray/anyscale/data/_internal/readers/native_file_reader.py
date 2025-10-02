@@ -1,9 +1,11 @@
 import abc
 import io
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import pandas as pd
 import pyarrow
+
+from ray.data.expressions import Expr
 
 from .file_reader import FileReader
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
@@ -64,7 +66,7 @@ class NativeFileReader(FileReader):
         *,
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
-        filter_expr: Optional["pyarrow.dataset.Expression"] = None,
+        predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]] = None,
         filesystem: "pyarrow.fs.FileSystem",
     ) -> Iterable[DataBatch]:
         paths = file_manifest.paths

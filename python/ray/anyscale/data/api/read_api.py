@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Uni
 
 import numpy as np
 
+from ray.data.expressions import Expr
 import ray
 import ray.data.read_api as oss_read_api
 from ray._private.auto_init_hook import wrap_auto_init
@@ -164,14 +165,14 @@ def read_parquet(
     batch_size = arrow_parquet_args.pop("batch_size", None)
 
     filters = arrow_parquet_args.pop("filter", None)
-    filter_expr = None
+    predicate_expr = None
     if filters is not None:
         if parse_version(pa.__version__) < parse_version("10.0.0"):
             # pyarrow < 10 uses a different API for converting filters to expressions
             # TODO: Remove after we drop support for pyarrow < 10.0.0
-            filter_expr = pq._filters_to_expression(filters)
+            predicate_expr = pq._filters_to_expression(filters)
         else:
-            filter_expr = pq.filters_to_expression(filters)
+            predicate_expr = pq.filters_to_expression(filters)
 
     to_batches_kwargs = arrow_parquet_args
 
@@ -228,7 +229,7 @@ def read_parquet(
         filesystem=filesystem,
         columns=columns,
         partition_filter=partition_filter,
-        filter_expr=filter_expr,
+        predicate_expr=predicate_expr,
         ignore_missing_paths=False,
         file_extensions=file_extensions,
         shuffle=shuffle,
@@ -790,7 +791,7 @@ def read_files(
     filesystem: Optional["pyarrow.fs.FileSystem"],
     columns: Optional[List[str]],
     partition_filter: Optional[PathPartitionFilter],
-    filter_expr: Optional["pyarrow.dataset.Expression"] = None,
+    predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]] = None,
     ignore_missing_paths: bool,
     file_extensions: Optional[List[str]],
     shuffle: Optional[Union[Literal["files"], FileShuffleConfig]],
@@ -857,7 +858,7 @@ def read_files(
         list_files_op,
         reader=reader,
         filesystem=filesystem,
-        filter_expr=filter_expr,
+        predicate_expr=predicate_expr,
         ray_remote_args=ray_remote_args,
         concurrency=concurrency,
         columns=columns,

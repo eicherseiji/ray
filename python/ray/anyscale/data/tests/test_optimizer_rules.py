@@ -632,9 +632,11 @@ def test_pushdown_rename_filter(ray_start_regular_shared):
     logical_plan = ds._plan._logical_plan
     optimized_logical_plan = LogicalOptimizer().optimize(logical_plan)
     read_op: ReadFiles = optimized_logical_plan.dag
-    assert read_op.filter_expr.equals(
-        pc.greater(pc.field("sepal.length"), pc.scalar(2.0))
-    )
+    # Check that predicate expression was pushed down and can be converted to expected PyArrow expression
+    assert read_op.predicate_expr is not None
+    converted_expr = read_op.predicate_expr.to_pyarrow()
+    expected_expr = pc.greater(pc.field("sepal.length"), pc.scalar(2.0))
+    assert converted_expr.equals(expected_expr)
 
 
 def test_pushdown_rename_filter_rename(ray_start_regular_shared):
@@ -660,9 +662,11 @@ def test_pushdown_rename_filter_rename(ray_start_regular_shared):
     logical_plan = ds._plan._logical_plan
     optimized_logical_plan = LogicalOptimizer().optimize(logical_plan)
     read_op: ReadFiles = optimized_logical_plan.dag
-    assert read_op.filter_expr.equals(
-        pc.greater(pc.field("sepal.length"), pc.scalar(2.0))
-    )
+    # Check that predicate expression was pushed down and can be converted to expected PyArrow expression
+    assert read_op.predicate_expr is not None
+    converted_expr = read_op.predicate_expr.to_pyarrow()
+    expected_expr = pc.greater(pc.field("sepal.length"), pc.scalar(2.0))
+    assert converted_expr.equals(expected_expr)
 
 
 def test_pushdown_rename_filter_rename_filter(ray_start_regular_shared):
@@ -695,7 +699,10 @@ def test_pushdown_rename_filter_rename_filter(ray_start_regular_shared):
     expected_filter_expr = pc.greater(
         pc.field("sepal.length"), pc.scalar(2.0)
     ) & pc.less(pc.field("sepal.length"), pc.scalar(5.0))
-    assert read_op.filter_expr.equals(expected_filter_expr)
+    # Check that predicate expression was pushed down and can be converted to expected PyArrow expression
+    assert read_op.predicate_expr is not None
+    converted_expr = read_op.predicate_expr.to_pyarrow()
+    assert converted_expr.equals(expected_filter_expr)
 
 
 def test_pushdown_rename_filter_rename_filter_rename(ray_start_regular_shared):
@@ -729,7 +736,10 @@ def test_pushdown_rename_filter_rename_filter_rename(ray_start_regular_shared):
     logical_plan = ds._plan._logical_plan
     optimized_logical_plan = LogicalOptimizer().optimize(logical_plan)
     read_op: ReadFiles = optimized_logical_plan.dag
-    assert read_op.filter_expr.equals(expected_filter_expr)
+    # Check that predicate expression was pushed down and can be converted to expected PyArrow expression
+    assert read_op.predicate_expr is not None
+    converted_expr = read_op.predicate_expr.to_pyarrow()
+    assert converted_expr.equals(expected_filter_expr)
 
 
 def test_map_batches_transformer_fusion(ray_start_regular_shared):

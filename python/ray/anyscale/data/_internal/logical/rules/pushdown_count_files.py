@@ -40,7 +40,7 @@ class PushdownCountFiles(Rule):
             or MetadataType.NUM_ROWS not in read_files.reader.available_metadata()
             # If `ReadFiles` op was optimized by predicate pushdown, this
             # PushdownCountFiles based on file stats won't work, so skip this rule.
-            or read_files.filter_expr is not None
+            or read_files.predicate_expr is not None
         ):
             return plan
 

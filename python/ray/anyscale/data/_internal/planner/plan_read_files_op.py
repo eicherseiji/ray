@@ -37,7 +37,7 @@ def plan_read_files_op(
     columns: Optional[List[str]] = op.columns
     columns_rename_map: Optional[Dict[str, str]] = op.columns_rename
 
-    filter_expr = op.filter_expr
+    predicate_expr = op.predicate_expr
 
     fs = op.filesystem
     reader = op.reader
@@ -50,7 +50,7 @@ def plan_read_files_op(
                 file_manifest,
                 columns=columns,
                 columns_rename=columns_rename_map,
-                filter_expr=filter_expr,
+                predicate_expr=predicate_expr,
                 filesystem=fs,
             )
 
@@ -68,7 +68,7 @@ def plan_read_files_op(
 
     # Operator fusion *should* take care of the in-memory filtering
     # instead - but needs https://github.com/anyscale/rayturbo/pull/881
-    if op.filter_expr is not None and not op.reader.supports_predicate_pushdown():
+    if op.predicate_expr is not None and not op.reader.supports_predicate_pushdown():
 
         def _apply_predicate(
             blocks: Iterable[Block], ctx: TaskContext
@@ -78,9 +78,22 @@ def plan_read_files_op(
                     [block], BlockType.ARROW
                 )[0]
 
-                yield block.filter(op.filter_expr)
+                from ray.data.expressions import Expr
 
-        transform_fns.append(BlockMapTransformFn(_apply_predicate))
+                if isinstance(op.predicate_expr, Expr):
+                    # Use ArrowBlockAccessor's filter method which handles Ray Data expressions
+                    from ray.data._internal.arrow_block import ArrowBlockAccessor
+
+                    block_accessor = ArrowBlockAccessor(block)
+                    filtered_table = block_accessor.filter(op.predicate_expr)
+                    yield filtered_table
+                else:
+                    # Use PyArrow filter directly for PyArrow expressions
+                    yield block.filter(op.predicate_expr)
+
+        transform_fns.append(
+            BlockMapTransformFn(_apply_predicate)
+        )  # Fixed indentation!
 
     map_transformer = MapTransformer(
         transform_fns,

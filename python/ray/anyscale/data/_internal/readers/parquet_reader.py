@@ -3,13 +3,25 @@ import logging
 import os
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Dict, Iterator, Iterable, List, Optional, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import numpy as np
 import pyarrow
 import pyarrow as pa
 import pyarrow.dataset
 
+from ray.data.expressions import Expr
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
@@ -195,7 +207,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self,
         file_manifest: FileManifest,
         *,
-        filter_expr: Optional[pyarrow.dataset.Expression] = None,
+        predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]] = None,
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
         filesystem: pyarrow.fs.FileSystem,
@@ -290,7 +302,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 iter(fragments),
                 functools.partial(
                     self._read_fragments,
-                    filter_expr=filter_expr,
+                    predicate_expr=predicate_expr,
                     schema=self._schema,
                     data_columns=data_columns,
                     partition_columns=partition_columns,
@@ -307,7 +319,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         else:
             yield from self._read_fragments(
                 fragments,
-                filter_expr=filter_expr,
+                predicate_expr=predicate_expr,
                 schema=self._schema,
                 data_columns=data_columns,
                 partition_columns=partition_columns,
@@ -493,7 +505,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     def _read_fragments(
         self,
         fragments: List[pyarrow.dataset.ParquetFileFragment],
-        filter_expr: pyarrow.dataset.Expression,
+        predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]],
         schema: pyarrow.Schema,
         data_columns: Optional[List[str]] = None,
         partition_columns: Optional[List[str]] = None,
@@ -511,9 +523,10 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 schema=schema,
                 data_columns=data_columns,
                 partition_columns=partition_columns,
-                filter_expr=filter_expr,
-                checkpoint_file_fragment=checkpoint_file_fragment,
+                predicate_expr=predicate_expr,
+                columns_rename=columns_rename,
                 generated_id_column=generated_id_column,
+                checkpoint_file_fragment=checkpoint_file_fragment,
             ):
                 if columns_rename is not None:
                     table = table.rename_columns(
@@ -606,7 +619,8 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         schema: pyarrow.Schema,
         data_columns: Optional[List[str]],
         partition_columns: Optional[List[str]],
-        filter_expr: pyarrow.dataset.Expression,
+        predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]] = None,
+        columns_rename: Optional[Dict[str, str]] = None,
         checkpoint_file_fragment: Optional[pa.StructScalar] = None,
         generated_id_column: Optional[str],
     ) -> Iterable[pyarrow.Table]:
@@ -657,6 +671,20 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         # Track the current row offset for the row IDs
         current_row_offset: int = 0
 
+        if predicate_expr is not None:
+            from ray.data.expressions import Expr
+
+            if isinstance(predicate_expr, Expr):
+                # Convert Ray Data expression to PyArrow expression
+                try:
+                    predicate_expr = predicate_expr.to_pyarrow()
+                except (ValueError, TypeError):
+                    # If conversion fails, filtering will be done in-memory
+                    predicate_expr = None
+            else:
+                # Assume it's already a PyArrow expression
+                predicate_expr = predicate_expr
+
         # S3 can raise transient errors during iteration, and PyArrow doesn't expose a
         # way to retry specific batches.
         for table in iterate_with_retry(
@@ -666,7 +694,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 data_columns=data_columns,
                 partition_columns=partition_columns,
                 partitioning=self._partitioning,
-                filter_expr=filter_expr,
+                filter_expr=predicate_expr,  # Use converted PyArrow expression
                 batch_size=batch_size,
                 include_path=self._include_paths,
                 use_threads=True,

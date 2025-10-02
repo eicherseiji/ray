@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import pyarrow as pa
 
@@ -12,17 +12,62 @@ from ray.anyscale.data._internal.readers.supports_metadata import SupportsSchema
 from ray.data._internal.compute import TaskPoolStrategy
 from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
 from ray.data._internal.logical.operators.map_operator import AbstractMap
-from ray.data._internal.planner.plan_expression.expression_evaluator import (
-    ExpressionEvaluator,
-)
 from ray.data.block import BlockAccessor, Schema
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import pyarrow.dataset as pd
-
+    from ray.data.expressions import Expr
     from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
+
+
+def _rename_columns_in_expr(expr: "Expr", column_mapping: Dict[str, str]) -> "Expr":
+    """Rename columns in a native expression based on a column mapping."""
+    from ray.data.expressions import (
+        AliasExpr,
+        BinaryExpr,
+        ColumnExpr,
+        LiteralExpr,
+        UnaryExpr,
+        UDFExpr,
+    )
+
+    if isinstance(expr, ColumnExpr):
+        original_name = column_mapping.get(expr.name, expr.name)
+        if original_name != expr.name:
+            return ColumnExpr(original_name)
+        return expr
+    elif isinstance(expr, LiteralExpr):
+        return expr
+    elif isinstance(expr, BinaryExpr):
+        return BinaryExpr(
+            expr.op,
+            _rename_columns_in_expr(expr.left, column_mapping),
+            _rename_columns_in_expr(expr.right, column_mapping),
+        )
+    elif isinstance(expr, UnaryExpr):
+        return UnaryExpr(
+            expr.op,
+            _rename_columns_in_expr(expr.operand, column_mapping),
+        )
+    elif isinstance(expr, UDFExpr):
+        return UDFExpr(
+            expr.fn,
+            [_rename_columns_in_expr(arg, column_mapping) for arg in expr.args],
+            {
+                k: _rename_columns_in_expr(v, column_mapping)
+                for k, v in expr.kwargs.items()
+            },
+            expr.data_type,
+        )
+    elif isinstance(expr, AliasExpr):
+        return AliasExpr(
+            _rename_columns_in_expr(expr.expr, column_mapping),
+            expr.alias,
+        )
+    else:
+        return expr
 
 
 class ReadFiles(SourceOperator, AbstractMap):
@@ -32,7 +77,7 @@ class ReadFiles(SourceOperator, AbstractMap):
         *,
         reader: FileReader,
         filesystem,
-        filter_expr: Optional["pd.Expression"] = None,
+        predicate_expr: Optional[Union["Expr", "pd.Expression"]] = None,
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
         ray_remote_args: Optional[Dict[str, Any]] = None,
@@ -50,7 +95,8 @@ class ReadFiles(SourceOperator, AbstractMap):
         # TODO assert that projected columns include filtered ones as this
         #      isn't working correctly
         # See https://github.com/apache/arrow/issues/47493
-        self.filter_expr = filter_expr
+        self.predicate_expr = predicate_expr
+
         if columns is not None:
             if not isinstance(columns, list):
                 raise TypeError("`columns` must be a list of strings.")
@@ -64,33 +110,62 @@ class ReadFiles(SourceOperator, AbstractMap):
         self.columns = columns
         self.columns_rename = columns_rename
 
-    def pushdown_filter(self, filter_expr_strs: List[str]) -> None:
-        filter_expr = self._create_filter_expr(filter_expr_strs)
-        if self.filter_expr is not None:
-            self.filter_expr &= filter_expr
-        else:
-            self.filter_expr = filter_expr
+    def pushdown_predicate(
+        self, predicate_expr: Union["Expr", "pd.Expression"]
+    ) -> None:
+        """Push down predicate expressions (either Ray Data or PyArrow)."""
+        from ray.data.expressions import Expr
+        import pyarrow.compute as pc
 
-    def _create_filter_expr(self, filter_expr_strs: List[str]) -> "pd.Expression":
-        # This is to handle a case where user specifies
-        # read->rename(a->x)->filter("x>10")
-        # When filter is pushed down to read, underlying schema wont know about column 'x' and fails.
-        # So we need to reconstruct the filter expression with the original column names
-        # Note: It is okay if there is a rename after filter pushdown as it doesnt break underlying read
-        if not filter_expr_strs:
-            return None
-        field_changes = {}
-        if self.columns_rename:
-            for old_col, new_col in self.columns_rename.items():
-                field_changes[new_col] = old_col
-        filter_expr: "pd.Expression" = ExpressionEvaluator.get_filters(
-            filter_expr_strs[0], field_changes=field_changes
-        )
-        for filter_expr_str in filter_expr_strs[1:]:
-            filter_expr &= ExpressionEvaluator.get_filters(
-                filter_expr_str, field_changes=field_changes
-            )
-        return filter_expr
+        # Handle Ray Data expressions with column renaming
+        if isinstance(predicate_expr, Expr):
+            if self.columns_rename:
+                column_mapping = {
+                    new_col: old_col for old_col, new_col in self.columns_rename.items()
+                }
+                predicate_expr = _rename_columns_in_expr(predicate_expr, column_mapping)
+
+        # For simplicity, just combine expressions if they're the same type
+        if self.predicate_expr is not None:
+            if isinstance(self.predicate_expr, Expr) and isinstance(
+                predicate_expr, Expr
+            ):
+                # Both are Ray Data expressions - combine with AND
+                self.predicate_expr = self.predicate_expr & predicate_expr
+            elif not isinstance(self.predicate_expr, Expr) and not isinstance(
+                predicate_expr, Expr
+            ):
+                # Both are PyArrow expressions - combine with AND
+                try:
+                    self.predicate_expr = self.predicate_expr & predicate_expr
+                except Exception:
+                    # If combination fails, replace with new predicate
+                    self.predicate_expr = predicate_expr
+            else:
+                # Mixed types - convert to PyArrow and combine
+                try:
+                    # Convert both to PyArrow expressions
+                    if isinstance(self.predicate_expr, Expr):
+                        existing_pa_expr = self.predicate_expr.to_pyarrow()
+                    else:
+                        existing_pa_expr = self.predicate_expr
+
+                    if isinstance(predicate_expr, Expr):
+                        new_pa_expr = predicate_expr.to_pyarrow()
+                    else:
+                        new_pa_expr = predicate_expr
+
+                    # Combine with AND using PyArrow
+                    self.predicate_expr = pc.and_kleene(existing_pa_expr, new_pa_expr)
+                except (ValueError, TypeError, AttributeError) as e:
+                    # If conversion or combination fails, log warning and keep new predicate
+                    logger.warning(
+                        f"Failed to combine predicates of mixed types: {e}. "
+                        "Using only the new predicate expression."
+                    )
+                    self.predicate_expr = predicate_expr
+        else:
+            self.predicate_expr = predicate_expr
 
     def infer_schema(self) -> Optional["Schema"]:
         # This method is used by the execution plan to efficiently return metadata

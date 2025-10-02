@@ -1,5 +1,5 @@
 import abc
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Union
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -8,6 +8,8 @@ from ray.data.block import DataBatch
 
 if TYPE_CHECKING:
     import pyarrow
+    import pyarrow.dataset as pd
+    from ray.data.expressions import Expr
 
 
 # TODO(@bveeramani): Consolidate this with `FileBasedDatasource` so that there aren't
@@ -24,7 +26,7 @@ class FileReader(abc.ABC):
         self,
         file_manifest: FileManifest,
         *,
-        filter_expr: "pyarrow.dataset.Expression",
+        predicate_expr: Optional[Union["Expr", "pd.Expression"]] = None,
         columns: Optional[List[str]],
         columns_rename: Optional[Dict[str, str]],
         filesystem: "pyarrow.fs.FileSystem",
@@ -34,10 +36,10 @@ class FileReader(abc.ABC):
         Args:
             file_manifest: A manifest containing the paths and on-disk sizes of the
                 files.
-            filter_expr: pyarrow.dataset.Expression for predicate pushdown.
+            predicate_expr: Ray Data expression or PyArrow expression for predicate pushdown.
             columns: The columns that will be read. If None, all columns will be read.
+            columns_rename: Mapping to rename columns.
             filesystem: The filesystem to read from.
-            checkpoint_ids: A block containing the checkpointed IDs.
 
         Returns:
             An iterable of data batches. Batches can be any size.

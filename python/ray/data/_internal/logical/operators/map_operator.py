@@ -267,7 +267,7 @@ class Filter(AbstractUDFMap):
         return True
 
     def is_expression_based(self) -> bool:
-        return self._filter_expr is not None
+        return self._predicate_expr is not None
 
     def _get_operator_name(self, op_name: str, fn: UserDefinedFunction):
         if self.is_expression_based():
