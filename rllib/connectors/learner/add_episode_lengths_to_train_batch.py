@@ -1,8 +1,9 @@
-import numpy as np
 from typing import Any, Dict, List, Optional
 
-from ray.rllib.core.columns import Columns
+import numpy as np
+
 from ray.rllib.connectors.connector_v2 import ConnectorV2
+from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module.rl_module import RLModule
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.typing import EpisodeType
