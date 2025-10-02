@@ -62,7 +62,7 @@ class LocationAwareBundleQueue(BundleQueue):
 
     def has_next(self) -> bool:
         bundle = self.peek_next()
-        return bundle is not None and all_objects_exist_for_bundle(bundle)
+        return bundle is not None
 
     def remove(self, bundle: "RefBundle") -> None:
         with self._lock:
