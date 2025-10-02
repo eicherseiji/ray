@@ -81,3 +81,21 @@
     - __suffix__: daft
       run:
         script: python audio_transcription/daft_main.py
+
+- name: video_object_detection
+
+  cluster:
+    cluster_compute: video_object_detection/compute.yaml
+    byod:
+      post_build_script: byod_install_daft_video_object_detection.sh
+  run:
+    timeout: 3600
+
+  variations:
+    - __suffix__: ray
+      run:
+        script: python video_object_detection/ray_data_main.py
+
+    - __suffix__: daft
+      run:
+        script: python video_object_detection/daft_main.py
