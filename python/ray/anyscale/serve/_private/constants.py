@@ -1,0 +1,143 @@
+# Copyright (2023 and onwards) Anyscale, Inc.
+
+import os
+
+ANYSCALE_RAY_SERVE_ENABLE_PROPRIETARY_DEPLOYMENT_SCHEDULER = (
+    os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_PROPRIETARY_DEPLOYMENT_SCHEDULER", "1")
+    == "1"
+)
+
+ANYSCALE_RAY_SERVE_DEFAULT_DRAINING_TIMEOUT_S = float(
+    os.environ.get("ANYSCALE_RAY_SERVE_DEFAULT_DRAINING_TIMEOUT_S", 300.0)
+)
+
+# Default to 30 minutes
+ANYSCALE_RAY_SERVE_COMPACTION_TIMEOUT_S = float(
+    os.environ.get("ANYSCALE_RAY_SERVE_COMPACTION_TIMEOUT_S", 1800.0)
+)
+
+# How long to wait after deployments become stable before attempting node compaction
+ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S", "300")
+)
+
+DEFAULT_TRACING_EXPORTER_IMPORT_PATH = (
+    "ray.anyscale.serve._private.tracing_utils:default_tracing_exporter"
+)
+# Path to tracing exporter function
+# If None, then use default tracing exporter
+# If empty string, then tracing is disabled
+ANYSCALE_TRACING_EXPORTER_IMPORT_PATH = os.environ.get(
+    "ANYSCALE_TRACING_EXPORTER_IMPORT_PATH", DEFAULT_TRACING_EXPORTER_IMPORT_PATH
+)
+
+ANYSCALE_TRACING_SAMPLING_RATIO = float(
+    os.environ.get("ANYSCALE_TRACING_SAMPLING_RATIO", 0.01)
+)
+
+# Feature flag to use HAProxy.
+ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY = (
+    os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
+)
+
+# HAProxy configuration defaults
+# Maximum number of concurrent connections
+ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN", "20000")
+)
+
+# Number of threads for HAProxy
+ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD", "4")
+)
+
+# HAProxy configuration file location
+ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC = os.environ.get(
+    "ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC", "/tmp/haproxy-serve/haproxy.cfg"
+)
+
+# HAProxy admin socket path
+ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH = os.environ.get(
+    "ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH", "/tmp/haproxy-serve/admin.sock"
+)
+
+# For now, this is used only for testing. In the suite of tests that
+# use gRPC to send requests, we flip this flag on.
+ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = (
+    os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
+)
+
+ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH = int(
+    # Default max message length in gRPC is 4MB, we keep that default
+    os.environ.get(
+        "ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH", 4 * 1024 * 1024
+    )
+)
+
+ANYSCALE_RAY_SERVE_PROXY_USE_GRPC = os.environ.get(
+    "ANYSCALE_RAY_SERVE_PROXY_USE_GRPC"
+) == "1" or (
+    not os.environ.get("ANYSCALE_RAY_SERVE_PROXY_USE_GRPC") == "0"
+    and ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT
+)
+
+ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP = (
+    # If gRPC isn't turned on for the proxy, then router should always be
+    # running on a separate loop.
+    # Same loop should only be able to be turned on for gRPC.
+    not ANYSCALE_RAY_SERVE_PROXY_USE_GRPC
+    or os.environ.get("ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP", "1")
+    == "1"
+)
+
+# Feature flag for prestarting workers in placement groups.
+RAY_SERVE_PRESTART_PG_WORKERS = (
+    os.environ.get("RAY_SERVE_PRESTART_PG_WORKERS", "1") == "1"
+)
+
+# How long the prestarted workers for placement groups should be kept alive without
+# being used.
+RAY_SERVE_PRESTART_PG_WORKERS_KEEP_ALIVE_S = int(
+    os.environ.get("RAY_SERVE_PRESTART_PG_WORKERS_KEEP_ALIVE_S", "60")
+)
+
+# Feature flag to enable a limited form of direct ingress where ingress applications
+# listen on port 8000 (HTTP) and 9000 (gRPC). No proxies will be started.
+ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = (
+    os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "0") == "1"
+)
+RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT = int(
+    os.environ.get("RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT", "30000")
+)
+RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT = int(
+    os.environ.get("RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT", "40000")
+)
+RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT = int(
+    os.environ.get("RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT", "31000")
+)
+RAY_SERVE_DIRECT_INGRESS_MAX_GRPC_PORT = int(
+    os.environ.get("RAY_SERVE_DIRECT_INGRESS_MAX_GRPC_PORT", "41000")
+)
+RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT = int(
+    os.environ.get("RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT", "100")
+)
+# The minimum drain period for a HTTP proxy.
+ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S = float(
+    os.environ.get("ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S", "30")
+)
+
+# Feature flag to enable freezing the garbage collector on startup.
+ANYSCALE_FREEZE_GC_ON_STARTUP = (
+    os.environ.get("ANYSCALE_FREEZE_GC_ON_STARTUP", "0") == "1"
+)
+
+# Direct ingress must be enabled if HAProxy is enabled.
+if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = True
+
+# If throughput optimized Ray Serve is enabled, set the following constants.
+# This should be at the end.
+if os.environ.get("RAY_SERVE_THROUGHPUT_OPTIMIZED", "0") == "1":
+    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = True
+    ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = True
+    ANYSCALE_FREEZE_GC_ON_STARTUP = True

@@ -510,6 +510,7 @@ ray_cc_library(
         ":gcs_worker_manager",
         ":grpc_service_interfaces",
         ":grpc_services",
+        "//src/ray/anyscale/gcs/gcs_server:gcs_server_io_context_policy",
         "//src/ray/core_worker_rpc_client:core_worker_client",
         "//src/ray/core_worker_rpc_client:core_worker_client_pool",
         "//src/ray/gcs/store_client",

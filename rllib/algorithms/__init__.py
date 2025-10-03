@@ -2,6 +2,7 @@ from ray.rllib.algorithms.algorithm import Algorithm
 from ray.rllib.algorithms.algorithm_config import AlgorithmConfig
 from ray.rllib.algorithms.appo.appo import APPO, APPOConfig
 from ray.rllib.algorithms.bc.bc import BC, BCConfig
+from ray.rllib.algorithms.bc_irl_ppo.bc_irl_ppo import BCIRLPPO, BCIRLPPOConfig
 from ray.rllib.algorithms.cql.cql import CQL, CQLConfig
 from ray.rllib.algorithms.dqn.dqn import DQN, DQNConfig
 from ray.rllib.algorithms.impala.impala import (
@@ -22,6 +23,8 @@ __all__ = [
     "APPOConfig",
     "BC",
     "BCConfig",
+    "BCIRLPPO",
+    "BCIRLPPOConfig",
     "CQL",
     "CQLConfig",
     "DQN",
