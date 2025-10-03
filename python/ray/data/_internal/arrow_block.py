@@ -251,28 +251,12 @@ class ArrowBlockAccessor(ArrowBlockMixin, TableBlockAccessor):
     def _build_tensor_row(
         row: _OptimizedArrowRow, row_idx: int, col_name: str = TENSOR_COLUMN_NAME
     ) -> np.ndarray:
-        from packaging.version import parse as parse_version
 
-        element = row[col_name][row_idx]
-        # TODO(Clark): Reduce this to np.asarray(element) once we only support Arrow
-        # 9.0.0+.
-        pyarrow_version = get_pyarrow_version()
-        if pyarrow_version is None or pyarrow_version >= parse_version("8.0.0"):
-            assert isinstance(element, pyarrow.ExtensionScalar)
-            if pyarrow_version is None or pyarrow_version >= parse_version("9.0.0"):
-                # For Arrow 9.0.0+, accessing an element in a chunked tensor array
-                # produces an ArrowTensorScalar, which we convert to an ndarray using
-                # .as_py().
-                element = element.as_py()
-            else:
-                # For Arrow 8.*, accessing an element in a chunked tensor array produces
-                # an ExtensionScalar, which we convert to an ndarray using our custom
-                # method.
-                element = element.type._extension_scalar_to_ndarray(element)
-        # For Arrow < 8.0.0, accessing an element in a chunked tensor array produces an
-        # ndarray, which we return directly.
-        assert isinstance(element, np.ndarray), type(element)
-        return element
+        element = row[col_name][0]
+        arr = element.as_py()
+
+        assert isinstance(arr, np.ndarray), type(arr)
+        return arr
 
     def slice(self, start: int, end: int, copy: bool = False) -> "pyarrow.Table":
         view = self._table.slice(start, end - start)
