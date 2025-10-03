@@ -30,7 +30,7 @@ chmod +x /tmp/bazelisk
 /tmp/bazelisk run //release:custom_image_build_and_test_init -- \
     --test-collection-file release/release_runtime_tests.yaml \
     --test-collection-file release/release_data_tests.yaml \
-    --test-collection-file release/release_daft_tests.yaml \
+    --test-collection-file release/release_multimodal_inference_benchmarks_tests.yaml \
     --test-collection-file release/release_tests.yaml \
     --run-jailed-tests \
     --global-config runtime_config.yaml \
