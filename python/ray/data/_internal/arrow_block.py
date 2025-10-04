@@ -24,9 +24,10 @@ from ray.air.util.tensor_extensions.arrow import (
     convert_to_pyarrow_array,
     pyarrow_table_from_pydict,
 )
+from ray.anyscale.data._internal.arrow_block import ArrowBlockMixin, _OptimizedArrowRow
 from ray.data._internal.arrow_ops import transform_polars, transform_pyarrow
 from ray.data._internal.arrow_ops.transform_pyarrow import shuffle
-from ray.data._internal.row import TableRow
+from ray.data._internal.row import row_repr, row_repr_pretty, row_str
 from ray.data._internal.table_block import TableBlockAccessor, TableBlockBuilder
 from ray.data.block import (
     Block,
@@ -84,10 +85,13 @@ def get_concat_and_sort_transform(context: DataContext) -> Callable:
         return transform_pyarrow.concat_and_sort
 
 
-class ArrowRow(TableRow):
+class ArrowRow(Mapping):
     """
     Row of a tabular Dataset backed by a Arrow Table block.
     """
+
+    def __init__(self, row: Any):
+        self._row = row
 
     def __getitem__(self, key: Union[str, List[str]]) -> Any:
         from ray.data.extensions import get_arrow_extension_tensor_types
@@ -100,7 +104,9 @@ class ArrowRow(TableRow):
                 # Build a tensor row.
                 return tuple(
                     [
-                        ArrowBlockAccessor._build_tensor_row(self._row, col_name=key)
+                        ArrowBlockAccessor._build_tensor_row(
+                            self._row, col_name=key, row_idx=0
+                        )
                         for key in keys
                     ]
                 )
@@ -140,6 +146,15 @@ class ArrowRow(TableRow):
 
     def as_pydict(self) -> Dict[str, Any]:
         return dict(self.items())
+
+    def __str__(self):
+        return row_str(self)
+
+    def __repr__(self):
+        return row_repr(self)
+
+    def _repr_pretty_(self, p, cycle):
+        return row_repr_pretty(self, p, cycle)
 
 
 class ArrowBlockBuilder(TableBlockBuilder):
@@ -195,13 +210,17 @@ def _get_max_chunk_size(
         return max(1, int(max_chunk_size_bytes / avg_row_size))
 
 
-class ArrowBlockAccessor(TableBlockAccessor):
-    ROW_TYPE = ArrowRow
+class ArrowBlockAccessor(ArrowBlockMixin, TableBlockAccessor):
+    ROW_TYPE = _OptimizedArrowRow
 
     def __init__(self, table: "pyarrow.Table"):
         if pyarrow is None:
             raise ImportError("Run `pip install pyarrow` for Arrow support")
         super().__init__(table)
+        self._max_chunk_size = None
+
+    def _get_row(self, index: int) -> _OptimizedArrowRow:
+        return self.ROW_TYPE(self._table, index)
 
     def column_names(self) -> List[str]:
         return self._table.column_names
@@ -230,7 +249,7 @@ class ArrowBlockAccessor(TableBlockAccessor):
 
     @staticmethod
     def _build_tensor_row(
-        row: ArrowRow, col_name: str = TENSOR_COLUMN_NAME
+        row: _OptimizedArrowRow, row_idx: int, col_name: str = TENSOR_COLUMN_NAME
     ) -> np.ndarray:
 
         element = row[col_name][0]
@@ -436,16 +455,17 @@ class ArrowBlockAccessor(TableBlockAccessor):
     ) -> Iterator[Union[Mapping, np.ndarray]]:
         table = self._table
         if public_row_format:
-            if not hasattr(self, "_max_chunk_size"):
+            if self._max_chunk_size is None:
                 # Calling _get_max_chunk_size in constructor makes it slow, so we
                 # are calling it here only when needed.
                 self._max_chunk_size = _get_max_chunk_size(
-                    self._table, ARROW_MAX_CHUNK_SIZE_BYTES
+                    table, ARROW_MAX_CHUNK_SIZE_BYTES
                 )
             for batch in table.to_batches(max_chunksize=self._max_chunk_size):
                 yield from batch.to_pylist()
         else:
-            for i in range(self.num_rows()):
+            num_rows = self.num_rows()
+            for i in range(num_rows):
                 yield self._get_row(i)
 
     def filter(self, predicate_expr: "Expr") -> "pyarrow.Table":
@@ -528,10 +548,38 @@ class ArrowBlockColumnAccessor(BlockColumnAccessor):
 
         return pac.unique(self._column)
 
+    def value_counts(self) -> Optional[Dict[str, List]]:
+        import pyarrow.compute as pac
+
+        value_counts: pyarrow.StructArray = pac.value_counts(self._column)
+        if len(value_counts) == 0:
+            return None
+        return {
+            "values": value_counts.field("values").to_pylist(),
+            "counts": value_counts.field("counts").to_pylist(),
+        }
+
+    def hash(self) -> BlockColumn:
+        import polars as pl
+
+        df = pl.DataFrame({"col": self._column})
+        hashes = df.hash_rows().cast(pl.Int64, wrap_numerical=True)
+        return hashes.to_arrow()
+
     def flatten(self) -> BlockColumn:
         import pyarrow.compute as pac
 
         return pac.list_flatten(self._column)
+
+    def dropna(self) -> BlockColumn:
+        import pyarrow.compute as pac
+
+        return pac.drop_null(self._column)
+
+    def is_composed_of_lists(self, types: Optional[Tuple] = None) -> bool:
+        if not types:
+            types = (pyarrow.lib.ListType, pyarrow.lib.LargeListType)
+        return isinstance(self._column.type, types)
 
     def to_pylist(self) -> List[Any]:
         return self._column.to_pylist()

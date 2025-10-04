@@ -11,6 +11,8 @@ from ray.rllib.utils.framework import try_import_torch
 from ray.rllib.utils.metrics.metrics_logger import MetricsLogger
 from ray.rllib.utils.typing import EpisodeType
 from ray.util.annotations import DeveloperAPI
+from ray.rllib.utils.framework import get_device
+
 
 torch, _ = try_import_torch()
 
@@ -48,7 +50,10 @@ class AggregatorActor(FaultAwareApply):
 
         # Set device and node.
         self._node = platform.node()
-        self._device = torch.device("cpu")
+        self._device = get_device(
+            self.config,
+            0.01 * float(self.config.num_gpus_per_learner > 0),
+        )
         self.metrics = MetricsLogger()
 
         # Create the RLModule.

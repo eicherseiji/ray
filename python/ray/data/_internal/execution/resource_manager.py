@@ -47,7 +47,7 @@ class ResourceManager:
     # store memory limit for the streaming executor,
     # when `ReservationOpResourceAllocator` is enabled.
     DEFAULT_OBJECT_STORE_MEMORY_LIMIT_FRACTION = env_float(
-        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.5
+        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.75
     )
 
     # The fraction of the object store capacity that will be used as the default object
@@ -599,6 +599,13 @@ class ReservationOpResourceAllocator(OpResourceAllocator):
             remaining = remaining.max(ExecutionResources.zero())
 
         self._total_shared = remaining
+
+    def can_submit_new_task(self, op: PhysicalOperator) -> bool:
+        if op not in self._op_budgets:
+            return True
+        budget = self._op_budgets[op]
+        res = op.incremental_resource_usage().satisfies_limit(budget)
+        return res
 
     def get_budget(self, op: PhysicalOperator) -> Optional[ExecutionResources]:
         return self._op_budgets.get(op)

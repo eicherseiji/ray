@@ -1,0 +1,6 @@
+load("//bazel:ray.bzl", "ray_cc_library")
+
+ray_cc_library(
+    name = "ray_turbo_config_def",
+    hdrs = ["ray_turbo_config_def.h"],
+)
