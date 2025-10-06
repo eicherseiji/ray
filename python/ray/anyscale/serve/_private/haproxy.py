@@ -83,6 +83,12 @@ class ServerConfig:
     host: str  # IP/hostname to connect to
     port: int  # Port to connect to
 
+    def __str__(self) -> str:
+        return f"ServerConfig(name='{self.name}', host='{self.host}', port={self.port})"
+
+    def __repr__(self) -> str:
+        return str(self)
+
 
 @dataclass
 class HAProxyStats:
@@ -258,6 +264,12 @@ class BackendConfig:
 
     # List of servers in this backend
     servers: List[ServerConfig] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        return f"BackendConfig(name='{self.name}', path_prefix='{self.path_prefix}', servers={self.servers})"
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 class ProxyApi(ABC):
@@ -656,9 +668,13 @@ class HAProxyManager(ProxyActorInterface):
         self._haproxy_start_task = self.event_loop.create_task(self._haproxy.start())
 
     async def ready(self) -> str:
-        # Wait for haproxy to start. Internally, this starts the process and
-        # waits for it to be running by querying the stats socket.
-        await self._haproxy_start_task
+        try:
+            # Wait for haproxy to start. Internally, this starts the process and
+            # waits for it to be running by querying the stats socket.
+            await self._haproxy_start_task
+        except Exception as e:
+            logger.exception("Failed to start HAProxy.")
+            raise e from None
 
         # Return proxy metadata used by the controller.
         # NOTE(zcin): We need to convert the metadata to a json string because
@@ -779,6 +795,12 @@ class HAProxyManager(ProxyActorInterface):
             self._target_group_to_backend(target_group)
             for target_group in target_groups
         ]
+
+        logger.info(
+            f"Got updated backend configs: {backend_configs}.",
+            extra={"log_to_stderr": True},
+        )
+
         name_to_backend_configs = {
             backend_config.name: backend_config for backend_config in backend_configs
         }
