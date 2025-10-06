@@ -251,6 +251,11 @@ defaults
     timeout queue 1s
     log global
     option httplog
+frontend prometheus
+    bind :9101
+    mode http
+    http-request use-service prometheus-exporter if {{ path /metrics }}
+    no log
 frontend http_frontend
     bind *:8000
     # Health check endpoint

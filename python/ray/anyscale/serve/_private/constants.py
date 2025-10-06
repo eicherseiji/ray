@@ -61,6 +61,11 @@ ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH = os.environ.get(
     "ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH", "/tmp/haproxy-serve/admin.sock"
 )
 
+# HAProxy metrics export port
+ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT", "9101")
+)
+
 # For now, this is used only for testing. In the suite of tests that
 # use gRPC to send requests, we flip this flag on.
 ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = (

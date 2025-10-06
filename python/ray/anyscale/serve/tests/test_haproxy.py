@@ -517,6 +517,36 @@ def test_haproxy_http_options(ray_shutdown):
     with pytest.raises(httpx.ConnectError):
         _ = httpx.get(url.replace(":8001", ":8000")).status_code
 
+    serve.shutdown()
+
+
+def test_haproxy_metrics(ray_shutdown):
+    """Test that the haproxy metrics are exported correctly."""
+    ray.init(num_cpus=4)
+    serve.start(
+        http_options={
+            "host": "0.0.0.0",
+        },
+    )
+
+    @serve.deployment
+    def function(_):
+        return "hello1"
+
+    serve.run(function.bind())
+
+    wait_for_condition(lambda: httpx.get("http://localhost:8000/").text == "hello1")
+
+    metrics_response = httpx.get("http://localhost:9101/metrics")
+    assert metrics_response.status_code == 200
+
+    http_backend_metrics = (
+        'haproxy_backend_http_responses_total{proxy="backend_HTTP:",code="2xx"} 1'
+    )
+    assert http_backend_metrics in metrics_response.text
+
+    serve.shutdown()
+
 
 def test_haproxy_safe_name():
     """Test that the safe name is generated correctly."""

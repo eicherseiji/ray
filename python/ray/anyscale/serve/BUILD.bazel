@@ -143,7 +143,7 @@ py_test_module_list(
 )
 
 py_test_module_list(
-    size = "medium",
+    size = "large",
     data = glob(["tests/fixtures/*.*"]),
     env = {
         "ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY": "1",

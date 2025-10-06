@@ -16,6 +16,11 @@ defaults
     {% if config.timeout_queue_s is not none %}timeout queue {{ config.timeout_queue_s }}s{% endif %}
     log global
     option httplog
+frontend prometheus
+    bind :{{ config.metrics_port }}
+    mode http
+    http-request use-service prometheus-exporter if { path {{ config.metrics_uri }} }
+    no log
 frontend http_frontend
     bind {{ config.frontend_host }}:{{ config.frontend_port }}
     # Health check endpoint

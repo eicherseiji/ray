@@ -17,6 +17,7 @@ from ray._common.utils import get_or_create_event_loop
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
     ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN,
+    ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT,
     ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD,
     ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH,
 )
@@ -73,21 +74,6 @@ class ServerStats:
         This ensures no active user sessions are disrupted during draining.
         """
         return self.current_sessions == 0 and self.queued == 0
-
-
-@dataclass
-class ServerConfig:
-    """Configuration for a single server."""
-
-    name: str  # Server identifier for HAProxy config
-    host: str  # IP/hostname to connect to
-    port: int  # Port to connect to
-
-    def __str__(self) -> str:
-        return f"ServerConfig(name='{self.name}', host='{self.host}', port={self.port})"
-
-    def __repr__(self) -> str:
-        return str(self)
 
 
 @dataclass
@@ -170,6 +156,8 @@ class HAProxyConfig:
     nbthread: int = ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD
     stats_port: int = 8404
     stats_uri: str = "/stats"
+    metrics_port: int = ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT
+    metrics_uri: str = "/metrics"
     # All timeout values are in seconds
     timeout_queue_s: Optional[int] = None
     timeout_connect_s: Optional[int] = None
@@ -213,6 +201,21 @@ class HAProxyConfig:
         return self.http_options.keep_alive_timeout_s
 
     # TODO: support custom root_path and https
+
+
+@dataclass
+class ServerConfig:
+    """Configuration for a single server."""
+
+    name: str  # Server identifier for HAProxy config
+    host: str  # IP/hostname to connect to
+    port: int  # Port to connect to
+
+    def __str__(self) -> str:
+        return f"ServerConfig(name='{self.name}', host='{self.host}', port={self.port})"
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 @dataclass
@@ -638,7 +641,6 @@ class HAProxyManager(ProxyActorInterface):
             logging_config=logging_config,
         )
 
-        # TODO: Use these options in the haproxy config file.
         self._grpc_options = grpc_options
         self._http_options = http_options
 
