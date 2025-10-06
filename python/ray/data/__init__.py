@@ -1,3 +1,23 @@
+################################################################
+# NOTE: PLEASE READ CAREFULLY
+#
+# Anyscale patches have to be applied *before* any imports such
+# that to make sure that all of the patched classes are being
+# appropriately picked up by Ray OSS components.
+#
+# Otherwise, importing Ray OSS modules first brings exposure to
+# overridden OSS components being bound during this early imports
+# rendering Anyscale patching ineffective.
+################################################################
+
+from ray.anyscale.data.apply_anyscale_patches import (  # noqa: E402, isort:skip
+    apply_anyscale_patches,
+)
+
+apply_anyscale_patches()
+
+### Imports ####################################################
+
 # Short term workaround for https://github.com/ray-project/ray/issues/32435
 # Dataset has a hard dependency on pandas, so it doesn't need to be delayed.
 import pandas  # noqa
@@ -175,4 +195,30 @@ __all__ = [
     "read_webdataset",
     "Preprocessor",
     "TFXReadOptions",
+]
+
+# Append Anyscale proprietary APIs and apply patches
+from ray.anyscale.data.api import StreamingAggFn  # noqa: E402, isort:skip
+from ray.anyscale.data.api.read_api import (  # noqa: E402, F811, isort:skip
+    read_audio,
+    read_binary_files,
+    read_csv,
+    read_images,
+    read_json,
+    read_numpy,
+    read_parquet,
+    read_snowflake,
+    read_text,
+    read_videos,
+    read_webdataset,
+    read_delta,
+)
+
+
+__all__ += [
+    "StreamingAggFn",
+    "read_snowflake",
+    "read_audio",
+    "read_videos",
+    "read_delta",
 ]

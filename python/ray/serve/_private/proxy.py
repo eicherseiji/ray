@@ -17,6 +17,18 @@ from starlette.types import Receive
 import ray
 from ray._common.filters import CoreContextFilter
 from ray._common.utils import get_or_create_event_loop
+from ray.anyscale.serve._private.tracing_utils import (
+    is_span_recording,
+    set_http_span_attributes,
+    set_rpc_span_attributes,
+    set_span_attributes,
+    set_span_exception,
+    set_span_name,
+    set_trace_status,
+    setup_tracing,
+    tracing_decorator_factory,
+)
+from ray.anyscale.serve.utils import asyncio_grpc_exception_handler
 from ray.serve._private.common import (
     DeploymentID,
     EndpointInfo,
@@ -340,6 +352,7 @@ class GenericProxy(ABC):
         if proxy_request.is_health_request or proxy_request.is_route_request:
             return self._get_health_or_routes_reponse(proxy_request)
 
+        proxy_request.populate_tracing_context()
         matched_route = None
         if self.protocol == RequestProtocol.HTTP:
             matched_route = self.proxy_router.match_route(proxy_request.route_path)
@@ -676,6 +689,9 @@ class gRPCProxy(GenericProxy):
         proxy_request.send_request_id(request_id=request_id)
         return handle, request_id
 
+    @tracing_decorator_factory(
+        trace_name="proxy_grpc_request",
+    )
     async def send_request_to_replica(
         self,
         request_id: str,
@@ -684,11 +700,23 @@ class gRPCProxy(GenericProxy):
         proxy_request: ProxyRequest,
         app_is_cross_language: bool = False,
     ) -> ResponseGenerator:
+        trace_attributes = {
+            "request_id": request_id,
+            "deployment": handle.deployment_name,
+            "app": handle.app_name,
+            "request_type": proxy_request.request_type,
+        }
+        set_span_attributes(trace_attributes)
+        set_span_name(
+            f"proxy_{proxy_request.request_type}_request {handle.deployment_name} {proxy_request.method}"
+        )
+
         response_generator = ProxyResponseGenerator(
             handle.remote(proxy_request.serialized_replica_arg()),
             timeout_s=self.request_timeout_s,
         )
-
+        status = None
+        exc = None
         try:
             async for context, result in response_generator:
                 context._set_on_grpc_context(proxy_request.context)
@@ -697,6 +725,20 @@ class gRPCProxy(GenericProxy):
             status = ResponseStatus(code=grpc.StatusCode.OK)
         except BaseException as e:
             status = get_grpc_response_status(e, self.request_timeout_s, request_id)
+            exc = e
+        finally:
+            set_rpc_span_attributes(
+                system=proxy_request.request_type,
+                method=proxy_request.method,
+                status_code=status.code.name
+                if isinstance(status.code, grpc.StatusCode)
+                else grpc.StatusCode.UNKNOWN.name,
+            )
+            if exc:
+                set_span_exception(exc, escaped=True)
+                set_trace_status(status.is_error, str(exc))
+            else:
+                set_trace_status(status.is_error)
 
         # The status code should always be set.
         assert status is not None
@@ -883,6 +925,9 @@ class HTTPProxy(GenericProxy):
 
         return arg
 
+    @tracing_decorator_factory(
+        trace_name="proxy_http_request",
+    )
     async def send_request_to_replica(
         self,
         request_id: str,
@@ -896,6 +941,20 @@ class HTTPProxy(GenericProxy):
         The yielded values will be ASGI messages until the final one, which will be
         the status code.
         """
+        if is_span_recording():
+            trace_attributes = {
+                "request_id": request_id,
+                "deployment": handle.deployment_name,
+                "app": handle.app_name,
+                "request_type": proxy_request.request_type,
+                "request_method": proxy_request.method,
+                "request_route_path": proxy_request.route_path,
+            }
+            set_span_attributes(trace_attributes)
+            set_span_name(
+                f"proxy_{proxy_request.request_type}_request {handle.deployment_name} {proxy_request.method} {proxy_request.route_path}"
+            )
+
         if app_is_cross_language:
             handle_arg_bytes = await self._format_handle_arg_for_java(proxy_request)
             # Response is returned as raw bytes, convert it to ASGI messages.
@@ -926,6 +985,8 @@ class HTTPProxy(GenericProxy):
         status: Optional[ResponseStatus] = None
         response_started = False
         expecting_trailers = False
+        exc = None
+        status_code = None
         try:
             async for asgi_message_batch in response_generator:
                 # See the ASGI spec for message details:
@@ -951,7 +1012,7 @@ class HTTPProxy(GenericProxy):
                         and not asgi_message.get("more_body", False)
                         and not expecting_trailers
                     ):
-                        # If the body is completed and we aren't expecting trailers, the
+                        # If the body is completed and we aren't expecting trailers the,
                         # response is done so we should stop listening for disconnects.
                         response_generator.stop_checking_for_disconnect()
                     elif asgi_message["type"] == "http.response.trailers":
@@ -980,6 +1041,7 @@ class HTTPProxy(GenericProxy):
                 status, response_started
             ):
                 yield asgi_message
+            exc = e
 
         finally:
             # For websocket connection, queue receive task is done when receiving
@@ -997,19 +1059,37 @@ class HTTPProxy(GenericProxy):
             if status is None and proxy_request.request_type == "websocket":
                 if receive_client_disconnect_msg:
                     # The disconnect message is sent from the client.
+                    status_code = str(proxy_asgi_receive_task.result())
                     status = ResponseStatus(
-                        code=str(proxy_asgi_receive_task.result()),
+                        code=status_code,
                         is_error=True,
                     )
                 else:
+                    status_code = "1000"
                     # The server disconnect without sending a disconnect message
                     # (otherwise the `status` would be set).
                     status = ResponseStatus(
-                        code="1000",  # [Sihan] is there a better code for this?
+                        code="1000",
+                        # [Sihan] is there a better code for this?
                         is_error=True,
                     )
+            else:
+                status_code = status.code
 
             del self.asgi_receive_queues[internal_request_id]
+
+            if is_span_recording():
+                set_http_span_attributes(
+                    method=proxy_request.method,
+                    status_code=int(status_code),
+                    route=proxy_request.route_path,
+                )
+
+                if exc:
+                    set_span_exception(exc, escaped=True)
+                    set_trace_status(status.is_error, str(exc))
+                else:
+                    set_trace_status(status.is_error)
 
         # The status code should always be set.
         assert status is not None
@@ -1162,6 +1242,21 @@ class ProxyActor(ProxyActorInterface):
             call_in_event_loop=event_loop,
         )
 
+        # ===== Begin Anyscale proprietary code ======
+        try:
+            is_tracing_setup_successful = setup_tracing(
+                component_name="proxy", component_id=node_ip_address
+            )
+            if is_tracing_setup_successful:
+                logger.info("Successfully set up tracing for proxy")
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to set up tracing: {e}. "
+                "The proxy will continue running, but traces will not be exported."
+            )
+        # ===== End Anyscale proprietary code ======
+
         startup_msg = f"Proxy starting on node {self._node_id} (HTTP port: {self._http_options.port}"
         if grpc_enabled:
             startup_msg += f", gRPC port: {self._grpc_options.port})."
@@ -1226,6 +1321,10 @@ class ProxyActor(ProxyActorInterface):
             if grpc_enabled
             else None
         )
+        if self.grpc_proxy:
+            get_or_create_event_loop().set_exception_handler(
+                asyncio_grpc_exception_handler
+            )
 
         # Start a task to initialize the HTTP server.
         # The result of this task is checked in the `ready` method.
