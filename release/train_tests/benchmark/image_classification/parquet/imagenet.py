@@ -53,6 +53,6 @@ def get_preprocess_map_fn(
         row["image"] = np.array(crop_resize_transform(row["image"]))
         row["label"] = IMAGENET_WNID_TO_ID[row["label"]]
 
-        return {"image": row["image"], "label": row["label"]}
+        return row
 
     return map_fn

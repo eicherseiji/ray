@@ -62,6 +62,9 @@ class TorchConfig(DataLoaderConfig):
 class BenchmarkConfig(BaseModel):
     # ScalingConfig
     num_workers: int = 1
+    min_workers: int = 0
+    max_workers: int = 0
+
     # Run CPU training where train workers request a `MOCK_GPU` resource instead.
     mock_gpu: bool = False
 
@@ -78,6 +81,9 @@ class BenchmarkConfig(BaseModel):
     dataloader_config: DataLoaderConfig = Field(
         default_factory=lambda: DataLoaderConfig(),
     )
+    # Whether or not to skip batches until reaching the original batch index
+    # when resuming from a mid-epoch checkpoint.
+    skip_batches_upon_resume: bool = False
 
     # Training
     num_epochs: int = 1

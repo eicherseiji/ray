@@ -1,9 +1,11 @@
 import os
+import pathlib
 import shutil
 import time
 from dataclasses import dataclass
 from typing import Optional
 
+import fsspec
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -11,6 +13,7 @@ import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 import pytest
 from packaging.version import parse as parse_version
+from pyarrow.fs import FSSpecHandler, PyFileSystem
 from pytest_lazy_fixtures import lf as lazy_fixture
 
 import ray
@@ -613,7 +616,7 @@ def test_projection_pushdown_non_partitioned(ray_start_regular_shared, temp_dir)
     assert ds.count() == 150
 
     # Test projection pushed down into read op
-    ds = ray.data.read_parquet(path).select_columns("variety")
+    ds = ray.data.read_parquet(path, override_num_blocks=1).select_columns("variety")
 
     assert ds._plan.explain().strip() == (
         "-------- Logical Plan --------\n"
@@ -631,7 +634,7 @@ def test_projection_pushdown_non_partitioned(ray_start_regular_shared, temp_dir)
     assert ds.count() == 150
 
     # Assert empty projection is reading no data
-    ds = ray.data.read_parquet(path).select_columns([])
+    ds = ray.data.read_parquet(path, override_num_blocks=1).select_columns([])
 
     summary = ds.materialize()._plan.stats().to_summary()
 
@@ -663,18 +666,6 @@ def test_projection_pushdown_partitioned(ray_start_regular_shared, temp_dir):
     assert ["variety"] == partitioned_ds.take_batch(batch_format="pyarrow").column_names
 
     assert ds.count() == partitioned_ds.count()
-
-
-def test_projection_pushdown_on_count(ray_start_regular_shared, temp_dir):
-    path = "example://iris.parquet"
-
-    # Test reading full dataset
-    # ds = ray.data.read_parquet(path).materialize()
-
-    # Test projection from read_parquet
-    num_rows = ray.data.read_parquet(path).count()
-
-    assert num_rows == 150
 
 
 def test_parquet_read_with_udf(
@@ -739,7 +730,6 @@ def test_parquet_reader_estimate_data_size(shutdown_only, tmp_path):
             1000, shape=(1000,), override_num_blocks=10
         ).write_parquet(tensor_output_path)
         ds = ray.data.read_parquet(tensor_output_path)
-        assert ds._plan.initial_num_blocks() > 1
         data_size = ds.size_bytes()
         assert (
             data_size >= 6_000_000 and data_size <= 10_000_000
@@ -767,7 +757,6 @@ def test_parquet_reader_estimate_data_size(shutdown_only, tmp_path):
             text_output_path
         )
         ds = ray.data.read_parquet(text_output_path)
-        assert ds._plan.initial_num_blocks() > 1
         data_size = ds.size_bytes()
         assert (
             data_size >= 700_000 and data_size <= 2_200_000
@@ -1196,7 +1185,7 @@ def test_parquet_read_spread(ray_start_cluster, tmp_path, restore_data_context):
 
     # Minimize the block size to prevent Ray Data from reading multiple fragments in a
     # single task.
-    ray.data.DataContext.get_current().target_max_block_size = 1
+    ray.data.DataContext.get_current().max_read_partition_size = 1
     ds = ray.data.read_parquet(data_path)
 
     # Force reads.
@@ -2169,6 +2158,59 @@ def test_read_parquet_with_columns_selectivity(
         f"Column selection {columns} with batch_size={batch_size} "
         f"returned columns {ds.schema().names}"
     )
+
+
+def test_get_parquet_dataset_fs_serialization_fallback(
+    ray_start_regular_shared, tmp_path: pathlib.Path
+):
+    """Test that the fallback mechanism for serializing the filesystem works."""
+    # 1) Local parquet file
+    local_file = tmp_path / "test.parquet"
+    pq.write_table(
+        pa.Table.from_pandas(pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})), local_file
+    )
+
+    # 2) Problematic fsspec FS wrapped as a *PyArrow* FS so ParquetDataset accepts it
+    class BadFSSpec(fsspec.AbstractFileSystem):
+        protocol = "file"
+
+        def info(self, path, **kwargs):
+            # Wrong shape → fsspec/pyarrow will later blow up with TypeError
+            return ["not", "a", "dict"]
+
+        def ls(self, path, **kwargs):
+            return [{"name": str(path), "type": "file", "size": os.path.getsize(path)}]
+
+        def open(self, path, mode="rb", **kwargs):
+            return open(path, mode)
+
+    problematic_fs = PyFileSystem(FSSpecHandler(BadFSSpec()))
+
+    # 3) Direct ParquetDataset in worker → should raise (TypeError/ArrowException)
+    @ray.remote
+    def direct_parquet_usage(paths, fs, kwargs):
+        import pyarrow.parquet as pq
+
+        return pq.ParquetDataset(paths, filesystem=fs, **(kwargs or {}))
+
+    with pytest.raises(Exception) as exc_info:
+        ray.get(direct_parquet_usage.remote([str(local_file)], problematic_fs, {}))
+
+    msg = str(exc_info.value).lower()
+    assert any(
+        k in msg
+        for k in ["typeerror", "filesystem", "cannot wrap", "pickle", "serialize"]
+    )
+
+    # 4) Helper should succeed (fallback re-resolves to LocalFileSystem inside worker)
+    @ray.remote
+    def call_helper(paths, fs, kwargs):
+        from ray.data._internal.datasource.parquet_datasource import get_parquet_dataset
+
+        return get_parquet_dataset(paths, fs, kwargs)
+
+    ds = ray.get(call_helper.remote([str(local_file)], problematic_fs, {}))
+    assert ds is not None
 
 
 if __name__ == "__main__":

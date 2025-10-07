@@ -117,7 +117,7 @@ def test_fitted_preprocessor_without_stats():
 
     class FittablePreprocessor(Preprocessor):
         def _fit(self, ds):
-            return ds
+            return self
 
     preprocessor = FittablePreprocessor()
     ds = ray.data.from_items([1])
@@ -236,26 +236,34 @@ def test_transform_all_formats(create_dummy_preprocessors, dataset_format):
     with patcher as mock_map_batches:
         with_pandas.transform(ds)
         mock_map_batches.assert_called_once_with(
-            with_pandas._transform_pandas, batch_format=BatchFormat.PANDAS
+            with_pandas._transform_pandas,
+            batch_format=BatchFormat.PANDAS,
+            zero_copy_batch=True,
         )
 
     with patcher as mock_map_batches:
         with_numpy.transform(ds)
         mock_map_batches.assert_called_once_with(
-            with_numpy._transform_numpy, batch_format=BatchFormat.NUMPY
+            with_numpy._transform_numpy,
+            batch_format=BatchFormat.NUMPY,
+            zero_copy_batch=True,
         )
 
     # Pandas preferred by default.
     with patcher as mock_map_batches:
         with_pandas_and_numpy.transform(ds)
     mock_map_batches.assert_called_once_with(
-        with_pandas_and_numpy._transform_pandas, batch_format=BatchFormat.PANDAS
+        with_pandas_and_numpy._transform_pandas,
+        batch_format=BatchFormat.PANDAS,
+        zero_copy_batch=True,
     )
 
     with patcher as mock_map_batches:
         with_pandas_and_numpy_preferred.transform(ds)
     mock_map_batches.assert_called_once_with(
-        with_pandas_and_numpy_preferred._transform_numpy, batch_format=BatchFormat.NUMPY
+        with_pandas_and_numpy_preferred._transform_numpy,
+        batch_format=BatchFormat.NUMPY,
+        zero_copy_batch=True,
     )
 
 
