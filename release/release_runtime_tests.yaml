@@ -114,6 +114,7 @@
 
 # NOTE(@balaji): This is temporary until we enable the rate-based autoscaler by default.
 - name: text_embeddings_benchmark_autoscalingv2
+  group: data-tests
   frequency: nightly
   python: "3.11"  # necessary for the llm-cu128 image
   working_dir: nightly_tests
