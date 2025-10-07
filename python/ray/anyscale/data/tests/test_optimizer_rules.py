@@ -21,7 +21,9 @@ from ray.data.expressions import col
 from ray.data._internal.logical.operators.map_operator import Project
 from ray.data._internal.logical.optimizers import LogicalOptimizer, get_execution_plan
 from ray.data.tests.conftest import *  # noqa
-from ray.data.tests.test_execution_optimizer import _check_valid_plan_and_result
+from ray.data.tests.test_execution_optimizer_limit_pushdown import (
+    _check_valid_plan_and_result,
+)
 from ray.data.tests.util import column_udf
 from ray.tests.conftest import *  # noqa
 
