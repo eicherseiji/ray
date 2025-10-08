@@ -32,6 +32,7 @@ python/ray/anyscale/train/
 
 anyscale/ci/buildkite/serve.rayci.yml
 anyscale/ci/buildkite/serve_di_test_names.txt
+anyscale/ci/buildkite/serve_hap_test_names.txt
 python/ray/anyscale/serve/
 @ serve
 ;

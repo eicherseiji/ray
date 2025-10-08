@@ -16,6 +16,7 @@ defaults
     {% if config.timeout_queue_s is not none %}timeout queue {{ config.timeout_queue_s }}s{% endif %}
     log global
     option httplog
+    option abortonclose
 frontend prometheus
     bind :{{ config.metrics_port }}
     mode http

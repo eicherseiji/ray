@@ -9,6 +9,7 @@
 # Allow people to change CI step config files
 /anyscale/ci/buildkite/*.rayci.yml
 /anyscale/ci/buildkite/serve_di_test_names.txt
+/anyscale/ci/buildkite/serve_hap_test_names.txt
 
 # Data team
 /python/ray/anyscale/data @anyscale/ray-data

@@ -60,10 +60,11 @@ steps:
   - label: ":ray-serve: serve: HAProxy tests"
     instance_type: medium
     commands:
-      - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/serve:tests/test_haproxy serve
+      - bazel run //ci/ray_ci:test_in_docker -- $(cat anyscale/ci/buildkite/serve_hap_test_names.txt) serve
         --build-name servehaproxybuild
         --test-env=ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY=1
         --test-env=ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S=0.01
+        --test-env=RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY=0
     depends_on: servehaproxybuild
     job_env: forge
     tags:
