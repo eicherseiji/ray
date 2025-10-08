@@ -41,12 +41,24 @@ py_test_module_list(
 )
 
 py_test_module_list(
-    size = "small",
+    size = "medium",
     files = glob(["tests/preprocessors/test_*.py"]),
     tags = [
         "exclusive",
-        "ray_air",
-        "team:ml",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test_module_list(
+    size = "small",
+    files = glob(["tests/anyscale/test_*.py"]),
+    tags = [
+        "exclusive",
+        "team:data",
     ],
     deps = [
         ":conftest",
