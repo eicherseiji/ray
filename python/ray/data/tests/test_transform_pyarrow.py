@@ -55,17 +55,17 @@ def test_try_defragment_table():
 
 
 def test_hash_partitioning():
-    # Test hash-partitioning of the empty table
+    # Case 1: Test hash-partitioning of the empty table
     empty_table = pa.Table.from_pydict({"idx": []})
 
     assert {} == hash_partition(empty_table, hash_cols=["idx"], num_partitions=5)
 
-    # Test hash-partitioning of table into 1 partition (returns table itself)
+    # Case 2: Test hash-partitioning of table into 1 partition (returns table itself)
     t = pa.Table.from_pydict({"idx": list(range(10))})
 
     assert {0: t} == hash_partition(t, hash_cols=["idx"], num_partitions=1)
 
-    # Test hash-partitioning of proper table
+    # Case 3: Test hash-partitioning of proper table
     idx = list(range(100))
 
     t = pa.Table.from_pydict(
@@ -91,15 +91,31 @@ def test_hash_partitioning():
     assert len(single_partition_dict) == 1
     assert t == single_partition_dict.get(0)
 
+    # Case 4: Hash-partition on int column exercises optimized path (skipping hashing)
     def _concat_and_sort_partitions(parts: Iterable[pa.Table]) -> pa.Table:
         return pa.concat_tables(parts).sort_by("idx")
 
+    _5_partitions_dict = hash_partition(t, hash_cols=["idx"], num_partitions=5)
+
+    assert len(_5_partitions_dict) == 5
+    # Assert that optimized path provides perfect partitioning
+    assert [len(p) for p in _5_partitions_dict.values()] == [100 / 5] * 5
+    assert t == _concat_and_sort_partitions(_5_partitions_dict.values())
+
+    # Case 5: Hash-partition on strings column
     _5_partition_dict = hash_partition(t, hash_cols=["strings"], num_partitions=5)
 
     assert len(_5_partition_dict) == 5
     assert t == _concat_and_sort_partitions(_5_partition_dict.values())
 
-    # There could be no more partitions than elements
+    # Case 6: Hash-partition on multiple columns
+    _5_partition_dict = hash_partition(
+        t, hash_cols=["idx", "strings"], num_partitions=5
+    )
+    assert len(_5_partition_dict) == 5
+    assert t == _concat_and_sort_partitions(_5_partition_dict.values())
+
+    # Case 7: There could be no more partitions than elements
     _structs_partition_dict = hash_partition(
         t, hash_cols=["structs"], num_partitions=101
     )
