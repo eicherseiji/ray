@@ -268,6 +268,7 @@ defaults
     timeout queue 1s
     log global
     option httplog
+    option abortonclose
 frontend prometheus
     bind :9101
     mode http
@@ -770,7 +771,6 @@ async def test_get_stats_integration(haproxy_api_cleanup):
             # Get actual stats
             async def two_servers_up():
                 stats = await api.get_haproxy_stats()
-                print(stats.active_servers)
                 return stats.active_servers == 2
 
             await async_wait_for_condition(
