@@ -648,9 +648,6 @@ class HAProxyManager(ProxyActorInterface):
         self._grpc_options = grpc_options
         self._http_options = http_options
 
-        self._controller_handle = ray.get_actor(
-            SERVE_CONTROLLER_NAME, namespace=SERVE_NAMESPACE
-        )
         # The time when the node starts to drain.
         # The node is not draining if it's None.
         self._draining_start_time: Optional[float] = None
@@ -659,9 +656,10 @@ class HAProxyManager(ProxyActorInterface):
 
         self._target_groups: List[TargetGroup] = []
 
-        self.long_poll_client = LongPollClient(
-            self._controller_handle,
+        self.long_poll_client = long_poll_client or LongPollClient(
+            ray.get_actor(SERVE_CONTROLLER_NAME, namespace=SERVE_NAMESPACE),
             {
+                LongPollNamespace.GLOBAL_LOGGING_CONFIG: self._update_logging_config,
                 LongPollNamespace.TARGET_GROUPS: self.update_target_groups,
             },
             call_in_event_loop=self.event_loop,
