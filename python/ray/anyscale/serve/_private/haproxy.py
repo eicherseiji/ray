@@ -166,9 +166,11 @@ class HAProxyConfig:
     timeout_http_request_s: Optional[int] = None
     custom_global: Dict[str, str] = field(default_factory=dict)
     custom_defaults: Dict[str, str] = field(default_factory=dict)
-    # Testing/debugging options
     inject_process_id_header: bool = False
     reload_id: Optional[str] = None  # Unique ID for each reload
+    enable_so_reuseport: bool = (
+        os.environ.get("SERVE_SOCKET_REUSE_PORT_ENABLED", "0") == "1"
+    )
 
     pass_health_checks: bool = True
     health_check_endpoint: str = "/-/healthz"
@@ -345,12 +347,17 @@ class HAProxyApi(ProxyApi):
     async def _start_and_wait_for_haproxy(
         self, *extra_args: str, timeout_s: int = 5
     ) -> asyncio.subprocess.Process:
+        # Build command args
+        args = ["haproxy", "-db", "-f", self.config_file_path]
+
+        if not self.cfg.enable_so_reuseport:
+            args.append("-dR")
+
+        # Add any extra args (like -sf for graceful reload)
+        args.extend(extra_args)
+
         proc = await asyncio.create_subprocess_exec(
-            "haproxy",
-            "-db",
-            "-f",
-            self.config_file_path,
-            *extra_args,
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -366,6 +373,7 @@ class HAProxyApi(ProxyApi):
                     stderr.decode("utf-8", errors="ignore").strip()
                     or stdout.decode("utf-8", errors="ignore").strip()
                 )
+
                 raise RuntimeError(
                     f"HAProxy exited during startup: {output or proc.returncode}"
                 )
@@ -375,7 +383,6 @@ class HAProxyApi(ProxyApi):
                     return proc
             except Exception:
                 pass
-
             await asyncio.sleep(0.2)
 
         raise RuntimeError(f"HAProxy startup timed out after {timeout_s} seconds")
@@ -392,12 +399,7 @@ class HAProxyApi(ProxyApi):
                 )
                 return
 
-            if self.cfg.inject_process_id_header:
-                self.cfg.reload_id = f"reload-{int(time.time() * 1000)}"
-                self._generate_config_file_internal()
-
             self.proc = await self._start_and_wait_for_haproxy("-sf", str(old_proc.pid))
-
             logger.info("Successfully performed graceful HAProxy reload.")
         except Exception as e:
             logger.error(f"HAProxy graceful reload failed: {e}")
@@ -461,7 +463,7 @@ class HAProxyApi(ProxyApi):
             stats_output = await self._send_socket_command("show stat")
             return len(stats_output) > 0
         except RuntimeError as e:
-            logger.error(f"HAProxy exited during startup: {e}")
+            logger.error(f"Failed to get HAProxy stats: {e}")
 
         return False
 
@@ -495,10 +497,9 @@ class HAProxyApi(ProxyApi):
         try:
             # Check if a socket file exists
             if not os.path.exists(self.cfg.socket_path):
-                logger.warning(
+                raise RuntimeError(
                     f"HAProxy socket file does not exist: {self.cfg.socket_path}."
                 )
-                return ""
 
             proc = await asyncio.create_subprocess_exec(
                 "socat",
@@ -671,6 +672,27 @@ class HAProxyManager(ProxyActorInterface):
 
         self._haproxy = HAProxyApi(cfg=HAProxyConfig(http_options=http_options))
         self._haproxy_start_task = self.event_loop.create_task(self._haproxy.start())
+
+    async def shutdown(self) -> None:
+        """Shutdown the HAProxyManager and clean up the HAProxy process.
+
+        This method should be called before the actor is killed to ensure
+        the HAProxy subprocess is properly terminated.
+        """
+        try:
+            logger.info(
+                f"Shutting down HAProxyManager on node {self._node_id}.",
+                extra={"log_to_stderr": False},
+            )
+
+            await self._haproxy.stop()
+
+            logger.info(
+                f"Successfully stopped HAProxy process on node {self._node_id}.",
+                extra={"log_to_stderr": False},
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error stopping HAProxy during shutdown: {e}")
 
     async def ready(self) -> str:
         try:

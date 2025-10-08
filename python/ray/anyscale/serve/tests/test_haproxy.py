@@ -10,6 +10,7 @@ from ray._common.test_utils import (
     SignalActor,
     wait_for_condition,
 )
+import subprocess
 from ray.actor import ActorHandle
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
@@ -38,6 +39,22 @@ pytestmark = pytest.mark.skipif(
     not ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
     reason="ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY not set.",
 )
+
+
+@pytest.fixture(autouse=True)
+def clean_up_haproxy_processes():
+    """Clean up haproxy processes before and after each test."""
+    subprocess.run(
+        ["pkill", "-x", "haproxy"], capture_output=True, text=True, check=False
+    )
+    yield
+    # After test: verify no haproxy processes are running
+    result = subprocess.run(
+        ["pgrep", "-x", "haproxy"], capture_output=True, text=True, check=False
+    )
+    assert (
+        result.returncode != 0
+    ), f"HAProxy processes still running after test: {result.stdout.strip()}"
 
 
 @pytest.fixture
@@ -155,6 +172,43 @@ async def test_single_app_shutdown_actors_async(ray_shutdown):
     wait_for_condition(check_dead)
 
 
+def test_haproxy_subprocess_killed_on_manager_shutdown(ray_shutdown):
+    """Test that the HAProxy subprocess is killed when the HAProxyManager actor is shutdown.
+
+    This ensures proper cleanup of HAProxy processes when the manager is killed,
+    preventing orphaned HAProxy processes.
+    """
+
+    def get_haproxy_pids():
+        """Get all haproxy process PIDs."""
+        result = subprocess.run(
+            ["pgrep", "-x", "haproxy"], capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return [int(pid) for pid in result.stdout.strip().split("\n")]
+
+        return []
+
+    wait_for_condition(
+        lambda: len(get_haproxy_pids()) == 0, timeout=5, retry_interval_ms=100
+    )
+
+    @serve.deployment
+    def hello():
+        return "hello"
+
+    serve.run(hello.bind())
+    wait_for_condition(
+        lambda: len(get_haproxy_pids()) == 1, timeout=10, retry_interval_ms=100
+    )
+
+    serve.shutdown()
+
+    wait_for_condition(
+        lambda: len(get_haproxy_pids()) == 0, timeout=10, retry_interval_ms=100
+    )
+
+
 # TODO(alexyang): Delete these tests and run test_proxy.py instead once HAProxy is fully supported.
 class TestTimeoutKeepAliveConfig:
     """Test setting keep_alive_timeout_s in config and env."""
@@ -239,6 +293,7 @@ async def test_drain_and_undrain_haproxy_manager(
     HEALTHY, DRAINING and DRAINED
     """
     monkeypatch.setenv("RAY_SERVE_PROXY_MIN_DRAINING_PERIOD_S", "10")
+    monkeypatch.setenv("SERVE_SOCKET_REUSE_PORT_ENABLED", "1")
 
     cluster = Cluster()
     head_node = cluster.add_node(num_cpus=0)

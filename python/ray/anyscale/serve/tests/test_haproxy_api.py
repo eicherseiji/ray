@@ -4,6 +4,7 @@ import os
 import pytest
 import pytest_asyncio
 import requests
+import subprocess
 import sys
 import tempfile
 import threading
@@ -14,7 +15,6 @@ from typing import Optional
 from unittest import mock
 
 from ray._common.test_utils import async_wait_for_condition, wait_for_condition
-from ray._private.test_utils import find_free_port
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
 )
@@ -127,6 +127,23 @@ def make_test_request(
     except Exception as ex:
         if track_results is not None:
             track_results.append({"error": str(ex)})
+
+
+@pytest.fixture(autouse=True)
+def clean_up_haproxy_processes():
+    """Clean up haproxy processes before and after each test."""
+
+    subprocess.run(
+        ["pkill", "-x", "haproxy"], capture_output=True, text=True, check=False
+    )
+    yield
+    # After test: verify no haproxy processes are running
+    result = subprocess.run(
+        ["pgrep", "-x", "haproxy"], capture_output=True, text=True, check=False
+    )
+    assert (
+        result.returncode != 0 or not result.stdout.strip()
+    ), f"HAProxy processes still running after test: {result.stdout.strip()}"
 
 
 @pytest_asyncio.fixture
@@ -407,8 +424,9 @@ async def test_graceful_reload(haproxy_api_cleanup):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # Setup ports
-        haproxy_port = find_free_port()
-        backend_port = find_free_port()
+        haproxy_port = 8000
+        backend_port = 8404
+        stats_port = 8405
 
         # Create and start a backend server
         backend_server, backend_thread = create_test_backend_server(backend_port)
@@ -421,7 +439,7 @@ async def test_graceful_reload(haproxy_api_cleanup):
                 port=haproxy_port,
                 keep_alive_timeout_s=58,
             ),
-            stats_port=find_free_port(),
+            stats_port=stats_port,
             inject_process_id_header=True,  # Enable for testing graceful reload
             reload_id=f"initial-{int(time.time() * 1000)}",  # Set initial reload ID
             socket_path=os.path.join(temp_dir, "admin.sock"),
@@ -543,10 +561,10 @@ async def test_start(haproxy_api_cleanup):
         config = HAProxyConfig(
             http_options=HTTPOptions(
                 host="127.0.0.1",
-                port=find_free_port(),
+                port=8000,
                 keep_alive_timeout_s=58,
             ),
-            stats_port=find_free_port(),
+            stats_port=8404,
             pass_health_checks=True,
             socket_path=socket_path,
         )
@@ -556,7 +574,6 @@ async def test_start(haproxy_api_cleanup):
         haproxy_api_cleanup(api)
 
         await api.start()
-        await asyncio.sleep(0.5)
 
         assert api.proc is not None, "HAProxy process should exist"
         assert api._is_running(), "HAProxy should be running"
@@ -602,9 +619,9 @@ async def test_stop(haproxy_api_cleanup):
         config = HAProxyConfig(
             http_options=HTTPOptions(
                 host="127.0.0.1",
-                port=find_free_port(),
+                port=8000,
             ),
-            stats_port=find_free_port(),
+            stats_port=8404,
             socket_path=os.path.join(temp_dir, "admin.sock"),
         )
 
@@ -624,25 +641,67 @@ async def test_stop(haproxy_api_cleanup):
 
 
 @pytest.mark.asyncio
+async def test_stop_kills_haproxy_process(haproxy_api_cleanup):
+    """Test that stop() properly kills the HAProxy subprocess."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+
+        config = HAProxyConfig(
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=8000,
+            ),
+            stats_port=8404,
+            socket_path=os.path.join(temp_dir, "admin.sock"),
+        )
+
+        api = HAProxyApi(cfg=config, config_file_path=config_file_path)
+        haproxy_api_cleanup(api)
+
+        # Start HAProxy
+        await api.start()
+        assert api.proc is not None, "HAProxy process should exist after start"
+
+        haproxy_pid = api.proc.pid
+        assert process_exists(haproxy_pid), "HAProxy process should be running"
+
+        # Stop HAProxy
+        await api.stop()
+
+        # Verify the process is killed
+        assert api.proc is None, "HAProxy proc should be None after stop"
+
+        # Wait a bit for process cleanup
+        def haproxy_process_killed():
+            return not process_exists(haproxy_pid)
+
+        wait_for_condition(
+            haproxy_process_killed,
+            timeout=1,
+            retry_interval_ms=100,
+        )
+
+
+@pytest.mark.asyncio
 async def test_get_stats_integration(haproxy_api_cleanup):
     with tempfile.TemporaryDirectory() as temp_dir:
         config_file_path = os.path.join(temp_dir, "haproxy.cfg")
         socket_path = os.path.join(temp_dir, "admin.sock")
 
         # Create test backend servers
-        backend_port1 = find_free_port()
-        backend_port2 = find_free_port()
+        backend_port1 = 9900
+        backend_port2 = 9901
         backend_server1, backend_thread1 = create_test_backend_server(backend_port1)
         backend_server2, backend_thread2 = create_test_backend_server(backend_port2)
 
         # Configure HAProxy with multiple backends
         config = HAProxyConfig(
             http_options=HTTPOptions(
-                port=find_free_port(),
+                port=8000,
                 keep_alive_timeout_s=58,
             ),
             socket_path=socket_path,
-            stats_port=find_free_port(),
+            stats_port=8404,
         )
 
         backend_configs = {
@@ -762,17 +821,15 @@ async def test_update_and_reload(haproxy_api_cleanup):
         backend = BackendConfig(
             name="backend",
             path_prefix="/",
-            servers=[
-                ServerConfig(name="server", host="127.0.0.1", port=find_free_port())
-            ],
+            servers=[ServerConfig(name="server", host="127.0.0.1", port=9999)],
         )
 
         config = HAProxyConfig(
             http_options=HTTPOptions(
                 host="127.0.0.1",
-                port=find_free_port(),
+                port=8000,
             ),
-            stats_port=find_free_port(),
+            stats_port=8404,
             socket_path=socket_path,
         )
 
@@ -796,9 +853,7 @@ async def test_update_and_reload(haproxy_api_cleanup):
         backend2 = BackendConfig(
             name="backend_2",
             path_prefix="/",
-            servers=[
-                ServerConfig(name="server", host="127.0.0.1", port=find_free_port())
-            ],
+            servers=[ServerConfig(name="server", host="127.0.0.1", port=9999)],
         )
 
         api.set_backend_configs({backend.name: backend, backend2.name: backend2})
@@ -817,6 +872,58 @@ async def test_update_and_reload(haproxy_api_cleanup):
 
 
 @pytest.mark.asyncio
+async def test_haproxy_start_should_throw_error_when_already_running(
+    haproxy_api_cleanup,
+):
+    """Test that HAProxy throws an error when trying to start on an already-used port (SO_REUSEPORT disabled)."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+        socket_path = os.path.join(temp_dir, "admin.sock")
+
+        config = HAProxyConfig(
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=8000,
+            ),
+            stats_port=8404,
+            socket_path=socket_path,
+            enable_so_reuseport=False,  # Disable SO_REUSEPORT
+        )
+
+        api = HAProxyApi(cfg=config, config_file_path=config_file_path)
+        haproxy_api_cleanup(api)
+
+        # Start HAProxy with SO_REUSEPORT disabled
+        await api.start()
+
+        assert api.proc is not None, "HAProxy process should be running"
+        first_pid = api.proc.pid
+
+        # Verify we can't start another instance on the same port (SO_REUSEPORT disabled)
+        config2 = HAProxyConfig(
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=config.frontend_port,  # Same port
+            ),
+            stats_port=8404,
+            socket_path=os.path.join(temp_dir, "admin2.sock"),
+            enable_so_reuseport=False,  # Disable SO_REUSEPORT
+        )
+
+        api2 = HAProxyApi(
+            cfg=config2, config_file_path=os.path.join(temp_dir, "haproxy2.cfg")
+        )
+
+        # This should fail because SO_REUSEPORT is disabled
+        with pytest.raises(RuntimeError, match="(Address already in use)"):
+            await api2.start()
+
+        # Cleanup first instance
+        await api.stop()
+        assert not process_exists(first_pid), "HAProxy process should be stopped"
+
+
+@pytest.mark.asyncio
 async def test_toggle_health_checks(haproxy_api_cleanup):
     """Test that disable()/enable() toggle HAProxy health checks end-to-end."""
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -826,17 +933,15 @@ async def test_toggle_health_checks(haproxy_api_cleanup):
         backend = BackendConfig(
             name="backend",
             path_prefix="/",
-            servers=[
-                ServerConfig(name="server", host="127.0.0.1", port=find_free_port())
-            ],
+            servers=[ServerConfig(name="server", host="127.0.0.1", port=9999)],
         )
 
         config = HAProxyConfig(
             http_options=HTTPOptions(
                 host="127.0.0.1",
-                port=find_free_port(),
+                port=8000,
             ),
-            stats_port=find_free_port(),
+            stats_port=8404,
             socket_path=socket_path,
             inject_process_id_header=True,
         )

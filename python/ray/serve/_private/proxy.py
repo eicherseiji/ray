@@ -1205,6 +1205,11 @@ class ProxyActorInterface(ABC):
         """Get replicas for a route (for testing)."""
         pass
 
+    @abstractmethod
+    def shutdown(self) -> None:
+        """Shuts down proxy."""
+        pass
+
     def _update_logging_config(self, logging_config: LoggingConfig):
         configure_component_logger(
             component_name="proxy",
@@ -1406,6 +1411,9 @@ class ProxyActor(ProxyActorInterface):
                 get_component_logger_file_path(),
             ]
         )
+
+    def shutdown(self) -> None:
+        return
 
     async def update_draining(self, draining: bool, _after: Optional[Any] = None):
         """Update the draining status of the HTTP and gRPC proxies.
