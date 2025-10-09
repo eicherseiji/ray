@@ -43,6 +43,7 @@ async def test_http_request_timeout_disconnect_headers(
 
     serve.start(
         http_options=HTTPOptions(
+            host="0.0.0.0",
             request_timeout_s=http_request_timeout_s,
         ),
     )
