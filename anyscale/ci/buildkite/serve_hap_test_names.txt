@@ -5,3 +5,4 @@
 //python/ray/anyscale/serve:tests/test_direct_ingress_standalone_with_grpc
 //python/ray/anyscale/serve:tests/test_haproxy
 //python/ray/anyscale/serve:tests/test_haproxy_api
+//python/ray/anyscale/serve:tests/test_tracing_utils

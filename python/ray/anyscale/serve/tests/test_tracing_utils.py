@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 from threading import Thread
 from typing import Set
@@ -13,6 +14,7 @@ import grpc
 import pytest
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
 )
 from ray.serve._private.test_utils import get_application_url
 import httpx
@@ -315,6 +317,8 @@ def test_tracing_e2e(
     def hi_gen_sync():
         for i in range(10):
             yield f"hello_{i}"
+            # to avoid coalescing chunks
+            time.sleep(0.2)
 
     @serve.deployment
     class StreamingModel:
@@ -395,6 +399,10 @@ def test_tracing_e2e(
                     assert chunk == f"hello_{i}"
 
     elif serve_application == "grpc":
+        # TODO: Remove this once HAProxy supports gRPC
+        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+            return
+
         grpc_port = 9000
         grpc_servicer_functions = [
             "ray.serve.generated.serve_pb2_grpc"
@@ -439,10 +447,14 @@ def test_tracing_e2e(
 
     files = os.listdir(spans_dir)
 
-    assert len(files) == 3
+    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+        # We don't currently trace HAProxy.
+        assert len(files) == 2
+    else:
+        assert len(files) == 3
 
     replica_filename = None
-    proxy_filename = None
+    proxy_filename = None or ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
     upstream_filename = None
     for file in files:
         if "replica" in file:
@@ -589,6 +601,10 @@ def test_tracing_e2e_with_errors(
                 assert r.status_code == expected_status_code
 
     elif protocol == "grpc":
+        # TODO: Remove this once HAProxy supports gRPC
+        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+            return
+
         grpc_port = 9000
         grpc_servicer_functions = [
             "ray.serve.generated.serve_pb2_grpc.add_UserDefinedServiceServicer_to_server",
@@ -631,10 +647,15 @@ def test_tracing_e2e_with_errors(
     spans_dir = os.path.join(serve_logs_dir, "spans")
 
     files = os.listdir(spans_dir)
-    assert len(files) == 3  # proxy, replica, and upstream spans
+
+    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+        # We don't currently trace HAProxy.
+        assert len(files) == 2
+    else:
+        assert len(files) == 3  # proxy, replica, and upstream spans
 
     replica_filename = None
-    proxy_filename = None
+    proxy_filename = None or ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
     upstream_filename = None
     for file in files:
         if "replica" in file:
