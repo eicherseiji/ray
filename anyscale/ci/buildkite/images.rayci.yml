@@ -173,38 +173,12 @@ steps:
         base:
           - "cu12.8.1-cudnn"
 
-  - label: ":tapioca: rayturbo ml py{{matrix.py}} {{matrix.base}} image"
-    key: rayturbo-ml-image
-    tags: docker
-    commands:
-      - export LAYER_TYPE=base-extra
-      - bash anyscale/ci/build-ray-image.sh {{matrix.py}} {{matrix.base}} ray-ml
-    instance_type: medium
-    depends_on:
-      - rayturbo-wheels
-      - rayturbo-helper
-      - ray-mlcpubaseextra
-      - ray-mlcudabaseextra
-      - check-ray-wheels
-    job_env: forge
-    mount_buildkite_agent: true
-    matrix:
-      setup:
-        py:
-          - "3.9"
-          - "3.10"
-          - "3.11"
-        base:
-          - "cpu"
-          - "cu12.1.1-cudnn8"
-
   - label: ":tapioca: check rayturbo site package tarball"
     depends_on:
       - rayturbo-image
       - rayturbo-image-aarch64
       - rayturbo-llm-image
       - rayturbo-slim-image
-      - rayturbo-ml-image
     key: check-rayturbo-site-pkg
     tags: docker
     commands:
