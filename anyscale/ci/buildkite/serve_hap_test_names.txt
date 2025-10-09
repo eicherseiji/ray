@@ -1,3 +1,4 @@
+//python/ray/serve/tests:test_batching
 //python/ray/serve/tests:test_controller_recovery
 //python/ray/serve/tests:test_http_cancellation
 //python/ray/anyscale/serve:tests/test_haproxy
