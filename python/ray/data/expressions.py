@@ -61,6 +61,118 @@ class Operation(Enum):
     NOT_IN = "not_in"
 
 
+class _ExprVisitor(ABC):
+    """Base visitor with generic dispatch for Ray Data expressions."""
+
+    def visit(self, expr: "Expr") -> Any:
+        if isinstance(expr, ColumnExpr):
+            return self.visit_column(expr)
+        elif isinstance(expr, LiteralExpr):
+            return self.visit_literal(expr)
+        elif isinstance(expr, BinaryExpr):
+            return self.visit_binary(expr)
+        elif isinstance(expr, UnaryExpr):
+            return self.visit_unary(expr)
+        elif isinstance(expr, AliasExpr):
+            return self.visit_alias(expr)
+        elif isinstance(expr, UDFExpr):
+            return self.visit_udf(expr)
+        elif isinstance(expr, DownloadExpr):
+            return self.visit_download(expr)
+        else:
+            raise TypeError(f"Unsupported expression type for conversion: {type(expr)}")
+
+    @abstractmethod
+    def visit_column(self, expr: "ColumnExpr") -> Any:
+        pass
+
+    @abstractmethod
+    def visit_literal(self, expr: "LiteralExpr") -> Any:
+        pass
+
+    @abstractmethod
+    def visit_binary(self, expr: "BinaryExpr") -> Any:
+        pass
+
+    @abstractmethod
+    def visit_unary(self, expr: "UnaryExpr") -> Any:
+        pass
+
+    @abstractmethod
+    def visit_alias(self, expr: "AliasExpr") -> Any:
+        pass
+
+    @abstractmethod
+    def visit_udf(self, expr: "UDFExpr") -> Any:
+        pass
+
+    @abstractmethod
+    def visit_download(self, expr: "DownloadExpr") -> Any:
+        pass
+
+
+class _PyArrowExpressionVisitor(_ExprVisitor):
+    """Visitor that converts Ray Data expressions to PyArrow compute expressions."""
+
+    def visit_column(self, expr: "ColumnExpr") -> "pyarrow.compute.Expression":
+        import pyarrow.compute as pc
+
+        return pc.field(expr.name)
+
+    def visit_literal(self, expr: "LiteralExpr") -> "pyarrow.compute.Expression":
+        import pyarrow.compute as pc
+
+        return pc.scalar(expr.value)
+
+    def visit_binary(self, expr: "BinaryExpr") -> "pyarrow.compute.Expression":
+        import pyarrow as pa
+        import pyarrow.compute as pc
+
+        if expr.op in (Operation.IN, Operation.NOT_IN):
+            left = self.visit(expr.left)
+            if isinstance(expr.right, LiteralExpr):
+                right_value = expr.right.value
+                right = (
+                    pa.array(right_value)
+                    if isinstance(right_value, list)
+                    else pa.array([right_value])
+                )
+            else:
+                raise ValueError(
+                    f"is_in/not_in operations require the right operand to be a "
+                    f"literal list, got {type(expr.right).__name__}."
+                )
+            result = pc.is_in(left, right)
+            return pc.invert(result) if expr.op == Operation.NOT_IN else result
+
+        left = self.visit(expr.left)
+        right = self.visit(expr.right)
+        from ray.data._expression_evaluator import _ARROW_EXPR_OPS_MAP
+
+        if expr.op in _ARROW_EXPR_OPS_MAP:
+            return _ARROW_EXPR_OPS_MAP[expr.op](left, right)
+        raise ValueError(f"Unsupported binary operation for PyArrow: {expr.op}")
+
+    def visit_unary(self, expr: "UnaryExpr") -> "pyarrow.compute.Expression":
+        operand = self.visit(expr.operand)
+        from ray.data._expression_evaluator import _ARROW_EXPR_OPS_MAP
+
+        if expr.op in _ARROW_EXPR_OPS_MAP:
+            return _ARROW_EXPR_OPS_MAP[expr.op](operand)
+        raise ValueError(f"Unsupported unary operation for PyArrow: {expr.op}")
+
+    def visit_alias(self, expr: "AliasExpr") -> "pyarrow.compute.Expression":
+        return self.visit(expr.expr)
+
+    def visit_udf(self, expr: "UDFExpr") -> "pyarrow.compute.Expression":
+        raise TypeError("UDF expressions cannot be converted to PyArrow expressions")
+
+    def visit_download(self, expr: "DownloadExpr") -> "pyarrow.compute.Expression":
+        raise TypeError(
+            "Download expressions cannot be converted to PyArrow expressions"
+        )
+
+
 @DeveloperAPI(stability="alpha")
 @dataclass(frozen=True)
 class Expr(ABC):
@@ -113,48 +225,7 @@ class Expr(ABC):
             ValueError: If the expression contains operations not supported by PyArrow.
             TypeError: If the expression type cannot be converted to PyArrow.
         """
-        import pyarrow.compute as pc
-
-        if isinstance(self, ColumnExpr):
-            return pc.field(self.name)
-        elif isinstance(self, LiteralExpr):
-            return pc.scalar(self.value)
-        elif isinstance(self, BinaryExpr):
-            left = self.left.to_pyarrow()
-            right = self.right.to_pyarrow()
-
-            # Reuse the Arrow operations map from the evaluator
-            # For AST conversion, we can use most operations directly
-            from ray.data._expression_evaluator import _ARROW_EXPR_OPS_MAP
-
-            if self.op in _ARROW_EXPR_OPS_MAP:
-                return _ARROW_EXPR_OPS_MAP[self.op](left, right)
-            else:
-                raise ValueError(f"Unsupported binary operation for PyArrow: {self.op}")
-
-        elif isinstance(self, UnaryExpr):
-            operand = self.operand.to_pyarrow()
-
-            from ray.data._expression_evaluator import _ARROW_EXPR_OPS_MAP
-
-            if self.op in _ARROW_EXPR_OPS_MAP:
-                return _ARROW_EXPR_OPS_MAP[self.op](operand)
-            else:
-                raise ValueError(f"Unsupported unary operation for PyArrow: {self.op}")
-
-        elif isinstance(self, AliasExpr):
-            # For alias expressions, convert the inner expression
-            return self.expr.to_pyarrow()
-
-        elif isinstance(self, UDFExpr):
-            raise TypeError(
-                "UDF expressions cannot be converted to PyArrow expressions"
-            )
-
-        else:
-            raise TypeError(
-                f"Unsupported expression type for PyArrow conversion: {type(self)}"
-            )
+        return _PyArrowExpressionVisitor().visit(self)
 
     def _bin(self, other: Any, op: Operation) -> "Expr":
         """Create a binary expression with the given operation.
