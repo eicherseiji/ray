@@ -86,6 +86,7 @@ def test_no_spammy_errors_in_grpc_proxy(ray_instance, tmp_dir):
     from gRPC are not there in proxy logs."""
 
     serve.start(
+        http_options={"host": "0.0.0.0"},
         grpc_options={
             "port": 9000,
             "grpc_servicer_functions": [
