@@ -213,8 +213,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             if (score := self._productivity_calculator.get_productivity(op)) is not None
         }
 
-        # Log and update Prometheus metrics.
-        logger.debug(f"Operator productivities: {productivities}")
+        # Update Prometheus metrics.
         for op, score in productivities.items():
             self._productivity_gauge.set(
                 score,
@@ -228,6 +227,9 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         now = time.time()
         if now - self._last_request_time < self._min_gap_between_autoscaling_requests:
             return
+
+        # Log metrics. We don't log these every call because they can be spammy.
+        logger.debug(f"Operator productivities: {productivities}")
 
         bottleneck_op = min(productivities, key=productivities.get)
         needed_node_types = self._find_needed_node_types(bottleneck_op)
