@@ -75,6 +75,8 @@ class CQLConfig(SACConfig):
         # fmt: off
         # __sphinx_doc_begin__
         # CQL-specific config settings:
+        self._is_online = False
+
         self.bc_iters = 20000
         self.temperature = 1.0
         self.num_actions = 10
@@ -269,6 +271,15 @@ class CQLConfig(SACConfig):
             raise ValueError(
                 f"The framework {self.framework_str} is not supported. Use `torch`."
             )
+
+    @property
+    def is_online(self) -> bool:
+        """Defines if this config is for online RL.
+
+        Note, a config can be for on- and offline training, if the algorithm is
+        for example hybrid.
+        """
+        return self._is_online if self.enable_env_runner_and_connector_v2 else True
 
     @property
     def _model_config_auto_includes(self):

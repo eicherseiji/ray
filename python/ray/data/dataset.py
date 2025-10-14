@@ -153,6 +153,7 @@ CollatedData = TypeVar("CollatedData")
 TorchBatchType = Union[Dict[str, "torch.Tensor"], CollatedData]
 
 BT_API_GROUP = "Basic Transformations"
+J_API_GROUP = "Joining Operation APIs"
 SSR_API_GROUP = "Sorting, Shuffling and Repartitioning"
 SMJ_API_GROUP = "Splitting, Merging, Joining datasets"
 GGA_API_GROUP = "Grouped and Global aggregations"

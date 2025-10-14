@@ -110,6 +110,12 @@ from ray.serve.exceptions import (
 )
 from ray.serve.schema import EncodingType, LoggingConfig
 
+# isort: off
+import gc
+from ray.anyscale.serve._private.constants import ANYSCALE_FREEZE_GC_ON_STARTUP
+
+# isort: on
+
 logger = logging.getLogger(SERVE_LOGGER_NAME)
 
 
@@ -676,7 +682,7 @@ class ReplicaBase(ABC):
             user_exception, status_code, latency_ms, request_metadata
         )
 
-        if user_exception is not None:
+        if user_exception is not None and not request_metadata.is_direct_ingress:
             raise user_exception from None
 
     def _record_errors_and_metrics(
@@ -1634,6 +1640,13 @@ class UserCallableWrapper:
         self._user_autoscaling_stats = getattr(
             self._callable, "record_autoscaling_stats", None
         )
+
+        if ANYSCALE_FREEZE_GC_ON_STARTUP:
+            # At this point, the user code has finished initializing.
+            # We can now collect garbage and freeze the garbage collector.
+            # Any allocations after this point will be from user requests.
+            gc.collect()
+            gc.freeze()
 
         logger.info(
             "Finished initializing replica.",
