@@ -41,6 +41,7 @@ from ray.data._internal.datasource.parquet_datasource import (
 from ray.data._internal.util import (
     call_with_retry,
     iterate_with_retry,
+    GiB,
     make_async_gen,
 )
 from ray.data.block import Block, BlockMetadata, DataBatch, Schema
@@ -101,7 +102,7 @@ class ParquetFileChunker:
     # the chunk size and we place many of them in the same read task, the total amount
     # of data read by the read task might be larger than expected. By increasing the size
     # of the chunks, we will be less likely to put many such row groups in the same task.
-    _DEFAULT_TARGET_CHUNK_SIZE = 256 * 1024 * 1024  # 256MB
+    _DEFAULT_TARGET_CHUNK_SIZE = 1 * GiB
 
     def __init__(self, target_chunk_size: Optional[int] = None):
         # Initialize the chunker with a target chunk size, use this order of precedence:

@@ -1002,7 +1002,8 @@ def test_parquet_file_chunker(
     expected_num_chunks,
 ):
     """Test ParquetFileChunker chunking behavior with various file sizes."""
-    chunker = ParquetFileChunker()
+    chunk_size = 256 * 1024 * 1024  # 256 MiB
+    chunker = ParquetFileChunker(chunk_size)
     chunks = list(chunker.generate_chunk_metadatas("test.parquet", file_size))
 
     # Verify number of chunks
