@@ -2243,8 +2243,9 @@ def test_get_serve_instance_details_json_serializable(
                                     "downscale_delay_s": 600.0,
                                     "downscale_to_zero_delay_s": None,
                                     "upscale_delay_s": 30.0,
+                                    "aggregation_function": "mean",
                                     "policy": {
-                                        "name": "ray.serve.autoscaling_policy:default_autoscaling_policy"
+                                        "policy_function": "ray.serve.autoscaling_policy:default_autoscaling_policy"
                                     },
                                 },
                                 "graceful_shutdown_wait_loop_s": 2.0,
