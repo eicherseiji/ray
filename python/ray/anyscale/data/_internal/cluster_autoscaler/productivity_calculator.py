@@ -70,9 +70,9 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
         if global_limits is None:
             return None
 
-        # Calculate the optimal processor resource allocation assuming a simple flow
-        # model.
-        allocation = self._get_optimal_processor_allocation(op)
+        # Calculate the throughput-balanced processor resource allocation assuming a
+        # simple flow model.
+        allocation = self._get_throughput_balanced_processor_allocation(op)
 
         # Calculate the maximum output rate, assuming the operator uses all of its
         # allocation.
@@ -85,12 +85,17 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
         # multiple outputs.
         return num_outputs_per_s * self._get_normalization_factor(op)
 
-    def _get_optimal_processor_allocation(
+    def _get_throughput_balanced_processor_allocation(
         self, op: SupportsClusterAutoscaling
     ) -> ExecutionResources:
-        """Estimate an optimal processor allocation assuming a flow model.
+        """Calculate a throughput-balanced processor allocation for an operator.
 
-        This method solves the optimization problem:
+        This method solves an optimization problem to find the resource allocation that
+        maximizes pipeline throughput by balancing resources across operators. The
+        returned allocation represents this operator's share of the total cluster
+        resources, proportional to what it would need in the optimal solution.
+
+        The optimization problem:
 
             max min (rate_i * num_tasks_i)
             subject to
@@ -99,11 +104,12 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
                 num_tasks_i >= 0
             where i = 1,...,num_ops
 
-        In other words, this method maximizes the throughput of the bottleneck, subject
-        to resource constraints. It doesn't consider backpressure.
+        In other words, this method maximizes the throughput of the bottleneck operator,
+        subject to resource constraints. It doesn't consider backpressure.
 
-        We use a distinct allocation for autoscaling decisions because the actual
-        allocation might be noisy (e.g., resource usage oscillating between operators).
+        We use this calculated allocation for productivity scoring rather than the actual
+        allocation because the actual allocation might be noisy (e.g., resource usage
+        oscillating between operators).
         """
         # TODO(@balaji): Refactor this method to avoid repeated computation, even though
         # it's not a bottleneck.
@@ -168,11 +174,20 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
 
         # Calculate what percent of resources each operator would use assuming each
         # operator uses only their optimal number of tasks.
-        cpu_fraction_per_op = (optimal_num_tasks_per_op * num_cpus_per_op) / np.sum(
-            optimal_num_tasks_per_op * num_cpus_per_op
+        optimal_cpu_allocation_per_op = optimal_num_tasks_per_op * num_cpus_per_op
+        sum_optimal_cpu_allocations = np.sum(optimal_cpu_allocation_per_op)
+        cpu_fraction_per_op = (
+            optimal_cpu_allocation_per_op / sum_optimal_cpu_allocations
+            if sum_optimal_cpu_allocations > 0
+            else np.zeros_like(num_cpus_per_op)
         )
-        gpu_fraction_per_op = (optimal_num_tasks_per_op * num_gpus_per_op) / np.sum(
-            optimal_num_tasks_per_op * num_gpus_per_op
+
+        optimal_gpu_allocation_per_op = optimal_num_tasks_per_op * num_gpus_per_op
+        sum_optimal_gpu_allocations = np.sum(optimal_gpu_allocation_per_op)
+        gpu_fraction_per_op = (
+            optimal_gpu_allocation_per_op / sum_optimal_gpu_allocations
+            if sum_optimal_gpu_allocations > 0
+            else np.zeros_like(num_gpus_per_op)
         )
 
         return ExecutionResources(
