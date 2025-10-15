@@ -641,6 +641,51 @@ def test_pushdown_rename_filter(ray_start_regular_shared):
     assert converted_expr.equals(expected_expr)
 
 
+def test_maprows_repartition_fusion(ray_start_regular_shared):
+    """StreamingRepartition after MapRows should be removed and fused into MapRows."""
+
+    def f1(r):
+        return {"id": r["id"]}
+
+    ds = ray.data.range(50, override_num_blocks=5).map(f1)
+    ds = ds.repartition(target_num_rows_per_block=5)
+
+    # Execute first, then assert on optimized logical plan.
+    result = ds.take_all()
+    # Expect the StreamingRepartition to be removed from the logical plan.
+    # Only MapRows should remain on top of Read.
+    assert ds._plan._logical_plan.dag.dag_str == "Read[ReadRange] -> MapRows[Map(f1)]"
+
+    # Validate correctness and that no block exceeds the target.
+    assert result == [{"id": i} for i in range(50)]
+    block_rows = ds._block_num_rows()
+    assert sum(block_rows) == 50
+
+
+def test_flatmap_repartition_fusion(ray_start_regular_shared):
+    """StreamingRepartition after FlatMap should be removed and fused into FlatMap."""
+
+    def duplicate_row(row):
+        return [{"id": row["id"]}]
+
+    ds = ray.data.range(50, override_num_blocks=5).flat_map(duplicate_row)
+    ds = ds.repartition(target_num_rows_per_block=5)
+
+    # Execute first, then assert on optimized logical plan.
+    result = ds.take_all()
+    # Expect the StreamingRepartition to be removed from the logical plan.
+    assert (
+        ds._plan._logical_plan.dag.dag_str
+        == "Read[ReadRange] -> FlatMap[FlatMap(duplicate_row)]"
+    )
+
+    # Validate correctness and that no block exceeds the target.
+    expected = [{"id": i} for i in range(50)]
+    assert result == expected
+    block_rows = ds._block_num_rows()
+    assert sum(block_rows) == 50
+
+
 def test_pushdown_rename_filter_rename(ray_start_regular_shared):
     """rename("sepal.length" -> a).filter(a).rename(a -> b)."""
     path = "example://iris.parquet"
