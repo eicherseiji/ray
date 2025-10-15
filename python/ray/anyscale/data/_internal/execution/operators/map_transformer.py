@@ -42,113 +42,114 @@ class OptimizedMapTransformFn(MapTransformFn, ABC):
     implemented"""
 
     @abstractmethod
-    def can_fuse(self, other: "OptimizedMapTransformFn") -> bool:
+    def can_fuse(self, next: "OptimizedMapTransformFn") -> bool:
         pass
 
     @abstractmethod
-    def fuse(self, other: "OptimizedMapTransformFn") -> "OptimizedMapTransformFn":
+    def fuse(self, next: "OptimizedMapTransformFn") -> "OptimizedMapTransformFn":
         pass
 
 
 class OptimizedBatchMapTransformFn(BatchMapTransformFn, OptimizedMapTransformFn):
-    def can_fuse(self, other: "MapTransformFn") -> bool:
-        if not isinstance(other, OptimizedBatchMapTransformFn):
+    def can_fuse(self, next: "MapTransformFn") -> bool:
+        if not isinstance(next, OptimizedBatchMapTransformFn):
+            # Cannot fuse with downstream map transform fns
             return False
 
         return (
-            self._batch_format == other._batch_format
-            and self._batch_size == other._batch_size
+            self._batch_format == next._batch_format
+            and self._batch_size == next._batch_size
         )
 
-    def fuse(self, other: "MapTransformFn") -> "MapTransformFn":
+    def fuse(self, next: "MapTransformFn") -> "MapTransformFn":
         assert self.can_fuse(
-            other
-        ), f"Trying to fuse unfusable transformers ({self}, {other})"
+            next
+        ), f"Trying to fuse unfusable transformers ({self}, {next})"
 
-        other_batch_transform_fn: OptimizedBatchMapTransformFn = other
+        next_batch_transform_fn: OptimizedBatchMapTransformFn = next
 
         def _fused_batch_fn(
             batches: Iterable[DataBatch], ctx: TaskContext
         ) -> Iterable[DataBatch]:
-            return other_batch_transform_fn._batch_fn(self._batch_fn(batches, ctx), ctx)
+            return next_batch_transform_fn._batch_fn(self._batch_fn(batches, ctx), ctx)
 
         return OptimizedBatchMapTransformFn(
             batch_fn=_fused_batch_fn,
-            batch_size=self._batch_size,
+            batch_size=next._batch_size,
             batch_format=self._batch_format,
             zero_copy_batch=(
                 # Fused batch transformation is zero-copy only if both of the
                 # fused ones are
                 self._zero_copy_batch
-                and other_batch_transform_fn._zero_copy_batch
+                and next_batch_transform_fn._zero_copy_batch
             ),
-            is_udf=self._is_udf or other_batch_transform_fn._is_udf,
+            is_udf=self._is_udf or next_batch_transform_fn._is_udf,
             output_block_size_option=(
                 # NOTE: Latest output block-size option overrides prior one
-                other._output_block_size_option
-                if other._output_block_size_option is not None
+                next._output_block_size_option
+                if next._output_block_size_option is not None
                 else self._output_block_size_option
             ),
         )
 
 
 class OptimizedBlockMapTransformFn(BlockMapTransformFn, OptimizedMapTransformFn):
-    def can_fuse(self, other: "MapTransformFn") -> bool:
+    def can_fuse(self, next: "MapTransformFn") -> bool:
         return (
-            isinstance(other, BlockMapTransformFn)
+            isinstance(next, BlockMapTransformFn)
             and
             # NOTE: Only transformations can only be fused in case block-shaping
             #       configuration could be merged
-            self._disable_block_shaping == other._disable_block_shaping
+            self._disable_block_shaping == next._disable_block_shaping
         )
 
-    def fuse(self, other: "MapTransformFn") -> "MapTransformFn":
+    def fuse(self, next: "MapTransformFn") -> "MapTransformFn":
         assert self.can_fuse(
-            other
-        ), f"Trying to fuse unfusable transformers ({self}, {other})"
+            next
+        ), f"Trying to fuse unfusable transformers ({self}, {next})"
 
-        other_block_transform: OptimizedBlockMapTransformFn = other
+        next_block_transform: OptimizedBlockMapTransformFn = next
 
         def _fused_transform(
             blocks: Iterable[Block], ctx: TaskContext
         ) -> Iterable[Block]:
-            return other_block_transform._block_fn(self._block_fn(blocks, ctx), ctx)
+            return next_block_transform._block_fn(self._block_fn(blocks, ctx), ctx)
 
         return OptimizedBlockMapTransformFn(
             block_fn=_fused_transform,
-            is_udf=self._is_udf or other_block_transform._is_udf,
+            is_udf=self._is_udf or next_block_transform._is_udf,
             # NOTE: Latter transformation overrides the block-shaping
-            disable_block_shaping=other_block_transform._disable_block_shaping,
+            disable_block_shaping=next_block_transform._disable_block_shaping,
             output_block_size_option=(
                 # NOTE: Latest output block-size option overrides prior one
-                other._output_block_size_option
-                if other._output_block_size_option is not None
+                next._output_block_size_option
+                if next._output_block_size_option is not None
                 else self._output_block_size_option
             ),
         )
 
 
 class OptimizedRowMapTransformFn(RowMapTransformFn, OptimizedMapTransformFn):
-    def can_fuse(self, other: "MapTransformFn") -> bool:
-        return isinstance(other, RowMapTransformFn)
+    def can_fuse(self, next: "MapTransformFn") -> bool:
+        return isinstance(next, RowMapTransformFn)
 
-    def fuse(self, other: "MapTransformFn") -> "MapTransformFn":
+    def fuse(self, next: "MapTransformFn") -> "MapTransformFn":
         assert self.can_fuse(
-            other
-        ), f"Trying to fuse unfusable transformers ({self}, {other})"
+            next
+        ), f"Trying to fuse unfusable transformers ({self}, {next})"
 
-        other_row_transform: OptimizedRowMapTransformFn = other
+        next_row_transform: OptimizedRowMapTransformFn = next
 
         def _fused_row_fn(inputs: Iterable[Row], ctx: TaskContext) -> Iterable[Row]:
-            return other_row_transform._row_fn(self._row_fn(inputs, ctx), ctx)
+            return next_row_transform._row_fn(self._row_fn(inputs, ctx), ctx)
 
         return OptimizedRowMapTransformFn(
             row_fn=_fused_row_fn,
-            is_udf=self._is_udf or other_row_transform._is_udf,
+            is_udf=self._is_udf or next_row_transform._is_udf,
             output_block_size_option=(
                 # NOTE: Latest output block-size option overrides prior one
-                other._output_block_size_option
-                if other._output_block_size_option is not None
+                next._output_block_size_option
+                if next._output_block_size_option is not None
                 else self._output_block_size_option
             ),
         )
@@ -168,6 +169,14 @@ def _fuse_transform_fns(
         if prev_transform_fn.can_fuse(next_transform_fn):
             # Replace the last element with the fused version
             fused_stack[-1] = prev_transform_fn.fuse(next_transform_fn)
+        elif isinstance(prev_transform_fn, OptimizedBatchMapTransformFn) and isinstance(
+            next_transform_fn, OptimizedRowMapTransformFn
+        ):
+            # Skip block shaping for batch transform when following with row transform
+            prev_transform_fn._output_block_size_option = OutputBlockSizeOption(
+                disable_block_shaping=True
+            )
+            fused_stack.append(next_transform_fn)
         else:
             fused_stack.append(next_transform_fn)
 

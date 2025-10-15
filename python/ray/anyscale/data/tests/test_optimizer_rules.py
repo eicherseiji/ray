@@ -1,5 +1,5 @@
 import re
-from typing import List, Callable
+from typing import List, Callable, Optional
 
 import pandas as pd
 import pyarrow.compute as pc
@@ -12,10 +12,12 @@ import ray
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
 from ray.data import Dataset, DataContext
 from ray.data._internal.execution.operators.map_transformer import (
-    BatchMapTransformFn,
-    BlockMapTransformFn,
     MapTransformFn,
-    RowMapTransformFn,
+)
+from ray.anyscale.data._internal.execution.operators.map_transformer import (
+    OptimizedBatchMapTransformFn,
+    OptimizedBlockMapTransformFn,
+    OptimizedRowMapTransformFn,
 )
 from ray.data.expressions import col
 from ray.data._internal.logical.operators.map_operator import Project
@@ -606,6 +608,39 @@ def match_transform_fns(
     return True
 
 
+def match_transform_fns_with_batch_size(
+    expected_fns: List[MapTransformFn],
+    got_fns: List[MapTransformFn],
+    expected_batch_sizes: List[Optional[int]],
+) -> bool:
+    """Match transform functions and validate their batch sizes."""
+    assert len(expected_fns) == len(
+        got_fns
+    ), f"Expected {len(expected_fns)} functions, but got {len(got_fns)}."
+    assert len(expected_fns) == len(
+        expected_batch_sizes
+    ), f"Expected {len(expected_fns)} batch sizes, but got {len(expected_batch_sizes)}."
+
+    for i, (expected_fn, got_fn, expected_batch_size) in enumerate(
+        zip(expected_fns, got_fns, expected_batch_sizes)
+    ):
+        if not isinstance(got_fn, expected_fn):
+            assert False, (
+                f"Function {i}: Expected {expected_fn.__name__}, "
+                f"but got {got_fn.__class__.__name__}"
+            )
+
+        # Validate batch_size for OptimizedBatchMapTransformFn
+        if isinstance(got_fn, OptimizedBatchMapTransformFn):
+            actual_batch_size = got_fn._batch_size
+            assert actual_batch_size == expected_batch_size, (
+                f"Function {i}: Expected batch_size {expected_batch_size}, "
+                f"but got {actual_batch_size} for {got_fn.__class__.__name__}"
+            )
+
+    return True
+
+
 def match_ds_result(ds: Dataset, expected_output: List[int]) -> bool:
     output = [item["id"] for item in ds.take_all()]
     assert output == expected_output, f"{output} == {expected_output}"
@@ -789,25 +824,67 @@ def test_pushdown_rename_filter_rename_filter_rename(ray_start_regular_shared):
     assert converted_expr.equals(expected_filter_expr)
 
 
-def test_map_batches_transformer_fusion(ray_start_regular_shared):
-    """Test fusion of multiple map_batches transformations."""
-    ds = (
-        ray.data.range(5)
-        .map_batches(column_udf("id", lambda x: x + 1))
-        .map_batches(column_udf("id", lambda x: x + 2))
-        .map_batches(column_udf("id", lambda x: x + 3))
-        .map_batches(column_udf("id", lambda x: x + 4))
-        .map_batches(column_udf("id", lambda x: x + 5))
-    )
-    plan = get_execution_plan(ds._plan._logical_plan)
-    fns = plan.dag.get_map_transformer().get_transform_fns()
-    # With the new fusion architecture, all BatchMapTransformFn are fused into one
-    expected_fns = [
-        BlockMapTransformFn,
-        BatchMapTransformFn,  # All 5 batch transforms fused into one
+@pytest.fixture
+def fusion_test_cases():
+    """Fixture providing test cases for map_batches fusion scenarios."""
+    return [
+        {
+            "name": "basic_fusion",
+            "dataset": (
+                ray.data.range(5)
+                .map_batches(column_udf("id", lambda x: x + 1))  # None batch_size
+                .map_batches(column_udf("id", lambda x: x + 2))  # None batch_size
+                .map_batches(column_udf("id", lambda x: x + 3))  # None batch_size
+                .map_batches(column_udf("id", lambda x: x + 4))  # None batch_size
+                .map_batches(column_udf("id", lambda x: x + 5))  # None batch_size
+            ),
+            "expected_fns": [
+                OptimizedBlockMapTransformFn,  # Read operation
+                OptimizedBatchMapTransformFn,  # All 5 batch transforms fused into one
+            ],
+            "expected_batch_sizes": [
+                None,  # OptimizedBlockMapTransformFn doesn't have batch_size
+                None,  # All None batch_sizes fused together
+            ],
+            "expected_result": [15, 16, 17, 18, 19],
+        },
+        {
+            "name": "fusion_with_none_batch_size",
+            "dataset": (
+                ray.data.range(5)
+                .map_batches(column_udf("id", lambda x: x + 1))  # None batch_size
+                .map_batches(column_udf("id", lambda x: x + 2))  # None batch_size
+                .map_batches(column_udf("id", lambda x: x + 3), batch_size=2)
+                .map_batches(column_udf("id", lambda x: x + 4), batch_size=3)
+            ),
+            "expected_fns": [
+                OptimizedBatchMapTransformFn,  # None batch_size
+                OptimizedBatchMapTransformFn,  # batch_size=2
+                OptimizedBatchMapTransformFn,  # batch_size=3
+            ],
+            "expected_batch_sizes": [
+                None,  # None batch_size
+                2,  # batch_size=2
+                3,  # batch_size=3
+            ],
+            "expected_result": [10, 11, 12, 13, 14],
+        },
     ]
-    assert match_transform_fns(expected_fns, fns)
-    assert match_ds_result(ds, [15, 16, 17, 18, 19])
+
+
+def test_map_batches_transformer_fusion(ray_start_regular_shared, fusion_test_cases):
+    """Test various fusion cases for map_batches transformations."""
+    for test_case in fusion_test_cases:
+        plan = get_execution_plan(test_case["dataset"]._plan._logical_plan)
+        fns = plan.dag.get_map_transformer().get_transform_fns()
+
+        # Validate function types and batch sizes
+        assert match_transform_fns_with_batch_size(
+            test_case["expected_fns"], fns, test_case["expected_batch_sizes"]
+        ), f"Failed for test case: {test_case['name']}"
+        assert match_ds_result(
+            test_case["dataset"], test_case["expected_result"]
+        ), f"Failed for test case: {test_case['name']}"
 
 
 def test_repartition_build_output(ray_start_regular_shared):
@@ -819,7 +896,7 @@ def test_repartition_build_output(ray_start_regular_shared):
     plan = get_execution_plan(ds._plan._logical_plan)
     fns = plan.dag.get_map_transformer().get_transform_fns()
     expected_fns = [
-        BlockMapTransformFn,
+        OptimizedBlockMapTransformFn,
     ]
     assert match_transform_fns(expected_fns, fns)
     repartition_fn = fns[-1]
@@ -850,7 +927,7 @@ def test_repartition_fusion_build_output(ray_start_regular_shared):
 
     fns = plan.dag.get_map_transformer().get_transform_fns()
     expected_fns = [
-        BlockMapTransformFn,
+        OptimizedBlockMapTransformFn,
     ]
     assert match_transform_fns(expected_fns, fns)
     repartition_fn = fns[-1]
@@ -858,38 +935,68 @@ def test_repartition_fusion_build_output(ray_start_regular_shared):
     assert match_ds_result(ds, list(range(20)))
 
 
-def test_map_batches_transformer_non_fusion(ray_start_regular_shared):
-    """Test that map_batches with different batch sizes are not fused."""
-    ds = (
-        ray.data.range(5)
-        .map_batches(column_udf("id", lambda x: x + 1), batch_size=1)
-        .map_batches(column_udf("id", lambda x: x + 2), batch_size=2)
-        .map_batches(column_udf("id", lambda x: x + 3), batch_size=1)
-        .map_batches(column_udf("id", lambda x: x + 4), batch_size=2)
-        .map_batches(column_udf("id", lambda x: x + 5), batch_size=1)
-        .repartition(num_blocks=None, target_num_rows_per_block=1)
-    )
-    plan = get_execution_plan(ds._plan._logical_plan)
-
-    assert (
-        "InputDataBuffer[Input] -> "
-        "TaskPoolMapOperator[ReadRange] -> "
-        "TaskPoolMapOperator[MapBatches(<lambda>)->MapBatches(<lambda>)->MapBatches(<lambda>)->MapBatches(<lambda>)->MapBatches(<lambda>)] -> "
-        "TaskPoolMapOperator[StreamingRepartition]" == plan.dag.dag_str
-    )
-
-    fns = plan.dag.input_dependencies[0].get_map_transformer().get_transform_fns()
-
-    # With new architecture, BatchMapTransformFn with different batch_sizes cannot fuse
-    expected_fns = [
-        BatchMapTransformFn,  # batch_size=1
-        BatchMapTransformFn,  # batch_size=2
-        BatchMapTransformFn,  # batch_size=1
-        BatchMapTransformFn,  # batch_size=2
-        BatchMapTransformFn,  # batch_size=1
+@pytest.fixture
+def non_fusion_test_cases():
+    """Fixture providing test cases for map_batches non-fusion scenarios."""
+    return [
+        {
+            "name": "non_fusion_with_other_none_batch_size",
+            "dataset": (
+                ray.data.range(5)
+                .map_batches(column_udf("id", lambda x: x + 1), batch_size=2)
+                .map_batches(column_udf("id", lambda x: x + 2), batch_size=3)
+                .map_batches(column_udf("id", lambda x: x + 3))  # None batch_size
+            ),
+            "expected_fns": [
+                OptimizedBatchMapTransformFn,  # batch_size=2
+                OptimizedBatchMapTransformFn,  # batch_size=3
+                OptimizedBatchMapTransformFn,  # None
+            ],
+            "expected_batch_sizes": [
+                2,  # batch_size=2
+                3,  # batch_size=3
+                None,  # None batch_size
+            ],
+            "expected_result": [6, 7, 8, 9, 10],
+        },
+        {
+            "name": "non_fusion_with_incompatible_batch_sizes",
+            "dataset": (
+                ray.data.range(5)
+                .map_batches(column_udf("id", lambda x: x + 1), batch_size=3)
+                .map_batches(column_udf("id", lambda x: x + 2), batch_size=2)
+                .map_batches(column_udf("id", lambda x: x + 3), batch_size=5)
+            ),
+            "expected_fns": [
+                OptimizedBatchMapTransformFn,  # batch_size=3
+                OptimizedBatchMapTransformFn,  # batch_size=2
+                OptimizedBatchMapTransformFn,  # batch_size=5
+            ],
+            "expected_batch_sizes": [
+                3,  # batch_size=3
+                2,  # batch_size=2
+                5,  # batch_size=5
+            ],
+            "expected_result": [6, 7, 8, 9, 10],
+        },
     ]
-    assert match_transform_fns(expected_fns, fns)
-    assert match_ds_result(ds, [15, 16, 17, 18, 19])
+
+
+def test_map_batches_transformer_non_fusion(
+    ray_start_regular_shared, non_fusion_test_cases
+):
+    """Test various non-fusion cases for map_batches transformations."""
+    for test_case in non_fusion_test_cases:
+        plan = get_execution_plan(test_case["dataset"]._plan._logical_plan)
+        fns = plan.dag.get_map_transformer().get_transform_fns()
+
+        # Validate function types and batch sizes
+        assert match_transform_fns_with_batch_size(
+            test_case["expected_fns"], fns, test_case["expected_batch_sizes"]
+        ), f"Failed for test case: {test_case['name']}"
+        assert match_ds_result(
+            test_case["dataset"], test_case["expected_result"]
+        ), f"Failed for test case: {test_case['name']}"
 
 
 def test_map_rows_transformer_fusion(ray_start_regular_shared):
@@ -906,10 +1013,10 @@ def test_map_rows_transformer_fusion(ray_start_regular_shared):
 
     plan = get_execution_plan(ds._plan._logical_plan)
     fns = plan.dag.get_map_transformer().get_transform_fns()
-    # With new architecture, all RowMapTransformFn are fused into one
+    # With new architecture, all OptimizedRowMapTransformFn are fused into one
     expected_fns = [
-        BlockMapTransformFn,  # ReadRange
-        RowMapTransformFn,  # All 5 row transforms fused into one
+        OptimizedBlockMapTransformFn,  # ReadRange
+        OptimizedRowMapTransformFn,  # All 5 row transforms fused into one
     ]
     assert match_transform_fns(expected_fns, fns)
     assert match_ds_result(ds, [15, 16, 17, 18, 19])
@@ -962,19 +1069,28 @@ def test_read_files_fusion(ray_start_regular_shared, data_context_override):
     assert expected_plan_str in dag_str
 
 
-def test_map_batches_to_map_rows_fusion(ray_start_regular_shared):
-    """Test fusion of map_batches() and map() operations."""
+def test_map_batches_to_map_rows_transforms(ray_start_regular_shared):
+    """Test map_batches() and map() transforms with skipped block shaping optimization."""
     ds = ray.data.range(5).map_batches(lambda x: x, batch_size=2).map(lambda x: x)
 
     plan = get_execution_plan(ds._plan._logical_plan)
     fns = plan.dag.get_map_transformer().get_transform_fns()
-    # With new architecture: BatchMapTransformFn handles blocks->batches internally,
-    # RowMapTransformFn handles blocks->rows internally
+    # With new architecture: OptimizedBatchMapTransformFn handles blocks->batches internally,
+    # OptimizedRowMapTransformFn handles blocks->rows internally
     expected_fns = [
-        BatchMapTransformFn,
-        RowMapTransformFn,
+        OptimizedBatchMapTransformFn,
+        OptimizedRowMapTransformFn,
     ]
     assert match_transform_fns(expected_fns, fns)
+
+    # Verify that the batch transform fn has skipped block shaping optimization
+    batch_transform_fn = fns[0]
+    assert batch_transform_fn._output_block_size_option.disable_block_shaping is True
+
+    # Verify that the row transform fn does NOT skip block shaping
+    row_transform_fn = fns[1]
+    assert row_transform_fn._output_block_size_option.disable_block_shaping is False
+
     assert match_ds_result(ds, list(range(5)))
 
 
