@@ -4,6 +4,7 @@ import ray
 from ray import serve
 from ray._common.test_utils import SignalActor
 from ray.anyscale._private.constants import ANYSCALE_RAY_NODE_AVAILABILITY_ZONE_LABEL
+from ray.anyscale.serve._private.constants import ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
 from ray.cluster_utils import Cluster
 from ray.serve.handle import DeploymentHandle
 from ray.tests.conftest import *  # noqa
@@ -73,6 +74,10 @@ def test_handle_prefers_same_az(ray_cluster):
 
         async def __call__(self, block_on_signal: bool = False) -> str:
             return await self._h.remote(block_on_signal)
+
+    # HeadOnly location since Serve fails to start multiple haproxies on the same node.
+    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+        serve.start(http_options={"proxy_location": "HeadOnly"})
 
     # Outer deployment will be on head node, inner deployment will have 3 replicas
     # across all 3 nodes
@@ -160,6 +165,10 @@ def test_handle_prefers_same_az_without_prefer_node(ray_cluster):
 
         async def __call__(self, block_on_signal: bool = False) -> str:
             return await self._h.remote(block_on_signal)
+
+    # HeadOnly location since Serve fails to start multiple haproxies on the same node.
+    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+        serve.start(http_options={"proxy_location": "HeadOnly"})
 
     # Outer deployment will be on head node, inner deployment will have 3 replicas
     # across all 3 nodes

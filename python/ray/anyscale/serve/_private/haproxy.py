@@ -711,6 +711,19 @@ class HAProxyManager(ProxyActorInterface):
             ]
         )
 
+    async def serving(self) -> None:
+        """Wait for the HAProxy process to be ready to serve requests."""
+        server_up = False
+        while not server_up:
+            try:
+                stats = await self._haproxy.get_all_stats()
+                server_up = any(
+                    any(s.is_up for s in servers.values()) for servers in stats.values()
+                )
+            except Exception:
+                pass
+            await asyncio.sleep(0.2)
+
     def _is_draining(self) -> bool:
         """Whether is haproxy is in the draining status or not."""
         return self._draining_start_time is not None
@@ -785,7 +798,8 @@ class HAProxyManager(ProxyActorInterface):
         return [
             ServerConfig(
                 name=self.get_safe_name(target.name),
-                host=target.ip,
+                # Use localhost if target is on the same node as HAProxy
+                host="127.0.0.1" if target.ip == self._node_ip_address else target.ip,
                 port=target.port,
             )
             for target in targets

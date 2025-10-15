@@ -1136,6 +1136,11 @@ class ProxyActorInterface(ABC):
         pass
 
     @abstractmethod
+    async def serving(self) -> None:
+        """Wait for the proxy to be ready to serve requests."""
+        pass
+
+    @abstractmethod
     async def update_draining(
         self, draining: bool, _after: Optional[Any] = None
     ) -> None:
@@ -1411,6 +1416,10 @@ class ProxyActor(ProxyActorInterface):
                 get_component_logger_file_path(),
             ]
         )
+
+    async def serving(self) -> None:
+        """Wait for the proxy to be ready to serve requests."""
+        return
 
     def shutdown(self) -> None:
         return

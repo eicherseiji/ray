@@ -3,6 +3,7 @@ import httpx
 import logging
 import pytest
 import sys
+import threading
 
 import ray
 from ray import serve
@@ -325,7 +326,22 @@ async def test_drain_and_undrain_haproxy_manager(
 
     assert len(proxy_actor_ids) == 3
 
-    httpx.get("http://localhost:8000/")
+    # Start a long-running request in background to test draining behavior
+    request_result = []
+
+    def make_blocking_request():
+        try:
+            response = httpx.get("http://localhost:8000/", timeout=5)
+            request_result.append(("success", response.status_code))
+        except Exception as e:
+            request_result.append(("error", str(e)))
+
+    request_thread = threading.Thread(target=make_blocking_request)
+    request_thread.start()
+
+    wait_for_condition(
+        lambda: ray.get(signal_actor.cur_num_waiters.remote()) >= 1, timeout=10
+    )
 
     serve.run(HelloModel.options(num_replicas=1).bind())
     # 1 proxy should be draining
@@ -374,6 +390,9 @@ async def test_drain_and_undrain_haproxy_manager(
         timeout=40,
         proxy_status_to_count={ProxyStatus.HEALTHY: 2},
     )
+
+    # Verify the long-running request completed successfully
+    request_thread.join(timeout=5)
 
     # Clean up serve.
     serve.shutdown()
@@ -473,34 +492,24 @@ async def test_haproxy_update_target_groups(ray_shutdown):
     serve.run(
         function.options(num_replicas=1).bind(), name="app1", route_prefix="/test"
     )
-    wait_for_condition(lambda: httpx.get("http://localhost:8000/test").text == "hello1")
-    wait_for_condition(
-        lambda: httpx.get("http://localhost:8000/test2").status_code == 404
-    )
+    assert httpx.get("http://localhost:8000/test").text == "hello1"
+    assert httpx.get("http://localhost:8000/test2").status_code == 404
 
     serve.run(
         function.options(num_replicas=1).bind(), name="app2", route_prefix="/test2"
     )
-    wait_for_condition(lambda: httpx.get("http://localhost:8000/test").text == "hello1")
-    wait_for_condition(
-        lambda: httpx.get("http://localhost:8000/test2").text == "hello1"
-    )
+    assert httpx.get("http://localhost:8000/test").text == "hello1"
+    assert httpx.get("http://localhost:8000/test2").text == "hello1"
 
     serve.delete("app1")
-    wait_for_condition(
-        lambda: httpx.get("http://localhost:8000/test").status_code == 404
-    )
-    wait_for_condition(
-        lambda: httpx.get("http://localhost:8000/test2").text == "hello1"
-    )
+    assert httpx.get("http://localhost:8000/test").status_code == 404
+    assert httpx.get("http://localhost:8000/test2").text == "hello1"
 
     serve.run(
         function.options(num_replicas=1).bind(), name="app1", route_prefix="/test"
     )
-    wait_for_condition(lambda: httpx.get("http://localhost:8000/test").text == "hello1")
-    wait_for_condition(
-        lambda: httpx.get("http://localhost:8000/test2").text == "hello1"
-    )
+    assert httpx.get("http://localhost:8000/test").text == "hello1"
+    assert httpx.get("http://localhost:8000/test2").text == "hello1"
 
     serve.shutdown()
 
@@ -533,9 +542,7 @@ async def test_haproxy_update_draining_health_checks(ray_shutdown):
     )
     proxy_actor = ray.get_actor(proxy_actor.name, namespace=SERVE_NAMESPACE)
 
-    wait_for_condition(
-        lambda: httpx.get("http://localhost:8000/-/healthz").status_code == 200
-    )
+    assert httpx.get("http://localhost:8000/-/healthz").status_code == 200
 
     await proxy_actor.update_draining.remote(draining=True)
     wait_for_condition(
@@ -568,7 +575,7 @@ def test_haproxy_http_options(ray_shutdown):
 
     serve.run(function.bind(), name="test_app", route_prefix="/test")
     url = get_application_url(app_name="test_app", use_localhost=False)
-    wait_for_condition(lambda: httpx.get(url).text == "hello1")
+    assert httpx.get(url).text == "hello1"
     with pytest.raises(httpx.ConnectError):
         _ = httpx.get(url.replace(":8001", ":8000")).status_code
 
@@ -590,7 +597,7 @@ def test_haproxy_metrics(ray_shutdown):
 
     serve.run(function.bind())
 
-    wait_for_condition(lambda: httpx.get("http://localhost:8000/").text == "hello1")
+    assert httpx.get("http://localhost:8000/").text == "hello1"
 
     metrics_response = httpx.get("http://localhost:9101/metrics")
     assert metrics_response.status_code == 200
