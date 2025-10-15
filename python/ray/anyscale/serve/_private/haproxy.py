@@ -654,7 +654,7 @@ class HAProxyManager(ProxyActorInterface):
 
         self.event_loop = get_or_create_event_loop()
 
-        self._target_groups: List[TargetGroup] = []
+        self._target_groups: Optional[List[TargetGroup]] = None
 
         self.long_poll_client = long_poll_client or LongPollClient(
             ray.get_actor(SERVE_CONTROLLER_NAME, namespace=SERVE_NAMESPACE),
@@ -856,4 +856,25 @@ class HAProxyManager(ProxyActorInterface):
         return name.replace("/", ".").replace("#", "-")
 
     def _dump_ingress_replicas_for_testing(self, route: str) -> Set[ReplicaID]:
-        return set()
+        """Return the set of replica IDs for targets matching the given route.
+
+        Args:
+            route: The route prefix to match against target groups.
+
+        Returns:
+            Set of ReplicaID objects for targets in the matching target group.
+        """
+        replica_ids = set()
+
+        if self._target_groups is None:
+            return replica_ids
+
+        for target_group in self._target_groups:
+            if target_group.route_prefix == route:
+                for target in target_group.targets:
+                    # Target names are in the format "SERVE_REPLICA::<app>#<deployment>#<replica_id>"
+                    if ReplicaID.is_full_id_str(target.name):
+                        replica_id = ReplicaID.from_full_id_str(target.name)
+                        replica_ids.add(replica_id)
+
+        return replica_ids
