@@ -667,6 +667,10 @@ class HAProxyManager(ProxyActorInterface):
 
         startup_msg = f"HAProxy starting on node {self._node_id} (HTTP port: {self._http_options.port})."
         logger.info(startup_msg)
+        logger.debug(
+            f"Configure HAProxyManager actor {ray.get_runtime_context().get_actor_id()} "
+            f"logger with logging config: {logging_config}"
+        )
 
         self._haproxy = HAProxyApi(cfg=HAProxyConfig(http_options=http_options))
         self._haproxy_start_task = self.event_loop.create_task(self._haproxy.start())
