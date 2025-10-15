@@ -58,9 +58,11 @@ steps:
       - serve
 
   - label: ":ray-serve: serve: HAProxy tests"
+    parallelism: 2
     instance_type: medium
     commands:
       - bazel run //ci/ray_ci:test_in_docker -- $(cat anyscale/ci/buildkite/serve_hap_test_names.txt) serve
+        --workers "$${BUILDKITE_PARALLEL_JOB_COUNT}" --worker-id "$${BUILDKITE_PARALLEL_JOB}"
         --build-name servehaproxybuild
         --test-env=ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY=1
         --test-env=ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S=0.01
