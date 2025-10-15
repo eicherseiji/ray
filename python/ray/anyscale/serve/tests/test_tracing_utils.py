@@ -3,7 +3,6 @@ import json
 import os
 import re
 import shutil
-import time
 from pathlib import Path
 from threading import Thread
 from typing import Set
@@ -12,6 +11,7 @@ import uuid
 
 import grpc
 import pytest
+from ray._common.test_utils import SignalActor
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
@@ -302,6 +302,8 @@ def test_tracing_e2e(
 ):
     """Test tracing e2e."""
 
+    signal_actor = SignalActor.remote()
+
     @serve.deployment
     class BasicModel:
         def __call__(self, req: starlette.requests.Request):
@@ -318,7 +320,7 @@ def test_tracing_e2e(
         for i in range(10):
             yield f"hello_{i}"
             # to avoid coalescing chunks
-            time.sleep(0.2)
+            ray.get(signal_actor.wait.remote())
 
     @serve.deployment
     class StreamingModel:
@@ -397,6 +399,7 @@ def test_tracing_e2e(
                 r.raise_for_status()
                 for i, chunk in enumerate(r.iter_text()):
                     assert chunk == f"hello_{i}"
+                    ray.get(signal_actor.send.remote())
 
     elif serve_application == "grpc":
         # TODO: Remove this once HAProxy supports gRPC
