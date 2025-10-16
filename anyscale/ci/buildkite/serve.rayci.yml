@@ -2,6 +2,8 @@ group: runtime serve tests
 depends_on:
   - forge
   - servebuild
+  - ray-core-build
+  - ray-dashboard-build
 steps:
   - name: servehaproxybuild
     wanda: anyscale/ci/docker/serve.haproxy.build.wanda.yaml

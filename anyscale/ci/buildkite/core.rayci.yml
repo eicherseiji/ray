@@ -1,4 +1,8 @@
 group: runtime core tests
+depends_on:
+  - forge
+  - ray-core-build
+  - ray-dashboard-build
 steps:
   - label: ":ray: core: runtime tests"
     instance_type: medium

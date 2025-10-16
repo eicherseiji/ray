@@ -1,4 +1,8 @@
 group: runtime data tests
+depends_on:
+  - forge
+  - ray-core-build
+  - ray-dashboard-build
 steps:
   - label: ":database: data: runtime arrow 9 tests"
     instance_type: large
