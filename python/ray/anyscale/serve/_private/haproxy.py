@@ -21,7 +21,10 @@ from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD,
     ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH,
 )
-from ray.anyscale.serve._private.haproxy_templates import HAPROXY_CONFIG_TEMPLATE
+from ray.anyscale.serve._private.haproxy_templates import (
+    HAPROXY_CONFIG_TEMPLATE,
+    HAPROXY_HEALTHZ_RULES_TEMPLATE,
+)
 from ray.serve._private.common import (
     NodeId,
     ReplicaID,
@@ -325,7 +328,7 @@ class HAProxyApi(ProxyApi):
         self.config_file_path = config_file_path
         # Lock to prevent concurrent config modifications
         self._config_lock = asyncio.Lock()
-        self.proc = None
+        self._proc = None
 
         # Ensure required directories exist during initialization
         self._initialize_directories()
@@ -342,7 +345,7 @@ class HAProxyApi(ProxyApi):
 
     def _is_running(self) -> bool:
         """Check if the HAProxy process is still running."""
-        return self.proc is not None and self.proc.returncode is None
+        return self._proc is not None and self._proc.returncode is None
 
     async def _start_and_wait_for_haproxy(
         self, *extra_args: str, timeout_s: int = 5
@@ -362,6 +365,30 @@ class HAProxyApi(ProxyApi):
             stderr=asyncio.subprocess.PIPE,
         )
 
+        await self._wait_for_hap_availability(proc)
+        return proc
+
+    async def _graceful_reload(self) -> None:
+        """Perform a graceful reload of HAProxy by starting a new process with -sf."""
+        try:
+            old_proc = self._proc
+            await self._wait_for_hap_availability(old_proc)
+
+            # Start new HAProxy process with -sf flag to gracefully take over from old process
+            self._proc = await self._start_and_wait_for_haproxy(
+                "-sf", str(old_proc.pid)
+            )
+
+            logger.info(
+                "Successfully performed graceful HAProxy reload with process restart."
+            )
+        except Exception as e:
+            logger.error(f"HAProxy graceful reload failed: {e}")
+            raise
+
+    async def _wait_for_hap_availability(
+        self, proc: asyncio.subprocess.Process, timeout_s: int = 5
+    ) -> None:
         start_time = time.time()
 
         # TODO: update this to use health checks
@@ -375,41 +402,22 @@ class HAProxyApi(ProxyApi):
                 )
 
                 raise RuntimeError(
-                    f"HAProxy exited during startup: {output or proc.returncode}"
+                    f"HAProxy crashed during startup: {output or f'exit code {proc.returncode}'}"
                 )
 
-            try:
-                if await self.has_stats():
-                    return proc
-            except Exception:
-                pass
-            await asyncio.sleep(0.2)
-
-        raise RuntimeError(f"HAProxy startup timed out after {timeout_s} seconds")
-
-    async def _graceful_reload(self) -> None:
-        """Perform a graceful reload of HAProxy using the `-sf` flag."""
-        try:
-            await self._wait_for_running()
-
-            old_proc = self.proc
-            if old_proc is None or old_proc.returncode is not None:
-                logger.warning(
-                    "Existing HAProxy process already exited; skipping reload."
-                )
+            if await self.is_running():
                 return
 
-            self.proc = await self._start_and_wait_for_haproxy("-sf", str(old_proc.pid))
-            logger.info("Successfully performed graceful HAProxy reload.")
-        except Exception as e:
-            logger.error(f"HAProxy graceful reload failed: {e}")
-            raise
+            await asyncio.sleep(0.5)
+
+        raise RuntimeError(
+            f"HAProxy did not enter running state within {timeout_s} seconds."
+        )
 
     def _generate_config_file_internal(self) -> None:
         """Internal config generation without locking (for use within locked sections)."""
         try:
             env = Environment()
-            template = env.from_string(HAPROXY_CONFIG_TEMPLATE)
 
             # Backends are sorted in decreasing order of length of path prefix
             # to ensure that the longest path prefix match is taken first.
@@ -418,7 +426,22 @@ class HAProxyApi(ProxyApi):
                 self.backend_configs.values(),
                 key=lambda be: (-len(be.path_prefix), be.path_prefix),
             )
-            config_content = template.render({"config": self.cfg, "backends": backends})
+
+            # Render healthz rules separately for readability/reuse
+            healthz_template = env.from_string(HAPROXY_HEALTHZ_RULES_TEMPLATE)
+            healthz_rules = healthz_template.render(
+                {"config": self.cfg, "backends": backends}
+            )
+
+            # Render main config with embedded healthz rules
+            config_template = env.from_string(HAPROXY_CONFIG_TEMPLATE)
+            config_content = config_template.render(
+                {
+                    "config": self.cfg,
+                    "backends": backends,
+                    "healthz_rules": healthz_rules,
+                }
+            )
 
             # Ensure the config ends with a newline
             if not config_content.endswith("\n"):
@@ -451,37 +474,35 @@ class HAProxyApi(ProxyApi):
                 self._generate_config_file_internal()
                 logger.info("Successfully generated HAProxy config file.")
 
-            self.proc = await self._start_and_wait_for_haproxy()
+            self._proc = await self._start_and_wait_for_haproxy()
             logger.info("HAProxy started successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize and start HAProxy configuration: {e}")
             raise
 
-    async def has_stats(self) -> bool:
-        """Check if the HAProxy process is running and has stats."""
-        try:
-            stats_output = await self._send_socket_command("show stat")
-            return len(stats_output) > 0
-        except RuntimeError as e:
-            logger.error(f"Failed to get HAProxy stats: {e}")
-
-        return False
-
-    async def _wait_for_running(self, timeout_s: float = 5) -> None:
-        """Wait for the HAProxy process to be running."""
-        start_time = time.time()
-        while not await self.has_stats():
-            if time.time() - start_time > timeout_s:
-                raise RuntimeError(
-                    f"HAProxy did not enter running state within {timeout_s} seconds."
-                )
-            await asyncio.sleep(0.2)
-
     async def get_all_stats(self) -> Dict[str, Dict[str, ServerStats]]:
-        """Get statistics for all servers in all backends (implements abstract method)."""
+        """Get statistics for all servers in all backends (implements abstract method).
+
+        Returns only application backends configured in self.backend_configs,
+        excluding HAProxy internal components (frontends, default_backend, stats).
+        Also excludes BACKEND aggregate entries, returning only individual servers.
+        """
         try:
             stats_output = await self._send_socket_command("show stat")
-            return self._parse_haproxy_stats(stats_output)
+            all_stats = self._parse_haproxy_csv_stats(stats_output)
+
+            # Filter to only return application backends (ones in backend_configs)
+            # Exclude HAProxy internal components like frontends, default_backend, stats
+            # Also exclude BACKEND aggregate entries, keep only individual servers
+            return {
+                backend_name: {
+                    server_name: stats
+                    for server_name, stats in servers.items()
+                    if server_name != "BACKEND"
+                }
+                for backend_name, servers in all_stats.items()
+                if backend_name in self.backend_configs
+            }
         except Exception as e:
             logger.error(f"Failed to get HAProxy stats: {e}")
             return {}
@@ -534,39 +555,44 @@ class HAProxyApi(ProxyApi):
             raise RuntimeError(f"Failed to send socket command '{command}': {e}")
 
     @staticmethod
-    def _parse_haproxy_stats(stats_output: str) -> Dict[str, Dict[str, ServerStats]]:
+    def _parse_haproxy_csv_stats(
+        stats_output: str,
+    ) -> Dict[str, Dict[str, ServerStats]]:
         """Parse HAProxy stats CSV output into structured data."""
-        if not stats_output.strip():
+        if not stats_output or not stats_output.strip():
             return {}
 
         # HAProxy stats start with '#' comment - replace with nothing for CSV parsing
         csv_data = stats_output.replace("# ", "", 1)
+        backend_stats: Dict[str, Dict[str, ServerStats]] = {}
 
         def safe_int(v):
-            return int(v) if v and v.strip() else 0
-
-        backend_stats = {}
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return 0
 
         for row in csv.DictReader(io.StringIO(csv_data)):
-            # Skip non-server entries
-            if row.get("svname") in ["FRONTEND", "BACKEND"]:
+            backend = row.get("pxname", "").strip()
+            server = row.get("svname", "").strip()
+            status = row.get("status", "").strip() or "UNKNOWN"
+
+            if not backend or not server:
                 continue
 
-            # Direct dictionary-to-dataclass mapping
-            server = ServerStats(
-                backend=row["pxname"],
-                server=row["svname"],
-                status=row["status"],
-                current_sessions=safe_int(row["scur"]),
-                queued=safe_int(row["qcur"]),
+            backend_stats.setdefault(backend, {})
+            backend_stats[backend][server] = ServerStats(
+                backend=backend,
+                server=server,
+                status=status,
+                current_sessions=safe_int(row.get("scur")),
+                queued=safe_int(row.get("qcur")),
             )
-
-            backend_stats.setdefault(server.backend, {})[server.server] = server
 
         return backend_stats
 
     async def stop(self) -> None:
-        proc = self.proc
+        proc = self._proc
         if proc is None:
             logger.info("HAProxy process not running, skipping shutdown.")
             return
@@ -575,7 +601,7 @@ class HAProxyApi(ProxyApi):
             if proc.returncode is None:
                 proc.kill()
                 await proc.wait()
-                self.proc = None
+                self._proc = None
 
             logger.info("Stopped HAProxy process.")
         except RuntimeError as e:
@@ -622,6 +648,15 @@ class HAProxyApi(ProxyApi):
         backend_configs: Dict[str, BackendConfig],
     ) -> None:
         self.backend_configs = backend_configs
+
+    async def is_running(self) -> bool:
+        try:
+            await self._send_socket_command("show info")
+            return True
+        except Exception:
+            # During reload or shutdown, socket can be temporarily unavailable.
+            # Treat as unhealthy instead of raising.
+            return False
 
 
 @ray.remote(num_cpus=0)
@@ -774,9 +809,13 @@ class HAProxyManager(ProxyActorInterface):
             (time.time() - self._draining_start_time) > PROXY_MIN_DRAINING_PERIOD_S
         )
 
-    async def check_health(self) -> None:
+    async def check_health(self) -> bool:
+        # If haproxy is already shutdown, return False.
+        if not self._haproxy or not self._haproxy._proc:
+            return False
+
         logger.debug("Received health check.", extra={"log_to_stderr": False})
-        return await self._haproxy.has_stats()
+        return await self._haproxy.is_running()
 
     def pong(self) -> str:
         pass

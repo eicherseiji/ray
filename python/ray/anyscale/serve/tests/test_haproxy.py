@@ -1,4 +1,5 @@
 import asyncio
+
 import httpx
 import logging
 import pytest
@@ -12,6 +13,7 @@ from ray._common.test_utils import (
     wait_for_condition,
 )
 import subprocess
+
 from ray.actor import ActorHandle
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
@@ -344,6 +346,7 @@ async def test_drain_and_undrain_haproxy_manager(
     )
 
     serve.run(HelloModel.options(num_replicas=1).bind())
+
     # 1 proxy should be draining
 
     def check_proxy_status(proxy_status_to_count):
@@ -364,6 +367,7 @@ async def test_drain_and_undrain_haproxy_manager(
 
     # should stay in draining status until the signal is sent
     await asyncio.sleep(1)
+
     assert check_proxy_status(
         proxy_status_to_count={ProxyStatus.HEALTHY: 2, ProxyStatus.DRAINING: 1}
     )
@@ -603,7 +607,7 @@ def test_haproxy_metrics(ray_shutdown):
     assert metrics_response.status_code == 200
 
     http_backend_metrics = (
-        'haproxy_backend_http_responses_total{proxy="backend_HTTP:",code="2xx"} 1'
+        'haproxy_backend_http_responses_total{proxy="HTTP:",code="2xx"} 1'
     )
     assert http_backend_metrics in metrics_response.text
 
@@ -615,6 +619,162 @@ def test_haproxy_safe_name():
     assert HAProxyManager.get_safe_name("HTTP:test") == "HTTP:test"
     assert HAProxyManager.get_safe_name("HTTP:test/foo") == "HTTP:test.foo"
     assert HAProxyManager.get_safe_name("replica#abc") == "replica-abc"
+
+
+def test_haproxy_manager_ready_with_application(ray_shutdown):
+    """Test that HAProxyManager.ready() succeeds when an application is deployed."""
+    ray.init(num_cpus=4)
+    serve.start()
+
+    @serve.deployment
+    def function(_):
+        return "hello"
+
+    # Deploy application
+    serve.run(function.bind(), name="test_app", route_prefix="/test")
+
+    # Get HAProxyManager actor
+    def check_proxy_alive():
+        actors = list_actors(
+            filters=[("ray_namespace", "=", SERVE_NAMESPACE), ("state", "=", "ALIVE")],
+        )
+        return "HAProxyManager" in {actor["class_name"] for actor in actors}
+
+    wait_for_condition(check_proxy_alive)
+
+    [proxy_actor] = list_actors(
+        filters=[("class_name", "=", "HAProxyManager"), ("state", "=", "ALIVE")]
+    )
+    proxy_actor = ray.get_actor(proxy_actor.name, namespace=SERVE_NAMESPACE)
+
+    # Call ready() - should succeed with active targets
+    ready_result = ray.get(proxy_actor.ready.remote())
+    assert ready_result is not None
+
+    wait_for_condition(lambda: httpx.get("http://localhost:8000/test").text == "hello")
+
+    serve.shutdown()
+
+
+def test_haproxy_healthcheck_multiple_apps_and_backends(ray_shutdown):
+    """Health check behavior with 3 apps and 2 servers per backend.
+
+    Expectations:
+    - With two servers per backend, healthz returns 200 (all backends have a primary UP).
+    - Disabling one primary in each backend keeps health at 200 (the other primary is UP).
+    - Disabling all servers in each backend results in healthz 503.
+    """
+    ray.init(num_cpus=8)
+    serve.start()
+
+    @serve.deployment
+    def f(_):
+        return "hello"
+
+    # Helpers
+    SOCKET_PATH = "/tmp/haproxy-serve/admin.sock"
+
+    def route_to_backend(route: str) -> str:
+        return f"HTTP:{route.lstrip('/')}"
+
+    def haproxy_show_stat() -> str:
+        result = subprocess.run(
+            f'echo "show stat" | socat - {SOCKET_PATH}',
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to query HAProxy stats: {result.stderr}")
+        return result.stdout
+
+    def list_primary_servers(backend_name: str) -> list:
+        lines = haproxy_show_stat().strip().split("\n")
+        servers = []
+        for line in lines:
+            parts = line.split(",")
+            if len(parts) < 2:
+                continue
+            pxname, svname = parts[0], parts[1]
+            if pxname == backend_name and svname not in [
+                "FRONTEND",
+                "BACKEND",
+            ]:
+                servers.append(svname)
+        return servers
+
+    def set_server_state(backend: str, server: str, state: str) -> None:
+        subprocess.run(
+            f'echo "set server {backend}/{server} state {state}" | socat - {SOCKET_PATH}',
+            shell=True,
+            capture_output=True,
+            timeout=5,
+        )
+
+    def wait_health(expected: int, timeout: float = 15.0) -> None:
+        wait_for_condition(
+            lambda: httpx.get("http://localhost:8000/-/healthz").status_code
+            == expected,
+            timeout=timeout,
+        )
+
+    # Deploy 3 apps, each with 2 replicas (servers) so each backend has 2 servers + 1 backup
+    apps = [
+        ("app_a", "/a"),
+        ("app_b", "/b"),
+        ("app_c", "/c"),
+    ]
+    for app_name, route in apps:
+        serve.run(f.options(num_replicas=2).bind(), name=app_name, route_prefix=route)
+
+    # Wait for all endpoints to be reachable
+    for _, route in apps:
+        wait_for_condition(
+            lambda r=route: httpx.get(f"http://localhost:8000{r}").text == "hello"
+        )
+
+    # Wait until each backend shows 2 primary servers in HAProxy stats
+    backends = [route_to_backend(route) for _, route in apps]
+    for be in backends:
+        wait_for_condition(lambda b=be: len(list_primary_servers(b)) >= 2, timeout=20)
+
+    # Initially healthy
+    wait_health(200, timeout=20)
+
+    # Disable one primary per backend, should remain healthy (one primary still UP)
+    disabled_servers = []
+    for be in backends:
+        servers = list_primary_servers(be)
+        set_server_state(be, servers[0], "maint")
+        disabled_servers.append((be, servers[0]))
+
+    wait_health(200, timeout=20)
+
+    # Disable the remaining primary per backend, should become unhealthy (no servers UP)
+    disabled_all = []
+    for be in backends:
+        servers = list_primary_servers(be)
+        # Disable any remaining primary (skip ones already disabled)
+        for sv in servers:
+            if (be, sv) not in disabled_servers:
+                set_server_state(be, sv, "maint")
+                disabled_all.append((be, sv))
+                break
+
+    wait_health(503, timeout=20)
+
+    # Re-enable all servers and expect health back to 200
+    for be, sv in disabled_servers + disabled_all:
+        set_server_state(be, sv, "ready")
+    wait_health(200, timeout=20)
+
+    # Sanity: all apps still respond
+    for _, route in apps:
+        resp = httpx.get(f"http://localhost:8000{route}")
+        assert resp.status_code == 200 and resp.text == "hello"
+
+    serve.shutdown()
 
 
 if __name__ == "__main__":

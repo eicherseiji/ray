@@ -1,3 +1,21 @@
+HAPROXY_HEALTHZ_RULES_TEMPLATE = """    # Health check endpoint
+    acl healthcheck path -i {{ config.health_check_endpoint }}
+{%- if not config.pass_health_checks %}
+    # Override: force health checks to fail (used by drain/disable)
+    http-request return status 503 content-type text/plain string "Service Unavailable" if healthcheck
+{%- elif backends %}
+    # 200 if any backend has at least one server UP
+{%-   for backend in backends %}
+    acl backend_{{ backend.name or 'unknown' }}_server_up nbsrv({{ backend.name or 'unknown' }}) ge 1
+{%-   endfor %}
+    # Any backend with a server UP passes the health check (OR logic)
+{%-   for backend in backends %}
+    http-request return status 200 content-type text/plain string "OK" if healthcheck backend_{{ backend.name or 'unknown' }}_server_up
+{%-   endfor %}
+    http-request return status 503 content-type text/plain string "Service Unavailable" if healthcheck
+{%- endif %}
+"""
+
 HAPROXY_CONFIG_TEMPLATE = """global
     # Log to the standard system log socket with debug level.
     log /dev/log local0 debug
@@ -24,13 +42,7 @@ frontend prometheus
     no log
 frontend http_frontend
     bind {{ config.frontend_host }}:{{ config.frontend_port }}
-    # Health check endpoint
-    acl healthcheck path -i {{ config.health_check_endpoint }}
-    {%- if config.pass_health_checks %}
-    http-request return status 200 content-type text/plain string "OK" if healthcheck
-    {%- else %}
-    http-request return status 503 content-type text/plain string "Service Unavailable" if healthcheck
-    {%- endif %}
+{{ healthz_rules|safe }}
 
     {%- if config.inject_process_id_header and config.reload_id %}
     # Inject unique reload ID as header to track which HAProxy instance handled the request (testing only)
@@ -40,13 +52,13 @@ frontend http_frontend
 {%- for backend in backends %}
     acl is_{{ backend.name or 'unknown' }} path_beg {{ '/' if not backend.path_prefix or backend.path_prefix == '/' else backend.path_prefix ~ '/' }}
     acl is_{{ backend.name or 'unknown' }} path {{ backend.path_prefix or '/' }}
-    use_backend backend_{{ backend.name or 'unknown' }} if is_{{ backend.name or 'unknown' }}
+    use_backend {{ backend.name or 'unknown' }} if is_{{ backend.name or 'unknown' }}
 {%- endfor %}
     default_backend default_backend
 backend default_backend
     http-request deny deny_status 404
 {%- for backend in backends %}
-backend backend_{{ backend.name or 'unknown' }}
+backend {{ backend.name or 'unknown' }}
     log global
     balance leastconn
     # Enable HTTP connection reuse for better performance

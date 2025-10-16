@@ -157,7 +157,7 @@ async def haproxy_api_cleanup():
     yield register
 
     for api in registered_apis:
-        proc = getattr(api, "proc", None)
+        proc = getattr(api, "_proc", None)
         if proc and proc.returncode is None:
             try:
                 await api.stop()
@@ -278,18 +278,24 @@ frontend http_frontend
     bind *:8000
     # Health check endpoint
     acl healthcheck path -i /-/healthz
-    http-request return status 200 content-type text/plain string "OK" if healthcheck
+    # 200 if any backend has at least one server UP
+    acl backend_api_backend_server_up nbsrv(api_backend) ge 1
+    acl backend_web_backend_server_up nbsrv(web_backend) ge 1
+    # Any backend with a server UP passes the health check (OR logic)
+    http-request return status 200 content-type text/plain string "OK" if healthcheck backend_api_backend_server_up
+    http-request return status 200 content-type text/plain string "OK" if healthcheck backend_web_backend_server_up
+    http-request return status 503 content-type text/plain string "Service Unavailable" if healthcheck
     # Static routing based on path prefixes in decreasing length then alphabetical order
     acl is_api_backend path_beg /api/
     acl is_api_backend path /api
-    use_backend backend_api_backend if is_api_backend
+    use_backend api_backend if is_api_backend
     acl is_web_backend path_beg /web/
     acl is_web_backend path /web
-    use_backend backend_web_backend if is_web_backend
+    use_backend web_backend if is_web_backend
     default_backend default_backend
 backend default_backend
     http-request deny deny_status 404
-backend backend_api_backend
+backend api_backend
     log global
     balance leastconn
     # Enable HTTP connection reuse for better performance
@@ -306,7 +312,7 @@ backend backend_api_backend
     # Servers in this backend
     server api_server1 127.0.0.1:8001 check
     server api_server2 127.0.0.1:8002 check
-backend backend_web_backend
+backend web_backend
     log global
     balance leastconn
     # Enable HTTP connection reuse for better performance
@@ -396,7 +402,13 @@ def test_generate_backends_in_order(haproxy_api_cleanup):
                     continue
 
                 acl_names.append(acl_name)
-                backend_name = acl_name.lstrip("is_")
+
+                # strip prefix/suffix added for acl checks
+                backend_name = (
+                    acl_name.lstrip("is_")
+                    .replace("backend_", "")
+                    .replace("_server_up", "")
+                )
                 assert backend_name in backend_config_stub
 
                 condition = line.split(" ")[-2]
@@ -409,7 +421,8 @@ def test_generate_backends_in_order(haproxy_api_cleanup):
                     assert backend_config_stub[backend_name].path_prefix == path_prefix
                     paths.append(path_prefix)
                 else:
-                    raise ValueError(f"Unknown condition: {condition}")
+                    # gt condition is used for health check, no need to check.
+                    continue
             if line.startswith("use_backend"):
                 acl_name = line.split(" ")[-1]
                 assert acl_name in acl_names
@@ -496,13 +509,13 @@ async def test_graceful_reload(haproxy_api_cleanup):
                 lambda: request_started.is_set(), timeout=5, retry_interval_ms=10
             )
 
-            assert api.proc is not None
-            original_pid = api.proc.pid
+            assert api._proc is not None
+            original_pid = api._proc.pid
 
             await api._graceful_reload()
 
-            assert api.proc is not None
-            new_pid = api.proc.pid
+            assert api._proc is not None
+            new_pid = api._proc.pid
 
             def check_for_new_reload_id():
                 fast_response = requests.get(
@@ -576,7 +589,7 @@ async def test_start(haproxy_api_cleanup):
 
         await api.start()
 
-        assert api.proc is not None, "HAProxy process should exist"
+        assert api._proc is not None, "HAProxy process should exist"
         assert api._is_running(), "HAProxy should be running"
 
         # Verify config file contains expected content
@@ -585,29 +598,20 @@ async def test_start(haproxy_api_cleanup):
             assert "frontend http_frontend" in config_content
             assert f"bind 127.0.0.1:{config.frontend_port}" in config_content
             assert "acl healthcheck path -i /-/healthz" in config_content
+            # With no backends, no health check rules are generated
+            assert "http-request return status 200" not in config_content
+            assert "http-request return status 503" not in config_content
 
-        assert (
-            "http-request return status 200" in config_content
-        ), "Health checks should be enabled in config"
-
-        # Verify config file contains expected content
-        with open(config_file_path, "r") as f:
-            config_content = f.read()
-            assert "frontend http_frontend" in config_content
-            assert f"bind 127.0.0.1:{config.frontend_port}" in config_content
-            assert "acl healthcheck path -i /-/healthz" in config_content
-            assert (
-                "http-request return status 200" in config_content
-            )  # Health checks enabled
-
+        # With no backends configured, health endpoint routes to default_backend (404)
         health_response = requests.get(
             f"http://127.0.0.1:{config.frontend_port}/-/healthz", timeout=5
         )
-        assert health_response.status_code == 200, "Health check should return 200"
-        assert b"OK" in health_response.content, "Health check should return 'OK'"
+        assert (
+            health_response.status_code == 404
+        ), "Health check with no backends should return 404 (routes to default_backend)"
 
         await api.stop()
-        assert api.proc is None
+        assert api._proc is None
         assert not api._is_running()
 
 
@@ -661,16 +665,16 @@ async def test_stop_kills_haproxy_process(haproxy_api_cleanup):
 
         # Start HAProxy
         await api.start()
-        assert api.proc is not None, "HAProxy process should exist after start"
+        assert api._proc is not None, "HAProxy process should exist after start"
 
-        haproxy_pid = api.proc.pid
+        haproxy_pid = api._proc.pid
         assert process_exists(haproxy_pid), "HAProxy process should be running"
 
         # Stop HAProxy
         await api.stop()
 
         # Verify the process is killed
-        assert api.proc is None, "HAProxy proc should be None after stop"
+        assert api._proc is None, "HAProxy proc should be None after stop"
 
         # Wait a bit for process cleanup
         def haproxy_process_killed():
@@ -762,12 +766,6 @@ async def test_get_stats_integration(haproxy_api_cleanup):
                 thread.start()
                 request_threads.append(thread)
 
-            # Wait for HAProxy socket to be available for stats commands
-            def socket_available():
-                return os.path.exists(socket_path)
-
-            wait_for_condition(socket_available, timeout=10, retry_interval_ms=500)
-
             # Get actual stats
             async def two_servers_up():
                 stats = await api.get_haproxy_stats()
@@ -777,7 +775,13 @@ async def test_get_stats_integration(haproxy_api_cleanup):
                 two_servers_up, timeout=10, retry_interval_ms=200
             )
 
-            assert await api.has_stats(), "HAProxy should have stats"
+            async def wait_for_running():
+                return await api.is_running()
+
+            await async_wait_for_condition(
+                wait_for_running, timeout=10, retry_interval_ms=200
+            )
+
             all_stats = await api.get_all_stats()
             haproxy_stats = await api.get_haproxy_stats()
 
@@ -846,7 +850,7 @@ async def test_update_and_reload(haproxy_api_cleanup):
             actual_content = f.read()
             assert "backend_2" not in actual_content
 
-        original_proc = api.proc
+        original_proc = api._proc
         original_pid = original_proc.pid
 
         # Add another backend
@@ -859,8 +863,8 @@ async def test_update_and_reload(haproxy_api_cleanup):
         api.set_backend_configs({backend.name: backend, backend2.name: backend2})
         await api.reload()
 
-        assert api.proc is not None
-        assert api.proc.pid != original_pid
+        assert api._proc is not None
+        assert api._proc.pid != original_pid
 
         with open(config_file_path, "r") as f:
             actual_content = f.read()
@@ -896,8 +900,8 @@ async def test_haproxy_start_should_throw_error_when_already_running(
         # Start HAProxy with SO_REUSEPORT disabled
         await api.start()
 
-        assert api.proc is not None, "HAProxy process should be running"
-        first_pid = api.proc.pid
+        assert api._proc is not None, "HAProxy process should be running"
+        first_pid = api._proc.pid
 
         # Verify we can't start another instance on the same port (SO_REUSEPORT disabled)
         config2 = HAProxyConfig(
@@ -946,72 +950,208 @@ async def test_toggle_health_checks(haproxy_api_cleanup):
             inject_process_id_header=True,
         )
 
-        api = HAProxyApi(
-            cfg=config,
-            backend_configs={backend.name: backend},
-            config_file_path=config_file_path,
+        # Start a real backend server so HAProxy can mark the server UP
+        backend_server, backend_thread = create_test_backend_server(9999)
+        try:
+            api = HAProxyApi(
+                cfg=config,
+                backend_configs={backend.name: backend},
+                config_file_path=config_file_path,
+            )
+
+            await api.start()
+            haproxy_api_cleanup(api)
+
+            # Verify HAProxy is running
+            assert api._is_running(), "HAProxy should be running"
+
+            # Health requires servers; wait until health passes
+            def health_ok():
+                resp = requests.get(
+                    f"http://127.0.0.1:{config.frontend_port}{config.health_check_endpoint}",
+                    timeout=5,
+                )
+                return resp.status_code == 200
+
+            wait_for_condition(health_ok, timeout=10)
+
+            # Verify a config file contains health check enabled
+            with open(api.config_file_path, "r") as f:
+                config_content = f.read()
+                assert (
+                    "http-request return status 200" in config_content
+                ), "Health checks should be enabled in config"
+
+            # Disable health checks
+            await api.disable()
+
+            # Verify HAProxy is still running after calling disable()
+            assert api._is_running(), "HAProxy should still be running after disable"
+
+            # Config should now deny the health endpoint
+            with open(api.config_file_path, "r") as f:
+                config_content = f.read()
+                assert (
+                    "http-request return status 503" in config_content
+                ), "Health checks should be disabled in config"
+
+            def health_check_condition(status_code: int):
+                # Test health check endpoint now fails
+                health_response = requests.get(
+                    f"http://127.0.0.1:{config.frontend_port}{config.health_check_endpoint}",
+                    timeout=5,
+                )
+
+                return health_response.status_code == status_code
+
+            wait_for_condition(health_check_condition, timeout=2, status_code=503)
+
+            # Re-enable health checks
+            await api.enable()
+
+            # Config should contain the 200 response again
+            with open(api.config_file_path, "r") as f:
+                config_content = f.read()
+                assert (
+                    "http-request return status 200" in config_content
+                ), "Health checks should be re-enabled in config"
+
+            wait_for_condition(health_check_condition, timeout=5, status_code=200)
+
+        finally:
+            backend_server.should_exit = True
+            backend_thread.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_or_logic_multiple_backends(haproxy_api_cleanup):
+    """Test that the health endpoint returns 200 if ANY backend has at least one server UP (OR logic)."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+        socket_path = os.path.join(temp_dir, "admin.sock")
+        backend1_port = 9996
+        backend2_port = 9997
+
+        config = HAProxyConfig(
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=8000,
+            ),
+            stats_port=8404,
+            socket_path=socket_path,
         )
 
-        await api.start()
-        haproxy_api_cleanup(api)
-
-        # Verify HAProxy is running
-        assert api._is_running(), "HAProxy should be running"
-
-        # Test health check endpoint works initially
-        health_response = requests.get(
-            f"http://127.0.0.1:{config.frontend_port}{config.health_check_endpoint}",
-            timeout=5,
+        backend1 = BackendConfig(
+            name="backend1",
+            path_prefix="/api1",
+            servers=[
+                ServerConfig(name="server1", host="127.0.0.1", port=backend1_port)
+            ],
+            health_check_fall=1,
+            health_check_rise=1,
+            health_check_inter="1s",
         )
-        assert (
-            health_response.status_code == 200
-        ), "Health check should return 200 initially"
-        assert (
-            b"OK" in health_response.content
-        ), "Health check should return 'OK' initially"
 
-        # Verify a config file contains health check enabled
-        with open(api.config_file_path, "r") as f:
-            config_content = f.read()
-            assert (
-                "http-request return status 200" in config_content
-            ), "Health checks should be enabled in config"
+        backend2 = BackendConfig(
+            name="backend2",
+            path_prefix="/api2",
+            servers=[
+                ServerConfig(name="server2", host="127.0.0.1", port=backend2_port)
+            ],
+            health_check_fall=1,
+            health_check_rise=1,
+            health_check_inter="1s",
+        )
 
-        # Disable health checks
-        await api.disable()
+        backend1_server, backend1_thread = create_test_backend_server(backend1_port)
+        backend2_server, backend2_thread = create_test_backend_server(backend2_port)
 
-        # Verify HAProxy is still running after calling disable()
-        assert api._is_running(), "HAProxy should still be running after disable"
+        try:
+            api = HAProxyApi(
+                cfg=config,
+                backend_configs={backend1.name: backend1, backend2.name: backend2},
+                config_file_path=config_file_path,
+            )
 
-        # Config should now deny the health endpoint
-        with open(api.config_file_path, "r") as f:
-            config_content = f.read()
-            assert (
-                "http-request return status 503" in config_content
-            ), "Health checks should be disabled in config"
+            await api.start()
+            haproxy_api_cleanup(api)
 
-        def health_check_condition(status_code: int):
-            # Test health check endpoint now fails
+            # Wait for health check to pass (both servers are UP)
+            def health_ok():
+                resp = requests.get(
+                    f"http://127.0.0.1:{config.frontend_port}{config.health_check_endpoint}",
+                    timeout=5,
+                )
+                return resp.status_code == 200
+
+            wait_for_condition(health_ok, timeout=10, retry_interval_ms=200)
+
+            # Verify health check returns 200 when both servers are UP
             health_response = requests.get(
                 f"http://127.0.0.1:{config.frontend_port}{config.health_check_endpoint}",
                 timeout=5,
             )
-
-            return health_response.status_code == status_code
-
-        wait_for_condition(health_check_condition, timeout=1, status_code=503)
-
-        # Re-enable health checks
-        await api.enable()
-
-        # Config should contain the 200 response again
-        with open(api.config_file_path, "r") as f:
-            config_content = f.read()
             assert (
-                "http-request return status 200" in config_content
-            ), "Health checks should be re-enabled in config"
+                health_response.status_code == 200
+            ), "Health check should return 200 when both servers are UP"
+            assert b"OK" in health_response.content
 
-        wait_for_condition(health_check_condition, timeout=1, status_code=200)
+            # Stop backend1 server
+            backend1_server.should_exit = True
+            backend1_thread.join(timeout=5)
+
+            # Wait a bit for HAProxy to detect backend1 is down
+            await asyncio.sleep(2)
+
+            # Verify health check STILL returns 200 (backend2 is still UP - OR logic)
+            health_response = requests.get(
+                f"http://127.0.0.1:{config.frontend_port}{config.health_check_endpoint}",
+                timeout=5,
+            )
+            assert (
+                health_response.status_code == 200
+            ), "Health check should return 200 when at least one backend (backend2) is UP (OR logic)"
+            assert b"OK" in health_response.content
+
+            # Stop backend2 server as well
+            backend2_server.should_exit = True
+            backend2_thread.join(timeout=5)
+
+            # Wait for health check to fail (both servers are DOWN)
+            def health_fails():
+                resp = requests.get(
+                    f"http://127.0.0.1:{config.frontend_port}{config.health_check_endpoint}",
+                    timeout=5,
+                )
+                return resp.status_code == 503
+
+            wait_for_condition(health_fails, timeout=10, retry_interval_ms=200)
+
+            # Verify health check returns 503 when ALL servers are DOWN
+            health_response = requests.get(
+                f"http://127.0.0.1:{config.frontend_port}{config.health_check_endpoint}",
+                timeout=5,
+            )
+            assert (
+                health_response.status_code == 503
+            ), "Health check should return 503 when all servers are DOWN"
+            assert b"Service Unavailable" in health_response.content
+
+            await api.stop()
+        finally:
+            # Cleanup
+            try:
+                if not backend1_server.should_exit:
+                    backend1_server.should_exit = True
+                    backend1_thread.join(timeout=5)
+            except Exception:
+                pass
+            try:
+                if not backend2_server.should_exit:
+                    backend2_server.should_exit = True
+                    backend2_thread.join(timeout=5)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
