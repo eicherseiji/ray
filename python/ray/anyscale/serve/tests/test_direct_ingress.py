@@ -19,6 +19,7 @@ from ray._common.test_utils import SignalActor, Semaphore
 from ray._private.test_utils import wait_for_condition
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
     RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT,
     RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT,
     RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT,
@@ -73,6 +74,14 @@ def _skip_if_ff_not_enabled():
     if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
         pytest.skip(
             reason="ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS not set.",
+        )
+
+
+@pytest.fixture
+def _skip_if_haproxy_enabled():
+    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+        pytest.skip(
+            reason="ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY is set.",
         )
 
 
@@ -133,15 +142,23 @@ class Hybrid:
         return serve_pb2.UserDefinedResponse(greeting=self._message)
 
 
+def get_target_groups(
+    app_name: str = SERVE_DEFAULT_APP_NAME,
+    from_proxy_manager: bool = False,
+):
+    client = _get_global_client(_health_check_controller=True)
+    target_groups = ray.get(
+        client._controller.get_target_groups.remote(app_name, from_proxy_manager)
+    )
+    return target_groups
+
+
 def test_proxy_is_started_on_head_only_mode(_skip_if_ff_not_enabled, serve_instance):
     assert len(serve.status().proxies) == 1
 
 
 def get_http_ports(route_prefix=None, first_only=True):
-    serve_details = ServeInstanceDetails(
-        **ServeSubmissionClient("http://localhost:8265").get_serve_details()
-    )
-    target_groups = serve_details.target_groups
+    target_groups = get_target_groups(app_name=None, from_proxy_manager=True)
     if first_only:
         http_target_group = next(
             (
@@ -165,10 +182,7 @@ def get_http_ports(route_prefix=None, first_only=True):
 
 
 def get_grpc_ports(route_prefix=None, first_only=True):
-    serve_details = ServeInstanceDetails(
-        **ServeSubmissionClient("http://localhost:8265").get_serve_details()
-    )
-    target_groups = serve_details.target_groups
+    target_groups = get_target_groups(app_name=None, from_proxy_manager=True)
     if first_only:
         grpc_target_group = next(
             (
@@ -195,7 +209,7 @@ def test_basic(_skip_if_ff_not_enabled, serve_instance):
     serve.run(Hybrid.bind(message="Hello world!"))
 
     http_urls = get_application_urls("HTTP")
-    grpc_urls = get_application_urls("gRPC")
+    grpc_urls = get_application_urls("gRPC", from_proxy_manager=True)
     # Basic HTTP request.
     for http_url in http_urls:
         r = httpx.get(http_url)
@@ -214,7 +228,7 @@ def test_internal_server_error(_skip_if_ff_not_enabled, serve_instance):
     serve.run(Hybrid.bind(raise_error=True))
 
     http_urls = get_application_urls("HTTP")
-    grpc_urls = get_application_urls("gRPC")
+    grpc_urls = get_application_urls("gRPC", from_proxy_manager=True)
 
     # Basic HTTP request.
     for http_url in http_urls:
@@ -453,14 +467,11 @@ def test_port_retry_logic(_skip_if_ff_not_enabled, serve_instance):
     grpc_sock = occupy_port(RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT)
 
     try:
-        # Deploy a service - it should retry port allocation and eventually fall back
+        # Deploy an app - it should retry port allocation and eventually fall back
         # to shared ingress since we're occupying the ports
         serve.run(Hybrid.bind(message="Hello world!"))
 
-        serve_details = ServeInstanceDetails(
-            **ServeSubmissionClient("http://localhost:8265").get_serve_details()
-        )
-        target_groups = serve_details.target_groups
+        target_groups = get_target_groups(from_proxy_manager=True)
 
         # Check HTTP target group
         http_target_group = next(
@@ -670,13 +681,10 @@ def test_get_serve_instance_details(_skip_if_ff_not_enabled, serve_instance):
     """Test that get_serve_instance_details returns the correct information."""
     serve.run(Hybrid.options(num_replicas=4).bind(message="Hello world!"))
 
-    serve_details = ServeInstanceDetails(
-        **ServeSubmissionClient("http://localhost:8265").get_serve_details()
-    )
-
-    assert len(serve_details.target_groups) == 2
-    assert len(serve_details.target_groups[0].targets) == 4
-    assert len(serve_details.target_groups[1].targets) == 4
+    target_groups = get_target_groups(from_proxy_manager=True)
+    assert len(target_groups) == 2
+    assert len(target_groups[0].targets) == 4
+    assert len(target_groups[1].targets) == 4
 
 
 def test_only_ingress_deployment_replicas_are_used_for_target_groups(
@@ -711,13 +719,10 @@ def test_only_ingress_deployment_replicas_are_used_for_target_groups(
         )
     )
 
-    serve_details = ServeInstanceDetails(
-        **ServeSubmissionClient("http://localhost:8265").get_serve_details()
-    )
-
-    assert len(serve_details.target_groups) == 2
-    assert len(serve_details.target_groups[0].targets) == 3
-    assert len(serve_details.target_groups[1].targets) == 3
+    target_groups = get_target_groups(from_proxy_manager=True)
+    assert len(target_groups) == 2
+    assert len(target_groups[0].targets) == 3
+    assert len(target_groups[1].targets) == 3
 
     # test that the target groups are unique and contain the correct ports for ingress deployment
     http_ports = get_http_ports()
@@ -726,7 +731,7 @@ def test_only_ingress_deployment_replicas_are_used_for_target_groups(
     assert len(set(grpc_ports) & {40000, 40001, 40002, 40003, 40004}) == 3
 
     http_urls = get_application_urls("HTTP")
-    grpc_urls = get_application_urls("gRPC")
+    grpc_urls = get_application_urls("gRPC", from_proxy_manager=True)
 
     for http_url in http_urls:
         req = httpx.get(http_url)
@@ -924,7 +929,7 @@ def test_app_with_composite_deployments(_skip_if_ff_not_enabled, serve_instance)
     assert len(set(grpc_ports) & {40000, 40001, 40002, 40003, 40004}) == 2
 
     http_urls = get_application_urls("HTTP", app_name="app-1")
-    grpc_urls = get_application_urls("gRPC", app_name="app-1")
+    grpc_urls = get_application_urls("gRPC", app_name="app-1", from_proxy_manager=True)
 
     # make a request to the ingress deployment
     for http_url in http_urls:
@@ -1141,7 +1146,7 @@ class TestDirectIngressBackpressure:
             )
         )
         http_url = get_application_url("HTTP")
-        grpc_url = get_application_url("gRPC")
+        grpc_url = get_application_url("gRPC", from_proxy_manager=True)
 
         for _do_request in [self._do_grpc_request, self._do_http_request]:
             url = grpc_url if _do_request == self._do_grpc_request else http_url
@@ -1187,7 +1192,7 @@ class TestDirectIngressBackpressure:
             )
         )
         http_url = get_application_url("HTTP")
-        grpc_url = get_application_url("gRPC")
+        grpc_url = get_application_url("gRPC", from_proxy_manager=True)
         for _do_request in [self._do_grpc_request, self._do_http_request]:
             url = grpc_url if _do_request == self._do_grpc_request else http_url
             num_requests = 1000
@@ -1219,7 +1224,7 @@ class TestDirectIngressBackpressure:
             )
         )
         http_url = get_application_url("HTTP")
-        grpc_url = get_application_url("gRPC")
+        grpc_url = get_application_url("gRPC", from_proxy_manager=True)
         for _do_request in [self._do_grpc_request, self._do_http_request]:
             url = grpc_url if _do_request == self._do_grpc_request else http_url
             num_requests = 1000
@@ -1261,7 +1266,7 @@ class TestDirectIngressBackpressure:
             )
         )
         http_url = get_application_url("HTTP")
-        grpc_url = get_application_url("gRPC")
+        grpc_url = get_application_url("gRPC", from_proxy_manager=True)
 
         num_requests = 500
         with ThreadPoolExecutor(num_requests) as tpe:
@@ -1332,7 +1337,8 @@ class TestDirectIngressBackpressure:
                 fail_hc_signal=fail_hc_signal,
             )
         )
-        http_url = get_application_url("HTTP")
+        # this is specifically checking the health check on the replica
+        http_url = get_application_url("HTTP", from_proxy_manager=True)
         num_requests = 100
         with ThreadPoolExecutor(num_requests) as tpe:
             # Submit requests to create backpressure
@@ -1430,8 +1436,12 @@ class TestDirectIngressBackpressure:
 
         http_url_1 = get_application_url("HTTP", app_name="app-1")
         http_url_2 = get_application_url("HTTP", app_name="app-2")
-        grpc_url_1 = get_application_url("gRPC", app_name="app-1")
-        grpc_url_2 = get_application_url("gRPC", app_name="app-2")
+        grpc_url_1 = get_application_url(
+            "gRPC", app_name="app-1", from_proxy_manager=True
+        )
+        grpc_url_2 = get_application_url(
+            "gRPC", app_name="app-2", from_proxy_manager=True
+        )
 
         for do_request in [self._do_http_request, self._do_grpc_request]:
             url1 = http_url_1 if do_request == self._do_http_request else grpc_url_1
@@ -1526,7 +1536,9 @@ class TestDirectIngressBackpressure:
         )
 
         http_url = get_application_url("HTTP", app_name="composite-app")
-        grpc_url = get_application_url("gRPC", app_name="composite-app")
+        grpc_url = get_application_url(
+            "gRPC", app_name="composite-app", from_proxy_manager=True
+        )
 
         num_requests = 10
         for do_request in [self._do_http_request, self._do_grpc_request]:
@@ -1739,7 +1751,7 @@ class TestDirectIngressAutoscaling:
         )
 
     def test_autoscaling_scale_from_and_to_zero(
-        self, _skip_if_ff_not_enabled, serve_instance
+        self, _skip_if_ff_not_enabled, _skip_if_haproxy_enabled, serve_instance
     ):
         signal = SignalActor.remote()
 
@@ -1835,7 +1847,7 @@ def test_disconnect(_skip_if_ff_not_enabled, serve_instance):
     serve.run(DisconnectTest.bind())
 
     http_url = get_application_url("HTTP")
-    grpc_url = get_application_url("gRPC")
+    grpc_url = get_application_url("gRPC", from_proxy_manager=True)
 
     # Test gRPC cancellation
     channel = grpc.insecure_channel(grpc_url)
@@ -1914,7 +1926,9 @@ def test_context_propagation(_skip_if_ff_not_enabled, serve_instance):
     assert response.status_code == 200
     assert response.text == "context-propagation-deployment"
 
-    grpc_url = get_application_url("gRPC", app_name="context-propagation-deployment")
+    grpc_url = get_application_url(
+        "gRPC", app_name="context-propagation-deployment", from_proxy_manager=True
+    )
     channel = grpc.insecure_channel(grpc_url)
     stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
     request = serve_pb2.UserDefinedMessage()
@@ -1955,7 +1969,9 @@ def test_context_propagation_with_child(_skip_if_ff_not_enabled, serve_instance)
     assert response.status_code == 200
     assert response.text == "context-propagation-deployment"
 
-    grpc_url = get_application_url("gRPC", app_name="context-propagation-deployment")
+    grpc_url = get_application_url(
+        "gRPC", app_name="context-propagation-deployment", from_proxy_manager=True
+    )
     channel = grpc.insecure_channel(grpc_url)
     stub = serve_pb2_grpc.UserDefinedServiceStub(channel)
     request = serve_pb2.UserDefinedMessage()
@@ -2003,7 +2019,10 @@ def test_shutdown_replica_only_after_draining_requests(
     )
 
 
-def test_http_routes_endpoint(_skip_if_ff_not_enabled, serve_instance):
+# TODO: haproxy doesn't support /-/routes yet so skipping this test
+def test_http_routes_endpoint(
+    _skip_if_ff_not_enabled, _skip_if_haproxy_enabled, serve_instance
+):
     """Test that the routes endpoint returns pair of routes_prefix and
     app_name of which the replica is serving for.
     """
@@ -2037,7 +2056,10 @@ def test_http_routes_endpoint(_skip_if_ff_not_enabled, serve_instance):
     assert routes == {"/D1": "app1", "/hello/world": "app2"}, routes
 
 
-def test_grpc_list_applications_endpoint(_skip_if_ff_not_enabled, serve_instance):
+# TODO: haproxy doesn't support gRPC ListApplications yet so skipping this test
+def test_grpc_list_applications_endpoint(
+    _skip_if_ff_not_enabled, _skip_if_haproxy_enabled, serve_instance
+):
     """Each replica's gRPC `ListApplications` method should only report the
     single application that replica is serving.
     """
@@ -2289,9 +2311,13 @@ def test_get_serve_instance_details_json_serializable(
                     "targets": [
                         {
                             "ip": node_ip,
-                            "port": 30000,
+                            "port": 8000
+                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+                            else 30000,
                             "instance_id": node_instance_id,
-                            "name": replica.actor_name,
+                            "name": proxy_details.actor_name
+                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+                            else replica.actor_name,
                         },
                     ],
                     "route_prefix": "/",
@@ -2301,9 +2327,13 @@ def test_get_serve_instance_details_json_serializable(
                     "targets": [
                         {
                             "ip": node_ip,
-                            "port": 40000,
+                            "port": 9000
+                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+                            else 40000,
                             "instance_id": node_instance_id,
-                            "name": replica.actor_name,
+                            "name": proxy_details.actor_name
+                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+                            else replica.actor_name,
                         },
                     ],
                     "route_prefix": "/",

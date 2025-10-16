@@ -59,7 +59,7 @@ steps:
 
   - label: ":ray-serve: serve: HAProxy tests"
     parallelism: 2
-    instance_type: medium
+    instance_type: large
     commands:
       - bazel run //ci/ray_ci:test_in_docker -- $(cat anyscale/ci/buildkite/serve_hap_test_names.txt) serve
         --workers "$${BUILDKITE_PARALLEL_JOB_COUNT}" --worker-id "$${BUILDKITE_PARALLEL_JOB}"
