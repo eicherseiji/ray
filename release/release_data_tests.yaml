@@ -159,7 +159,7 @@
   matrix:
     setup:
       scaling: [fixed_size, autoscaling]
-      shuffle_strategy: [sort_shuffle_pull_based]
+      shuffle_strategy: [sort_shuffle_pull_based, hash_shuffle]
       columns:
         - "column08 column13 column14"   # 84 groups
         - "column02 column14"  # 7M groups
@@ -182,7 +182,7 @@
       # too many objects references on the head node. So, we only run it on
       # autoscaling clusters.
       scaling: [autoscaling]
-      shuffle_strategy: [sort_shuffle_pull_based]
+      shuffle_strategy: [sort_shuffle_pull_based, hash_shuffle]
       columns:
         - "column08 column13 column14"   # 84 groups
         - "column02 column14"  # 7M groups
@@ -286,7 +286,7 @@
       # There was a bug in Ray Data that caused GPU memory leak (see #34819).
       # We add this test case to cover this scenario.
       run:
-        script: python streaming_split_benchmark.py --num-workers 10 --early-stop
+        script: python streaming_split_benchmark.py --num-workers 10 --equal-split --early-stop
 
 ################
 # Training tests
@@ -389,11 +389,7 @@
           scaling: autoscaling
           repeat_map_batches: once
       # Autoscaling actor test
-      - with:
-          format: numpy
-          compute: actors
-          scaling: autoscaling
-          repeat_map_batches: once
+      # disabled on rayturbo
 
   cluster:
     cluster_compute: "{{scaling}}_cpu_compute.yaml"
