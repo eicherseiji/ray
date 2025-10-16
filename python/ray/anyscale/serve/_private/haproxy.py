@@ -715,8 +715,11 @@ class HAProxyManager(ProxyActorInterface):
             ]
         )
 
-    async def serving(self) -> None:
+    async def serving(self, wait_for_applications_running: bool = True) -> None:
         """Wait for the HAProxy process to be ready to serve requests."""
+        if not wait_for_applications_running:
+            return
+
         server_up = False
         while not server_up:
             try:
