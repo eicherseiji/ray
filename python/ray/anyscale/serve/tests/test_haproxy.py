@@ -5,6 +5,7 @@ import logging
 import pytest
 import sys
 import threading
+from tempfile import NamedTemporaryFile
 
 import ray
 from ray import serve
@@ -32,6 +33,7 @@ from ray.serve.schema import (
     ServeInstanceDetails,
 )
 from ray.serve.tests.conftest import *  # noqa
+from ray.serve.tests.test_cli_2 import ping_endpoint
 from ray.tests.conftest import call_ray_stop_only  # noqa: F401
 from ray.util.state import list_actors
 
@@ -619,6 +621,50 @@ def test_haproxy_safe_name():
     assert HAProxyManager.get_safe_name("HTTP:test") == "HTTP:test"
     assert HAProxyManager.get_safe_name("HTTP:test/foo") == "HTTP:test.foo"
     assert HAProxyManager.get_safe_name("replica#abc") == "replica-abc"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="File path incorrect on Windows.")
+def test_build_multi_app(ray_start_stop):
+    with NamedTemporaryFile(mode="w+", suffix=".yaml") as tmp:
+        print('Building nodes "TestApp1Node" and "TestApp2Node".')
+        # Build an app
+        subprocess.check_output(
+            [
+                "serve",
+                "build",
+                "ray.serve.tests.test_cli_3.TestApp1Node",
+                "ray.serve.tests.test_cli_3.TestApp2Node",
+                "-o",
+                tmp.name,
+            ]
+        )
+        print("Build succeeded! Deploying node.")
+
+        subprocess.check_output(["serve", "deploy", tmp.name])
+        print("Deploy succeeded!")
+        wait_for_condition(
+            lambda: ping_endpoint("app1") == "wonderful world", timeout=15
+        )
+        print("App 1 is live and reachable over HTTP.")
+        wait_for_condition(
+            lambda: ping_endpoint("app2") == "wonderful world", timeout=15
+        )
+        print("App 2 is live and reachable over HTTP.")
+
+        print("Deleting applications.")
+        app_urls = [
+            get_application_url("HTTP", app_name=app) for app in ["app1", "app2"]
+        ]
+        subprocess.check_output(["serve", "shutdown", "-y"])
+
+        def check_no_apps():
+            for url in app_urls:
+                with pytest.raises(httpx.HTTPError):
+                    _ = httpx.get(url).text
+            return True
+
+        wait_for_condition(check_no_apps, timeout=15)
+        print("Delete succeeded! Node is no longer reachable over HTTP.")
 
 
 def test_haproxy_manager_ready_with_application(ray_shutdown):
