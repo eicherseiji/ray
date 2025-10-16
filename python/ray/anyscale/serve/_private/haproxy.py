@@ -35,6 +35,10 @@ from ray.serve._private.constants import (
     SERVE_CONTROLLER_NAME,
     SERVE_LOGGER_NAME,
     SERVE_NAMESPACE,
+    HEALTHY_MESSAGE,
+    DRAINING_MESSAGE,
+    NO_ROUTES_MESSAGE,
+    NO_REPLICAS_MESSAGE,
 )
 from ray.serve._private.logging_utils import get_component_logger_file_path
 from ray.serve._private.long_poll import LongPollClient, LongPollNamespace
@@ -151,61 +155,14 @@ class HAProxyStats:
 
 
 @dataclass
-class HAProxyConfig:
-    """Configuration for HAProxy."""
+class HealthRouteInfo:
+    """Information regarding how proxy should respond to health and routes requests."""
 
-    socket_path: str = ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH
-    maxconn: int = ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN
-    nbthread: int = ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD
-    stats_port: int = 8404
-    stats_uri: str = "/stats"
-    metrics_port: int = ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT
-    metrics_uri: str = "/metrics"
-    # All timeout values are in seconds
-    timeout_queue_s: Optional[int] = None
-    timeout_connect_s: Optional[int] = None
-    timeout_client_s: Optional[int] = None
-    timeout_server_s: Optional[int] = None
-    timeout_http_request_s: Optional[int] = None
-    custom_global: Dict[str, str] = field(default_factory=dict)
-    custom_defaults: Dict[str, str] = field(default_factory=dict)
-    inject_process_id_header: bool = False
-    reload_id: Optional[str] = None  # Unique ID for each reload
-    enable_so_reuseport: bool = (
-        os.environ.get("SERVE_SOCKET_REUSE_PORT_ENABLED", "0") == "1"
-    )
-
-    pass_health_checks: bool = True
-    health_check_endpoint: str = "/-/healthz"
-    # Global health check parameters (used as defaults for backends)
-    # Number of consecutive failed health checks that must occur before a service instance is marked as unhealthy
-    health_check_fall: Optional[int] = 2
-
-    # Number of consecutive successful health checks required to mark an unhealthy service instance as healthy again
-    health_check_rise: Optional[int] = 2
-
-    # Interval, or the amount of time, between each health check attempt
-    health_check_inter: Optional[str] = "1s"
-    health_check_path: Optional[str] = None  # For HTTP health checks
-
-    http_options: HTTPOptions = field(default_factory=HTTPOptions)
-
-    @property
-    def frontend_host(self) -> str:
-        if self.http_options.host is None or self.http_options.host == "0.0.0.0":
-            return "*"
-
-        return self.http_options.host
-
-    @property
-    def frontend_port(self) -> int:
-        return self.http_options.port
-
-    @property
-    def timeout_http_keep_alive_s(self) -> int:
-        return self.http_options.keep_alive_timeout_s
-
-    # TODO: support custom root_path and https
+    healthy: bool = True
+    status: int = 200
+    health_message: str = HEALTHY_MESSAGE
+    routes_message: str = "{}"
+    routes_content_type: str = "application/json"
 
 
 @dataclass
@@ -273,11 +230,116 @@ class BackendConfig:
     # List of servers in this backend
     servers: List[ServerConfig] = field(default_factory=list)
 
+    # The app name for this backend.
+    app_name: str = field(default_factory=str)
+
     def __str__(self) -> str:
-        return f"BackendConfig(name='{self.name}', path_prefix='{self.path_prefix}', servers={self.servers})"
+        return f"BackendConfig(app_name='{self.app_name}', name='{self.name}', path_prefix='{self.path_prefix}', servers={self.servers})"
 
     def __repr__(self) -> str:
         return str(self)
+
+
+@dataclass
+class HAProxyConfig:
+    """Configuration for HAProxy."""
+
+    socket_path: str = ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH
+    maxconn: int = ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN
+    nbthread: int = ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD
+    stats_port: int = 8404
+    stats_uri: str = "/stats"
+    metrics_port: int = ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT
+    metrics_uri: str = "/metrics"
+    # All timeout values are in seconds
+    timeout_queue_s: Optional[int] = None
+    timeout_connect_s: Optional[int] = None
+    timeout_client_s: Optional[int] = None
+    timeout_server_s: Optional[int] = None
+    timeout_http_request_s: Optional[int] = None
+    custom_global: Dict[str, str] = field(default_factory=dict)
+    custom_defaults: Dict[str, str] = field(default_factory=dict)
+    inject_process_id_header: bool = False
+    reload_id: Optional[str] = None  # Unique ID for each reload
+    enable_so_reuseport: bool = (
+        os.environ.get("SERVE_SOCKET_REUSE_PORT_ENABLED", "0") == "1"
+    )
+    has_received_routes: bool = False
+    has_received_servers: bool = False
+    pass_health_checks: bool = True
+    health_check_endpoint: str = "/-/healthz"
+    # Global health check parameters (used as defaults for backends)
+    # Number of consecutive failed health checks that must occur before a service instance is marked as unhealthy
+    health_check_fall: Optional[int] = 2
+
+    # Number of consecutive successful health checks required to mark an unhealthy service instance as healthy again
+    health_check_rise: Optional[int] = 2
+
+    # Interval, or the amount of time, between each health check attempt
+    health_check_inter: Optional[str] = "1s"
+    health_check_path: Optional[str] = None  # For HTTP health checks
+
+    http_options: HTTPOptions = field(default_factory=HTTPOptions)
+
+    @property
+    def frontend_host(self) -> str:
+        if self.http_options.host is None or self.http_options.host == "0.0.0.0":
+            return "*"
+
+        return self.http_options.host
+
+    @property
+    def frontend_port(self) -> int:
+        return self.http_options.port
+
+    @property
+    def timeout_http_keep_alive_s(self) -> int:
+        return self.http_options.keep_alive_timeout_s
+
+    def build_health_route_info(self, backends: List[BackendConfig]) -> HealthRouteInfo:
+        if not self.has_received_routes:
+            router_ready_for_traffic = False
+            router_message = NO_ROUTES_MESSAGE
+        elif not self.has_received_servers:
+            router_ready_for_traffic = False
+            router_message = NO_REPLICAS_MESSAGE
+        else:
+            router_ready_for_traffic = True
+            router_message = ""
+
+        if not self.pass_health_checks:
+            healthy = False
+            message = DRAINING_MESSAGE
+        elif not router_ready_for_traffic:
+            healthy = False
+            message = router_message
+        else:
+            healthy = True
+            message = HEALTHY_MESSAGE
+
+        if healthy:
+            # Build routes JSON mapping: {"<path_prefix>": "<app_name>", ...}
+            routes = {
+                be.path_prefix: be.app_name
+                for be in backends
+                if be.app_name and be.path_prefix
+            }
+            routes_json = json.dumps(routes, separators=(",", ":"), ensure_ascii=False)
+
+            # Escape for haproxy double-quoted string literal
+            routes_message = routes_json.replace("\\", "\\\\").replace('"', '\\"')
+        else:
+            routes_message = message
+
+        return HealthRouteInfo(
+            healthy=healthy,
+            status=200 if healthy else 503,
+            health_message=message,
+            routes_message=routes_message,
+            routes_content_type="application/json" if healthy else "text/plain",
+        )
+
+    # TODO: support custom root_path and https
 
 
 class ProxyApi(ABC):
@@ -335,7 +397,7 @@ class HAProxyApi(ProxyApi):
 
     def _initialize_directories(self) -> None:
         """Ensure all required directories exist (called once during initialization)."""
-        # Create config file directory
+        # Create the config file directory
         config_dir = os.path.dirname(self.config_file_path)
         os.makedirs(config_dir, exist_ok=True)
 
@@ -427,19 +489,25 @@ class HAProxyApi(ProxyApi):
                 key=lambda be: (-len(be.path_prefix), be.path_prefix),
             )
 
+            health_route_info = self.cfg.build_health_route_info(backends)
+
             # Render healthz rules separately for readability/reuse
             healthz_template = env.from_string(HAPROXY_HEALTHZ_RULES_TEMPLATE)
             healthz_rules = healthz_template.render(
-                {"config": self.cfg, "backends": backends}
+                {
+                    "config": self.cfg,
+                    "backends": backends,
+                    "health_info": health_route_info,
+                }
             )
 
-            # Render main config with embedded healthz rules
             config_template = env.from_string(HAPROXY_CONFIG_TEMPLATE)
             config_content = config_template.render(
                 {
                     "config": self.cfg,
                     "backends": backends,
                     "healthz_rules": healthz_rules,
+                    "route_info": health_route_info,
                 }
             )
 
@@ -648,6 +716,10 @@ class HAProxyApi(ProxyApi):
         backend_configs: Dict[str, BackendConfig],
     ) -> None:
         self.backend_configs = backend_configs
+        self.cfg.has_received_routes = True
+        self.cfg.has_received_servers = self.cfg.has_received_servers or any(
+            len(bc.servers) > 0 for bc in backend_configs.values()
+        )
 
     async def is_running(self) -> bool:
         try:
@@ -689,7 +761,7 @@ class HAProxyManager(ProxyActorInterface):
 
         self.event_loop = get_or_create_event_loop()
 
-        self._target_groups: Optional[List[TargetGroup]] = None
+        self._target_groups: List[TargetGroup] = []
 
         self.long_poll_client = long_poll_client or LongPollClient(
             ray.get_actor(SERVE_CONTROLLER_NAME, namespace=SERVE_NAMESPACE),
@@ -832,6 +904,7 @@ class HAProxyManager(ProxyActorInterface):
         for handler in logger.handlers:
             if isinstance(handler, logging.handlers.MemoryHandler):
                 log_file_path = handler.target.baseFilename
+
         return log_file_path
 
     def _targets_to_servers(self, targets: List[Target]) -> List[ServerConfig]:
@@ -865,10 +938,11 @@ class HAProxyManager(ProxyActorInterface):
             name=self.get_safe_name(f"{target_group.protocol.value}:{route_prefix}"),
             path_prefix=target_group.route_prefix,
             servers=servers,
+            app_name=target_group.app_name,
         )
 
     async def _reload_haproxy(self) -> None:
-        # To avoid dropping updates from long poll, we wait until HAProxy
+        # To avoid dropping updates from a long poll, we wait until HAProxy
         # is up and running before attempting to generate config and reload.
         await self._haproxy_start_task
         await self._haproxy.reload()
@@ -889,6 +963,7 @@ class HAProxyManager(ProxyActorInterface):
         name_to_backend_configs = {
             backend_config.name: backend_config for backend_config in backend_configs
         }
+
         self._haproxy.set_backend_configs(name_to_backend_configs)
         self.event_loop.create_task(self._reload_haproxy())
 

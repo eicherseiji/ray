@@ -2322,6 +2322,7 @@ def test_get_serve_instance_details_json_serializable(
                     ],
                     "route_prefix": "/",
                     "protocol": "HTTP",
+                    "app_name": "" if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY else "default",
                 },
                 {
                     "targets": [
@@ -2338,6 +2339,7 @@ def test_get_serve_instance_details_json_serializable(
                     ],
                     "route_prefix": "/",
                     "protocol": "gRPC",
+                    "app_name": "" if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY else "default",
                 },
             ],
         }

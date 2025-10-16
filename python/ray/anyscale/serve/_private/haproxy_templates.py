@@ -1,8 +1,8 @@
 HAPROXY_HEALTHZ_RULES_TEMPLATE = """    # Health check endpoint
     acl healthcheck path -i {{ config.health_check_endpoint }}
-{%- if not config.pass_health_checks %}
+{%- if not health_info.healthy %}
     # Override: force health checks to fail (used by drain/disable)
-    http-request return status 503 content-type text/plain string "Service Unavailable" if healthcheck
+    http-request return status {{ health_info.status }} content-type text/plain string "{{ health_info.health_message }}" if healthcheck
 {%- elif backends %}
     # 200 if any backend has at least one server UP
 {%-   for backend in backends %}
@@ -10,7 +10,7 @@ HAPROXY_HEALTHZ_RULES_TEMPLATE = """    # Health check endpoint
 {%-   endfor %}
     # Any backend with a server UP passes the health check (OR logic)
 {%-   for backend in backends %}
-    http-request return status 200 content-type text/plain string "OK" if healthcheck backend_{{ backend.name or 'unknown' }}_server_up
+    http-request return status {{ health_info.status }} content-type text/plain string "{{ health_info.health_message }}" if healthcheck backend_{{ backend.name or 'unknown' }}_server_up
 {%-   endfor %}
     http-request return status 503 content-type text/plain string "Service Unavailable" if healthcheck
 {%- endif %}
@@ -43,6 +43,9 @@ frontend prometheus
 frontend http_frontend
     bind {{ config.frontend_host }}:{{ config.frontend_port }}
 {{ healthz_rules|safe }}
+    # Routes endpoint
+    acl routes path -i /-/routes
+    http-request return status {{ route_info.status }} content-type {{ route_info.routes_content_type }} string "{{ route_info.routes_message }}" if routes
 
     {%- if config.inject_process_id_header and config.reload_id %}
     # Inject unique reload ID as header to track which HAProxy instance handled the request (testing only)

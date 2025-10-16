@@ -34,6 +34,8 @@ pytestmark = pytest.mark.skipif(
     reason="ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY not set.",
 )
 
+EXCLUDED_ACL_NAMES = ("healthcheck", "routes")
+
 
 def check_haproxy_ready(stats_port: int, timeout: int = 2) -> bool:
     """Check if HAProxy is ready by verifying the stats endpoint is accessible."""
@@ -200,11 +202,14 @@ def test_generate_config_file_internal(haproxy_api_cleanup):
                 port=8000,
                 keep_alive_timeout_s=55,
             ),
+            has_received_routes=True,
+            has_received_servers=True,
         )
         backend_config_stub = {
             "api_backend": BackendConfig(
                 name="api_backend",
                 path_prefix="/api",
+                app_name="api_backend",
                 timeout_http_keep_alive_s=60,
                 timeout_tunnel_s=60,
                 health_check_path="/api/health",
@@ -219,6 +224,7 @@ def test_generate_config_file_internal(haproxy_api_cleanup):
             "web_backend": BackendConfig(
                 name="web_backend",
                 path_prefix="/web",
+                app_name="web_backend",
                 timeout_connect_s=3,
                 timeout_server_s=25,
                 timeout_http_keep_alive_s=45,
@@ -248,6 +254,7 @@ def test_generate_config_file_internal(haproxy_api_cleanup):
                 with open(config_file_path, "r") as f:
                     actual_content = f.read()
 
+                routes = '{\\"/api\\":\\"api_backend\\",\\"/web\\":\\"web_backend\\"}'
                 # Expected configuration stub (matching the actual template output)
                 expected_config = f"""
 global
@@ -282,9 +289,12 @@ frontend http_frontend
     acl backend_api_backend_server_up nbsrv(api_backend) ge 1
     acl backend_web_backend_server_up nbsrv(web_backend) ge 1
     # Any backend with a server UP passes the health check (OR logic)
-    http-request return status 200 content-type text/plain string "OK" if healthcheck backend_api_backend_server_up
-    http-request return status 200 content-type text/plain string "OK" if healthcheck backend_web_backend_server_up
+    http-request return status 200 content-type text/plain string "success" if healthcheck backend_api_backend_server_up
+    http-request return status 200 content-type text/plain string "success" if healthcheck backend_web_backend_server_up
     http-request return status 503 content-type text/plain string "Service Unavailable" if healthcheck
+    # Routes endpoint
+    acl routes path -i /-/routes
+    http-request return status 200 content-type application/json string "{routes}" if routes
     # Static routing based on path prefixes in decreasing length then alphabetical order
     acl is_api_backend path_beg /api/
     acl is_api_backend path /api
@@ -358,18 +368,22 @@ def test_generate_backends_in_order(haproxy_api_cleanup):
             "foo": BackendConfig(
                 name="foo",
                 path_prefix="/foo",
+                app_name="foo",
             ),
             "foobar": BackendConfig(
                 name="foobar",
                 path_prefix="/foo/bar",
+                app_name="foobar",
             ),
             "bar": BackendConfig(
                 name="bar",
                 path_prefix="/bar",
+                app_name="bar",
             ),
             "default": BackendConfig(
                 name="default",
                 path_prefix="/",
+                app_name="default",
             ),
         }
 
@@ -398,7 +412,7 @@ def test_generate_backends_in_order(haproxy_api_cleanup):
             line = line.strip()
             if line.startswith("acl"):
                 acl_name = line.split(" ")[1]
-                if acl_name == "healthcheck":
+                if acl_name in EXCLUDED_ACL_NAMES:
                     continue
 
                 acl_names.append(acl_name)
@@ -462,6 +476,7 @@ async def test_graceful_reload(haproxy_api_cleanup):
         backend_config = BackendConfig(
             name="test_backend",
             path_prefix="/",
+            app_name="test_app",
             servers=[ServerConfig(name="backend", host="127.0.0.1", port=backend_port)],
             timeout_http_keep_alive_s=58,
         )
@@ -581,9 +596,23 @@ async def test_start(haproxy_api_cleanup):
             stats_port=8404,
             pass_health_checks=True,
             socket_path=socket_path,
+            has_received_routes=True,
+            has_received_servers=True,
         )
 
-        api = HAProxyApi(cfg=config, config_file_path=config_file_path)
+        # Add a backend so routes are populated
+        backend = BackendConfig(
+            name="test_backend",
+            path_prefix="/",
+            app_name="test_app",
+            servers=[ServerConfig(name="server", host="127.0.0.1", port=9999)],
+        )
+
+        api = HAProxyApi(
+            cfg=config,
+            backend_configs={"test_backend": backend},
+            config_file_path=config_file_path,
+        )
 
         haproxy_api_cleanup(api)
 
@@ -598,17 +627,13 @@ async def test_start(haproxy_api_cleanup):
             assert "frontend http_frontend" in config_content
             assert f"bind 127.0.0.1:{config.frontend_port}" in config_content
             assert "acl healthcheck path -i /-/healthz" in config_content
-            # With no backends, no health check rules are generated
-            assert "http-request return status 200" not in config_content
-            assert "http-request return status 503" not in config_content
 
-        # With no backends configured, health endpoint routes to default_backend (404)
         health_response = requests.get(
             f"http://127.0.0.1:{config.frontend_port}/-/healthz", timeout=5
         )
         assert (
-            health_response.status_code == 404
-        ), "Health check with no backends should return 404 (routes to default_backend)"
+            health_response.status_code == 503
+        ), "Health check with no servers up should return 503"
 
         await api.stop()
         assert api._proc is None
@@ -713,6 +738,7 @@ async def test_get_stats_integration(haproxy_api_cleanup):
             "test_backend1": BackendConfig(
                 name="test_backend1",
                 path_prefix="/api",
+                app_name="test_app1",
                 servers=[
                     ServerConfig(name="server1", host="127.0.0.1", port=backend_port1)
                 ],
@@ -721,6 +747,7 @@ async def test_get_stats_integration(haproxy_api_cleanup):
             "test_backend2": BackendConfig(
                 name="test_backend2",
                 path_prefix="/web",
+                app_name="test_app2",
                 servers=[
                     ServerConfig(name="server2", host="127.0.0.1", port=backend_port2)
                 ],
@@ -825,6 +852,7 @@ async def test_update_and_reload(haproxy_api_cleanup):
         backend = BackendConfig(
             name="backend",
             path_prefix="/",
+            app_name="backend_app",
             servers=[ServerConfig(name="server", host="127.0.0.1", port=9999)],
         )
 
@@ -857,6 +885,7 @@ async def test_update_and_reload(haproxy_api_cleanup):
         backend2 = BackendConfig(
             name="backend_2",
             path_prefix="/",
+            app_name="backend_app_2",
             servers=[ServerConfig(name="server", host="127.0.0.1", port=9999)],
         )
 
@@ -937,6 +966,7 @@ async def test_toggle_health_checks(haproxy_api_cleanup):
         backend = BackendConfig(
             name="backend",
             path_prefix="/",
+            app_name="backend_app",
             servers=[ServerConfig(name="server", host="127.0.0.1", port=9999)],
         )
 
@@ -948,6 +978,8 @@ async def test_toggle_health_checks(haproxy_api_cleanup):
             stats_port=8404,
             socket_path=socket_path,
             inject_process_id_header=True,
+            has_received_routes=True,
+            has_received_servers=True,
         )
 
         # Start a real backend server so HAProxy can mark the server UP
@@ -1039,6 +1071,8 @@ async def test_health_endpoint_or_logic_multiple_backends(haproxy_api_cleanup):
             ),
             stats_port=8404,
             socket_path=socket_path,
+            has_received_routes=True,
+            has_received_servers=True,
         )
 
         backend1 = BackendConfig(
@@ -1094,7 +1128,7 @@ async def test_health_endpoint_or_logic_multiple_backends(haproxy_api_cleanup):
             assert (
                 health_response.status_code == 200
             ), "Health check should return 200 when both servers are UP"
-            assert b"OK" in health_response.content
+            assert b"success" in health_response.content
 
             # Stop backend1 server
             backend1_server.should_exit = True
@@ -1111,7 +1145,7 @@ async def test_health_endpoint_or_logic_multiple_backends(haproxy_api_cleanup):
             assert (
                 health_response.status_code == 200
             ), "Health check should return 200 when at least one backend (backend2) is UP (OR logic)"
-            assert b"OK" in health_response.content
+            assert b"success" in health_response.content
 
             # Stop backend2 server as well
             backend2_server.should_exit = True
@@ -1150,6 +1184,317 @@ async def test_health_endpoint_or_logic_multiple_backends(haproxy_api_cleanup):
                 if not backend2_server.should_exit:
                     backend2_server.should_exit = True
                     backend2_thread.join(timeout=5)
+            except Exception:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_backend_removed_results_in_404(haproxy_api_cleanup):
+    """Deploy one backend, verify 200, remove backend, verify 404.
+
+    This validates that when no matching backend exists for a route,
+    HAProxy falls back to the default backend which returns 404.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+        socket_path = os.path.join(temp_dir, "admin.sock")
+
+        # Launch a simple backend server with /fast endpoint
+        backend_port = 9107
+        backend_server, backend_thread = create_test_backend_server(backend_port)
+
+        # Configure HAProxy with one backend under root ('/') so upstream sees '/fast'
+        config = HAProxyConfig(
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=8000,
+                keep_alive_timeout_s=58,
+            ),
+            stats_port=8404,
+            socket_path=socket_path,
+        )
+
+        backend = BackendConfig(
+            name="app_backend",
+            path_prefix="/",
+            app_name="app",
+            servers=[ServerConfig(name="server1", host="127.0.0.1", port=backend_port)],
+            timeout_http_keep_alive_s=58,
+        )
+
+        api = HAProxyApi(
+            cfg=config,
+            backend_configs={backend.name: backend},
+            config_file_path=config_file_path,
+        )
+
+        haproxy_api_cleanup(api)
+
+        try:
+            await api.start()
+
+            # Ensure HAProxy is up (stats endpoint reachable)
+            wait_for_condition(
+                lambda: check_haproxy_ready(config.stats_port),
+                timeout=10,
+                retry_interval_ms=100,
+            )
+
+            # Route exists -> expect 200
+            r = requests.get("http://127.0.0.1:8000/fast", timeout=5)
+            assert r.status_code == 200
+
+            # Remove backend (no targets for /app) and reload
+            api.set_backend_configs({})
+            await api.reload()
+
+            # After removal, route should fall back to default backend -> 404
+            def get_status():
+                resp = requests.get("http://127.0.0.1:8000/fast", timeout=5)
+                return resp.status_code
+
+            # Allow a brief window for reload to take effect
+            wait_for_condition(
+                lambda: get_status() == 404, timeout=5, retry_interval_ms=100
+            )
+
+        finally:
+            try:
+                await api.stop()
+            except Exception:
+                pass
+
+            try:
+                backend_server.should_exit = True
+                backend_thread.join(timeout=5)
+            except Exception:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_routes_endpoint_returns_backends_and_respects_health(
+    haproxy_api_cleanup,
+):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+        socket_path = os.path.join(temp_dir, "admin.sock")
+
+        # Start two backend servers; health endpoint exists at '/-/healthz'.
+        backend_port1 = 9910
+        backend_port2 = 9911
+        backend_server1, backend_thread1 = create_test_backend_server(backend_port1)
+        backend_server2, backend_thread2 = create_test_backend_server(backend_port2)
+
+        # Configure HAProxy with two prefixed backends
+        config = HAProxyConfig(
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=8013,
+                keep_alive_timeout_s=58,
+            ),
+            stats_port=8413,
+            socket_path=socket_path,
+        )
+
+        backend_api = BackendConfig(
+            name="api_backend",
+            path_prefix="/api",
+            app_name="api_app",
+            servers=[
+                ServerConfig(name="server1", host="127.0.0.1", port=backend_port1)
+            ],
+            timeout_http_keep_alive_s=58,
+        )
+        backend_web = BackendConfig(
+            name="web_backend",
+            path_prefix="/web",
+            app_name="web_app",
+            servers=[
+                ServerConfig(name="server2", host="127.0.0.1", port=backend_port2)
+            ],
+            timeout_http_keep_alive_s=58,
+        )
+
+        api = HAProxyApi(
+            cfg=config,
+            backend_configs={
+                backend_api.name: backend_api,
+                backend_web.name: backend_web,
+            },
+            config_file_path=config_file_path,
+        )
+
+        haproxy_api_cleanup(api)
+
+        try:
+            await api.start()
+
+            # Wait for HAProxy to be ready
+            wait_for_condition(
+                lambda: check_haproxy_ready(config.stats_port),
+                timeout=10,
+                retry_interval_ms=100,
+            )
+
+            # Helper to get fresh routes response (avoids connection reuse)
+            def get_routes():
+                with requests.Session() as session:
+                    return session.get("http://127.0.0.1:8013/-/routes", timeout=1)
+
+            # Initial state: no routes
+            r = requests.get("http://127.0.0.1:8013/-/routes", timeout=5)
+            assert r.status_code == 503
+            assert r.headers.get("content-type", "").startswith("text/plain")
+            assert r.text == "Route table is not populated yet."
+
+            # Set has_received_routes but not has_received_servers -> should show "No replicas available"
+            api.cfg.has_received_routes = True
+            api.cfg.has_received_servers = False
+            await api.reload()
+            get_routes().text == "No replicas are available yet.",
+            r = get_routes()
+            assert r.status_code == 503
+            assert r.headers.get("content-type", "").startswith("text/plain")
+
+            # Set both flags -> should show routes JSON
+            api.cfg.has_received_routes = True
+            api.cfg.has_received_servers = True
+            await api.reload()
+
+            # Reload is not synchronous, so we need to wait for the config to be applied
+            def check_json_routes():
+                r = get_routes()
+                return r.status_code == 200 and r.headers.get(
+                    "content-type", ""
+                ).startswith("application/json")
+
+            wait_for_condition(check_json_routes, timeout=5, retry_interval_ms=50)
+            r = get_routes()
+            data = r.json()
+            assert data == {"/api": "api_app", "/web": "web_app"}
+
+            # Disable (simulate draining/unhealthy) -> wait for healthz to flip, then routes 503
+            await api.disable()
+
+            def health_is(code: int):
+                resp = requests.get("http://127.0.0.1:8013/-/healthz", timeout=5)
+                return resp.status_code == code
+
+            wait_for_condition(health_is, timeout=5, retry_interval_ms=100, code=503)
+            r = requests.get("http://127.0.0.1:8013/-/routes", timeout=5)
+            assert r.status_code == 503
+            assert r.headers.get("content-type", "").startswith("text/plain")
+            assert r.text == "This node is being drained."
+
+            # Re-enable -> wait for healthz to flip back, then routes 200
+            await api.enable()
+            wait_for_condition(health_is, timeout=5, retry_interval_ms=100, code=200)
+            r = requests.get("http://127.0.0.1:8013/-/routes", timeout=5)
+            assert r.status_code == 200
+
+        finally:
+            try:
+                await api.stop()
+            except Exception:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_routes_endpoint_no_routes(haproxy_api_cleanup):
+    """When no backends are configured, /-/routes should return {} and respect health gating."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+        socket_path = os.path.join(temp_dir, "admin.sock")
+
+        config = HAProxyConfig(
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=8014,
+                keep_alive_timeout_s=58,
+            ),
+            stats_port=8414,
+            socket_path=socket_path,
+        )
+
+        api = HAProxyApi(
+            cfg=config,
+            backend_configs={},
+            config_file_path=config_file_path,
+        )
+
+        haproxy_api_cleanup(api)
+
+        try:
+            await api.start()
+
+            # Wait for HAProxy to be ready
+            wait_for_condition(
+                lambda: check_haproxy_ready(config.stats_port),
+                timeout=10,
+                retry_interval_ms=100,
+            )
+
+            # Healthy -> expect 200 and empty JSON
+            r = requests.get(
+                f"http://127.0.0.1:{config.frontend_port}/-/routes", timeout=5
+            )
+            assert r.status_code == 503
+            assert r.headers.get("content-type", "").startswith("text/plain")
+            assert r.text == "Route table is not populated yet."
+
+            # Disable -> wait for healthz to flip, then expect 503 with draining message
+            await api.disable()
+
+            def health_is(code: int):
+                resp = requests.get(
+                    f"http://127.0.0.1:{config.frontend_port}/-/healthz", timeout=5
+                )
+                return resp.status_code == code
+
+            wait_for_condition(health_is, timeout=5, retry_interval_ms=100, code=503)
+
+            # Wait for routes endpoint to also return draining message (graceful reload might take a moment)
+            def routes_is_draining():
+                try:
+                    resp = requests.get(
+                        f"http://127.0.0.1:{config.frontend_port}/-/routes", timeout=5
+                    )
+                    return (
+                        resp.status_code == 503
+                        and resp.text == "This node is being drained."
+                    )
+                except Exception:
+                    return False
+
+            wait_for_condition(routes_is_draining, timeout=5, retry_interval_ms=100)
+
+            r = requests.get(
+                f"http://127.0.0.1:{config.frontend_port}/-/routes", timeout=5
+            )
+            assert r.status_code == 503
+            assert r.headers.get("content-type", "").startswith("text/plain")
+            assert r.text == "This node is being drained."
+
+            # Re-enable -> wait for healthz back to 200, then routes 200
+            await api.enable()
+            wait_for_condition(health_is, timeout=5, retry_interval_ms=100, code=503)
+
+            def routes_is_healthy():
+                try:
+                    r = requests.get(
+                        f"http://127.0.0.1:{config.frontend_port}/-/routes", timeout=5
+                    )
+                    return (
+                        r.status_code == 503
+                        and r.text == "Route table is not populated yet."
+                    )
+                except Exception:
+                    return False
+
+            wait_for_condition(routes_is_healthy, timeout=5, retry_interval_ms=100)
+        finally:
+            try:
+                await api.stop()
             except Exception:
                 pass
 

@@ -144,7 +144,7 @@ class AnyscaleServeController(ServeController):
             else:
                 target_groups.extend(
                     self.get_target_groups_for_app_with_no_running_replicas(
-                        route_prefix
+                        route_prefix, app_name
                     )
                 )
 
@@ -203,6 +203,7 @@ class AnyscaleServeController(ServeController):
                     protocol=RequestProtocol.HTTP,
                     route_prefix=route_prefix,
                     targets=http_targets,
+                    app_name=app_name,
                 )
             )
 
@@ -217,13 +218,14 @@ class AnyscaleServeController(ServeController):
                         protocol=RequestProtocol.GRPC,
                         route_prefix=route_prefix,
                         targets=grpc_targets,
+                        app_name=app_name,
                     )
                 )
 
         return target_groups
 
     def get_target_groups_for_app_with_no_running_replicas(
-        self, route_prefix: str
+        self, route_prefix: str, app_name: str
     ) -> List[TargetGroup]:
         """
         For applications that have no running replicas, we return target groups
@@ -240,6 +242,7 @@ class AnyscaleServeController(ServeController):
                     protocol=RequestProtocol.HTTP,
                     route_prefix=route_prefix,
                     targets=http_targets,
+                    app_name=app_name,
                 )
             )
         if grpc_targets:
@@ -248,6 +251,7 @@ class AnyscaleServeController(ServeController):
                     protocol=RequestProtocol.GRPC,
                     route_prefix=route_prefix,
                     targets=grpc_targets,
+                    app_name=app_name,
                 )
             )
         return target_groups
