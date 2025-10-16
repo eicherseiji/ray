@@ -286,7 +286,7 @@
       # There was a bug in Ray Data that caused GPU memory leak (see #34819).
       # We add this test case to cover this scenario.
       run:
-        script: python streaming_split_benchmark.py --num-workers 10 --equal-split --early-stop
+        script: python streaming_split_benchmark.py --num-workers 10 --early-stop
 
 ################
 # Training tests
@@ -389,7 +389,11 @@
           scaling: autoscaling
           repeat_map_batches: once
       # Autoscaling actor test
-      # disabled on rayturbo
+      - with:
+          format: numpy
+          compute: actors
+          scaling: autoscaling
+          repeat_map_batches: once
 
   cluster:
     cluster_compute: "{{scaling}}_cpu_compute.yaml"
