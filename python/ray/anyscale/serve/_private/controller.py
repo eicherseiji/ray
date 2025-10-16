@@ -131,7 +131,12 @@ class AnyscaleServeController(ServeController):
         ]
 
         if not apps:
+            # When HAProxy is enabled and there are no apps, return empty target groups
+            # so that all requests fall through to the default_backend (404)
+            if self._ha_proxy_enabled and from_proxy_manager:
+                return []
             # TODO: Return the http/grpc proxy on the head node if from_proxy_manager is True
+
             return proxy_target_groups
 
         # Create target groups for each application
@@ -236,12 +241,13 @@ class AnyscaleServeController(ServeController):
         target_groups = []
         http_targets = self.proxy_state_manager.get_targets(RequestProtocol.HTTP)
         grpc_targets = self.proxy_state_manager.get_targets(RequestProtocol.GRPC)
+
         if http_targets:
             target_groups.append(
                 TargetGroup(
                     protocol=RequestProtocol.HTTP,
                     route_prefix=route_prefix,
-                    targets=http_targets,
+                    targets=[] if self._ha_proxy_enabled else http_targets,
                     app_name=app_name,
                 )
             )
@@ -250,7 +256,7 @@ class AnyscaleServeController(ServeController):
                 TargetGroup(
                     protocol=RequestProtocol.GRPC,
                     route_prefix=route_prefix,
-                    targets=grpc_targets,
+                    targets=[] if self._ha_proxy_enabled else grpc_targets,
                     app_name=app_name,
                 )
             )

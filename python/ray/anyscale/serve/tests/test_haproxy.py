@@ -823,5 +823,36 @@ def test_haproxy_healthcheck_multiple_apps_and_backends(ray_shutdown):
     serve.shutdown()
 
 
+def test_haproxy_empty_backends_for_scaled_down_apps(ray_shutdown):
+    """Test that HAProxy has no backend servers for deleted apps.
+
+    Verifies that when ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY is True and apps are
+    deleted, the HAProxy stats show the backend is removed or has no servers.
+    """
+    ray.init(num_cpus=4)
+    serve.start()
+
+    @serve.deployment
+    def hello():
+        return "hello"
+
+    # Deploy app with 1 replica
+    serve.run(
+        hello.options(num_replicas=1).bind(), name="test_app", route_prefix="/test"
+    )
+
+    r = httpx.get("http://localhost:8000/test")
+    assert r.status_code == 200
+    assert r.text == "hello"
+
+    # Delete the app - this should remove or empty the backend
+    serve.delete("test_app")
+
+    r = httpx.get("http://localhost:8000/test")
+    assert r.status_code == 404
+
+    serve.shutdown()
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", "-s", __file__]))
