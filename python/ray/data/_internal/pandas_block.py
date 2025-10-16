@@ -572,6 +572,9 @@ class PandasBlockAccessor(OptimizedTableBlockMixin, TableBlockAccessor):
 
                 # Determine the sample size based on max_sample_count
                 sample_size = min(total_size, max_sample_count)
+                # Skip size calculation for empty columns
+                if sample_size == 0:
+                    continue
                 # Following codes can also handel case that sample_size == total_size
                 sampled_data = self._table[column].sample(n=sample_size).values
 
