@@ -433,6 +433,8 @@ class ServeControllerClient:
                     f"Serve application isn't running after {timeout_s}s."
                 )
 
+            self.wait_for_proxies_serving(wait_for_applications_running=True)
+
     def _check_ingress_deployments(
         self, built_apps: Sequence[BuiltApplication]
     ) -> None:
