@@ -266,7 +266,7 @@ TRAIN_GRAFANA_ROWS = [
             NETWORK_THROUGHPUT_PANEL,
             NETWORK_TOTAL_PANEL,
         ],
-        collapsed=True,
+        collapsed=False,
     ),
 ]
 
@@ -338,15 +338,71 @@ TURBO_TRAIN_GRAFANA_PANELS = [
                 expr='sum(DCGM_FI_DEV_POWER_USAGE{{instance=~"$Instance", gpu=~"$GpuIndex", modelName=~"$GpuDeviceName", {global_filters}}}) by (instance, gpu, modelName)',
                 legend="Node IP: {{instance}}, GPU: {{gpu}}, Model: {{modelName}}",
             ),
+            Target(
+                expr='sum(DCGM_FI_DEV_POWER_MGMT_LIMIT{{instance=~"$Instance", gpu=~"$GpuIndex", modelName=~"$GpuDeviceName", {global_filters}}}) by (instance, gpu, modelName)',
+                legend="MAX - Node IP: {{instance}}, GPU: {{gpu}}, Model: {{modelName}}",
+            ),
+        ],
+        fill=0,
+        stack=False,
+    ),
+    # DCGM Profiling Metrics (GPU Pipe Tensor Active)
+    Panel(
+        id=1004,
+        title="GPU Pipe Tensor Active",
+        description="The ratio of cycles during which any tensor pipe is active (of the peak sustained elapsed cycles).",
+        unit="percentunit",
+        targets=[
+            Target(
+                expr='sum(DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{{instance=~"$Instance", gpu=~"$GpuIndex", modelName=~"$GpuDeviceName", {global_filters}}}) by (instance, gpu, modelName)',
+                legend="Node IP: {{instance}}, GPU: {{gpu}}, Model: {{modelName}}",
+            ),
+        ],
+        fill=0,
+        stack=False,
+    ),
+    # DCGM Profiling Metrics (GPU PCIe TX Bytes)
+    Panel(
+        id=1005,
+        title="GPU PCIe TX Bytes",
+        description="The number of bytes of active PCIe tx (transmit) data including both header and payload.",
+        unit="bytes",
+        targets=[
+            Target(
+                expr='sum(DCGM_FI_PROF_PCIE_TX_BYTES{{instance=~"$Instance", gpu=~"$GpuIndex", modelName=~"$GpuDeviceName", {global_filters}}}) by (instance, gpu, modelName)',
+                legend="Node IP: {{instance}}, GPU: {{gpu}}, Model: {{modelName}}",
+            ),
+        ],
+        fill=0,
+        stack=False,
+    ),
+    # DCGM Profiling Metrics (GPU PCIe RX Bytes)
+    Panel(
+        id=1006,
+        title="GPU PCIe RX Bytes",
+        description="The number of bytes of active PCIe rx (read) data including both header and payload.",
+        unit="bytes",
+        targets=[
+            Target(
+                expr='sum(DCGM_FI_PROF_PCIE_RX_BYTES{{instance=~"$Instance", gpu=~"$GpuIndex", modelName=~"$GpuDeviceName", {global_filters}}}) by (instance, gpu, modelName)',
+                legend="Node IP: {{instance}}, GPU: {{gpu}}, Model: {{modelName}}",
+            ),
         ],
         fill=0,
         stack=False,
     ),
 ]
 
-# Currently just adding to "Resource Utilization" row and the worker panels.
-# This is a temporary solution and should be cleaned up.
-TRAIN_GRAFANA_ROWS[1].panels.extend(TURBO_TRAIN_GRAFANA_PANELS)
+# Add TURBO_TRAIN_GRAFANA_PANELS as GPU Utilization Row as all Turbo panels are GPU DCMG metrics
+TRAIN_GRAFANA_ROWS.append(
+    Row(
+        title="GPU Utilization",
+        id=1007,
+        panels=TURBO_TRAIN_GRAFANA_PANELS,
+        collapsed=False,
+    ),
+)
+
 TRAIN_WORKER_PANELS.extend(TURBO_TRAIN_GRAFANA_PANELS)
 
 # Get all panel IDs from both top-level panels and panels within rows
