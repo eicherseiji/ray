@@ -304,7 +304,7 @@ frontend http_frontend
     use_backend web_backend if is_web_backend
     default_backend default_backend
 backend default_backend
-    http-request deny deny_status 404
+    http-request return status 404 content-type text/plain lf-string "Path '%[path]' not found. Ping http://.../-/routes for available routes."
 backend api_backend
     log global
     balance leastconn

@@ -135,8 +135,8 @@ class AnyscaleServeController(ServeController):
             # so that all requests fall through to the default_backend (404)
             if self._ha_proxy_enabled and from_proxy_manager:
                 return []
-            # TODO: Return the http/grpc proxy on the head node if from_proxy_manager is True
 
+            # TODO: Return the http/grpc proxy on the head node if from_proxy_manager is True
             return proxy_target_groups
 
         # Create target groups for each application

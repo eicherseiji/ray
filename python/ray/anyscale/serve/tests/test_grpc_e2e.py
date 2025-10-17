@@ -105,7 +105,12 @@ def test_no_spammy_errors_in_grpc_proxy(ray_instance, tmp_dir):
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    wait_for_condition(check_running)
+    # Since we start Serve in a subprocess which is non-blocking, we won't know
+    # when `serve run` completes (i.e. done waiting on proxies to be serving), so
+    # we query the application until we get a valid response.
+    wait_for_condition(
+        lambda: requests.post("http://localhost:8000").status_code == 200,
+    )
     for _ in range(10):
         assert requests.post("http://localhost:8000").text == "hi"
 

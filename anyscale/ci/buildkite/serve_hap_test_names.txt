@@ -15,6 +15,7 @@
 //python/ray/serve/tests:test_cli_2
 //python/ray/serve/tests:test_controller_recovery
 //python/ray/serve/tests:test_deploy_app
+//python/ray/serve/tests:test_deploy_app_2
 //python/ray/serve/tests:test_deployment_version
 //python/ray/serve/tests:test_failure
 //python/ray/serve/tests:test_fastapi

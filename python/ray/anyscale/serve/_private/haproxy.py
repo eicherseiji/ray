@@ -827,13 +827,24 @@ class HAProxyManager(ProxyActorInterface):
         if not wait_for_applications_running:
             return
 
-        server_up = False
-        while not server_up:
+        ready_to_serve = False
+        while not ready_to_serve:
             try:
+                all_backends = set()
+                ready_backends = set()
                 stats = await self._haproxy.get_all_stats()
-                server_up = any(
-                    any(s.is_up for s in servers.values()) for servers in stats.values()
-                )
+                for backend, servers in stats.items():
+                    # The backend name is suffixed with the protocol. We omit
+                    # grpc backends for now since they aren't supported yet.
+                    if backend.lower().startswith("grpc"):
+                        continue
+
+                    all_backends.add(backend)
+                    for server in servers.values():
+                        if server.is_up:
+                            ready_backends.add(backend)
+
+                ready_to_serve = all_backends == ready_backends
             except Exception:
                 pass
             await asyncio.sleep(0.2)
