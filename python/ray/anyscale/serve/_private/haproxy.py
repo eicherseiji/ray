@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import fcntl
 import io
 import json
 import logging
@@ -515,8 +516,15 @@ class HAProxyApi(ProxyApi):
             if not config_content.endswith("\n"):
                 config_content += "\n"
 
+            # Use file locking to prevent concurrent writes from multiple processes
+            # This is important in test environments where multiple nodes may run
+            # on the same machine
             with open(self.config_file_path, "w") as f:
-                f.write(config_content)
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    f.write(config_content)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
             logger.debug(
                 f"Succesfully generated HAProxy configuration: {self.config_file_path}."
