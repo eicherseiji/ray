@@ -611,7 +611,7 @@ def test_haproxy_metrics(ray_shutdown):
     assert metrics_response.status_code == 200
 
     http_backend_metrics = (
-        'haproxy_backend_http_responses_total{proxy="HTTP:",code="2xx"} 1'
+        'haproxy_backend_http_responses_total{proxy="http-",code="2xx"} 1'
     )
     assert http_backend_metrics in metrics_response.text
 
@@ -620,8 +620,9 @@ def test_haproxy_metrics(ray_shutdown):
 
 def test_haproxy_safe_name():
     """Test that the safe name is generated correctly."""
-    assert HAProxyManager.get_safe_name("HTTP:test") == "HTTP:test"
-    assert HAProxyManager.get_safe_name("HTTP:test/foo") == "HTTP:test.foo"
+    assert HAProxyManager.get_safe_name("HTTP-test_foo.bar") == "HTTP-test_foo.bar"
+    assert HAProxyManager.get_safe_name("HTTP:test") == "HTTP_test"
+    assert HAProxyManager.get_safe_name("HTTP:test/foo") == "HTTP_test.foo"
     assert HAProxyManager.get_safe_name("replica#abc") == "replica-abc"
 
 
@@ -781,7 +782,7 @@ def test_haproxy_healthcheck_multiple_apps_and_backends(ray_shutdown):
     SOCKET_PATH = "/tmp/haproxy-serve/admin.sock"
 
     def route_to_backend(route: str) -> str:
-        return f"HTTP:{route.lstrip('/')}"
+        return f"http-{route.lstrip('/')}"
 
     def haproxy_show_stat() -> str:
         result = subprocess.run(

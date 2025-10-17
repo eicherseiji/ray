@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import re
 import time
 
 from abc import ABC, abstractmethod
@@ -971,7 +972,10 @@ class HAProxyManager(ProxyActorInterface):
         # be `HTTP:`.
         route_prefix = target_group.route_prefix.lstrip("/")
         return BackendConfig(
-            name=self.get_safe_name(f"{target_group.protocol.value}:{route_prefix}"),
+            # TODO: use app name instead of route prefix
+            name=self.get_safe_name(
+                f"{target_group.protocol.value.lower()}-{route_prefix}"
+            ),
             path_prefix=target_group.route_prefix,
             servers=servers,
             app_name=target_group.app_name,
@@ -1010,7 +1014,9 @@ class HAProxyManager(ProxyActorInterface):
     @staticmethod
     def get_safe_name(name: str) -> str:
         """Get a safe label name for the haproxy config."""
-        return name.replace("/", ".").replace("#", "-")
+        name = name.replace("#", "-").replace("/", ".")
+        # replace all remaining non-alphanumeric and non-{".", "_", "-"} with "_"
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", name)
 
     def _dump_ingress_replicas_for_testing(self, route: str) -> Set[ReplicaID]:
         """Return the set of replica IDs for targets matching the given route.
