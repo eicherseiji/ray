@@ -35,6 +35,11 @@ defaults
     log global
     option httplog
     option abortonclose
+    # Normalize 502 and 504 errors to 500 per Serve's default behavior
+    {%- if config.error_file_path %}
+    errorfile 502 {{ config.error_file_path }}
+    errorfile 504 {{ config.error_file_path }}
+    {%- endif %}
 frontend prometheus
     bind :{{ config.metrics_port }}
     mode http

@@ -276,6 +276,9 @@ defaults
     log global
     option httplog
     option abortonclose
+    # Normalize 502 and 504 errors to 500 per Serve's default behavior
+    errorfile 502 {temp_dir}/500.http
+    errorfile 504 {temp_dir}/500.http
 frontend prometheus
     bind :9101
     mode http
@@ -899,9 +902,11 @@ async def test_update_and_reload(haproxy_api_cleanup):
             actual_content = f.read()
             assert "backend_2" in actual_content
 
-        # The original process should eventually exit once the reload completes.
-        await asyncio.sleep(0.5)
-        assert original_proc.returncode is not None
+        wait_for_condition(
+            lambda: not process_exists(original_pid),
+            timeout=5,
+            retry_interval_ms=100,
+        )
 
 
 @pytest.mark.asyncio
@@ -1189,12 +1194,8 @@ async def test_health_endpoint_or_logic_multiple_backends(haproxy_api_cleanup):
 
 
 @pytest.mark.asyncio
-async def test_backend_removed_results_in_404(haproxy_api_cleanup):
-    """Deploy one backend, verify 200, remove backend, verify 404.
-
-    This validates that when no matching backend exists for a route,
-    HAProxy falls back to the default backend which returns 404.
-    """
+async def test_errorfile_creation_and_config(haproxy_api_cleanup):
+    """Test that the errorfile is created and configured correctly for both 502 and 504."""
     with tempfile.TemporaryDirectory() as temp_dir:
         config_file_path = os.path.join(temp_dir, "haproxy.cfg")
         socket_path = os.path.join(temp_dir, "admin.sock")
@@ -1214,6 +1215,45 @@ async def test_backend_removed_results_in_404(haproxy_api_cleanup):
             socket_path=socket_path,
         )
 
+        api = HAProxyApi(cfg=config, config_file_path=config_file_path)
+        haproxy_api_cleanup(api)
+
+        # Verify the error file was created during initialization
+        expected_error_file_path = os.path.join(temp_dir, "500.http")
+        assert os.path.exists(
+            expected_error_file_path
+        ), "Error file 500.http should be created"
+        assert (
+            api.cfg.error_file_path == expected_error_file_path
+        ), "Error file path should be set in config"
+
+        # Verify the error file content
+        with open(expected_error_file_path, "r") as ef:
+            error_content = ef.read()
+            assert (
+                "HTTP/1.1 500 Internal Server Error" in error_content
+            ), "Error file should contain 500 status"
+            assert (
+                "Content-Type: text/plain" in error_content
+            ), "Error file should contain content-type header"
+            assert (
+                "Internal Server Error" in error_content
+            ), "Error file should contain error message"
+
+        # Start HAProxy and verify config contains errorfile directives
+        await api.start()
+
+        # Verify config file contains errorfile directives for both 502 and 504 pointing to the same file
+        with open(config_file_path, "r") as f:
+            config_content = f.read()
+            assert (
+                f"errorfile 502 {expected_error_file_path}" in config_content
+            ), "HAProxy config should contain 502 errorfile directive"
+            assert (
+                f"errorfile 504 {expected_error_file_path}" in config_content
+            ), "HAProxy config should contain 504 errorfile directive"
+
+        await api.stop()
         backend = BackendConfig(
             name="app_backend",
             path_prefix="/",

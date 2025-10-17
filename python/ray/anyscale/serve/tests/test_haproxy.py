@@ -3,8 +3,10 @@ import asyncio
 import httpx
 import logging
 import pytest
+import requests
 import sys
 import threading
+import time
 from tempfile import NamedTemporaryFile
 
 import ray
@@ -700,6 +702,64 @@ def test_haproxy_manager_ready_with_application(ray_shutdown):
     wait_for_condition(lambda: httpx.get("http://localhost:8000/test").text == "hello")
 
     serve.shutdown()
+
+
+def test_504_error_translated_to_500(ray_shutdown, monkeypatch):
+    """Test that HAProxy translates 504 Gateway Timeout errors to 500 Internal Server Error."""
+    monkeypatch.setenv("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S", "2")
+    monkeypatch.setenv("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S", "1")
+
+    ray.init(num_cpus=8)
+    serve.start(http_options=dict(port=8003))
+
+    @serve.deployment
+    class TimeoutDeployment:
+        def __call__(self, request):
+            # Sleep for 3 seconds, longer than HAProxy's 2s timeout
+            # Use regular time.sleep (not async) to avoid event loop issues
+            time.sleep(3)
+            return "This should not be reached"
+
+    serve.run(TimeoutDeployment.bind(), name="timeout_app", route_prefix="/test")
+
+    url = get_application_url("HTTP", app_name="timeout_app")
+
+    # HAProxy should timeout after 2s and return 504->500
+    # Client timeout is 10s to ensure HAProxy times out first
+    response = requests.get(f"{url}/test", timeout=10)
+
+    # Verify we got 500 (translated from 504), not 504 or 200
+    assert (
+        response.status_code == 500
+    ), f"Expected 500 Internal Server Error (translated from 504), got {response.status_code}"
+    assert (
+        "Internal Server Error" in response.text
+    ), f"Response should contain 'Internal Server Error' message, got: {response.text}"
+
+
+def test_502_error_translated_to_500(ray_shutdown):
+    """Test that HAProxy translates 502 Bad Gateway errors to 500 Internal Server Error."""
+    ray.init(num_cpus=8)
+    serve.start(http_options=dict(port=8003))
+
+    @serve.deployment
+    class BrokenDeployment:
+        def __call__(self, request):
+            # Always raise an exception to simulate backend failure
+            raise RuntimeError("Simulated backend failure for 502 error")
+
+    serve.run(
+        BrokenDeployment.bind(), name="broken_app", route_prefix="/test", blocking=False
+    )
+    url = get_application_url("HTTP", app_name="broken_app")
+    response = requests.get(f"{url}/test", timeout=5)
+
+    assert (
+        response.status_code == 500
+    ), f"Expected 500 Internal Server Error, got {response.status_code}"
+    assert (
+        "Internal Server Error" in response.text
+    ), "Response should contain 'Internal Server Error' message"
 
 
 def test_haproxy_healthcheck_multiple_apps_and_backends(ray_shutdown):

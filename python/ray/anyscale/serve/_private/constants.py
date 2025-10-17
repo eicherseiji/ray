@@ -66,6 +66,19 @@ ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT = int(
     os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT", "9101")
 )
 
+# HAProxy timeout configurations (in seconds, None = no timeout)
+ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S = (
+    int(os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S"))
+    if os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S")
+    else None
+)
+
+ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S = (
+    int(os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S"))
+    if os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S")
+    else None
+)
+
 # For now, this is used only for testing. In the suite of tests that
 # use gRPC to send requests, we flip this flag on.
 ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = (

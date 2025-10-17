@@ -21,6 +21,8 @@ from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT,
     ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD,
     ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH,
+    ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S,
+    ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S,
 )
 from ray.anyscale.serve._private.haproxy_templates import (
     HAPROXY_CONFIG_TEMPLATE,
@@ -254,9 +256,9 @@ class HAProxyConfig:
     metrics_uri: str = "/metrics"
     # All timeout values are in seconds
     timeout_queue_s: Optional[int] = None
-    timeout_connect_s: Optional[int] = None
+    timeout_connect_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S
     timeout_client_s: Optional[int] = None
-    timeout_server_s: Optional[int] = None
+    timeout_server_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S
     timeout_http_request_s: Optional[int] = None
     custom_global: Dict[str, str] = field(default_factory=dict)
     custom_defaults: Dict[str, str] = field(default_factory=dict)
@@ -394,17 +396,32 @@ class HAProxyApi(ProxyApi):
         self._proc = None
 
         # Ensure required directories exist during initialization
-        self._initialize_directories()
+        self._initialize_directories_and_error_files()
 
-    def _initialize_directories(self) -> None:
-        """Ensure all required directories exist (called once during initialization)."""
-        # Create the config file directory
+    def _initialize_directories_and_error_files(self) -> None:
+        """
+        Ensures all required directories exist, creates a unified 500 error file,
+        and assigns its path to self.cfg.error_file_path. Called once during initialization.
+        """
+        # Create a config file directory
         config_dir = os.path.dirname(self.config_file_path)
         os.makedirs(config_dir, exist_ok=True)
 
-        # Create socket directory
+        # Create a socket directory
         socket_dir = os.path.dirname(self.cfg.socket_path)
         os.makedirs(socket_dir, exist_ok=True)
+
+        # Create a single error file for both 502 and 504 errors
+        # Both will be normalized to 500 Internal Server Error
+        error_file_path = os.path.join(config_dir, "500.http")
+        with open(error_file_path, "w") as ef:
+            ef.write("HTTP/1.1 500 Internal Server Error\r\n")
+            ef.write("Content-Type: text/plain\r\n")
+            ef.write("Content-Length: 21\r\n")
+            ef.write("\r\n")
+            ef.write("Internal Server Error")
+
+        self.cfg.error_file_path = error_file_path
 
     def _is_running(self) -> bool:
         """Check if the HAProxy process is still running."""
