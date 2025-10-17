@@ -304,7 +304,7 @@ frontend http_frontend
     use_backend web_backend if is_web_backend
     default_backend default_backend
 backend default_backend
-    http-request return status 404 content-type text/plain lf-string "Path '%[path]' not found. Ping http://.../-/routes for available routes."
+    http-request return status 404 content-type text/plain lf-string "Path \'%[path]\' not found. Ping http://.../-/routes for available routes."
 backend api_backend
     log global
     balance leastconn
@@ -1497,6 +1497,63 @@ async def test_routes_endpoint_no_routes(haproxy_api_cleanup):
                 await api.stop()
             except Exception:
                 pass
+
+
+@pytest.mark.asyncio
+async def test_404_error_message(haproxy_api_cleanup):
+    """Test that HAProxy returns the correct 404 error message for non-existent paths."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file_path = os.path.join(temp_dir, "haproxy.cfg")
+        socket_path = os.path.join(temp_dir, "admin.sock")
+
+        # Create a backend that serves /api
+        backend = BackendConfig(
+            name="api_backend",
+            path_prefix="/api",
+            servers=[],  # No servers, but we're testing the 404 path anyway
+        )
+
+        config = HAProxyConfig(
+            http_options=HTTPOptions(
+                host="127.0.0.1",
+                port=8000,
+            ),
+            stats_port=8404,
+            socket_path=socket_path,
+        )
+
+        api = HAProxyApi(
+            cfg=config,
+            backend_configs={"api_backend": backend},
+            config_file_path=config_file_path,
+        )
+
+        await api.start()
+        haproxy_api_cleanup(api)
+
+        # Verify HAProxy is running
+        assert api._is_running(), "HAProxy should be running"
+
+        # Wait for HAProxy to be ready
+        wait_for_condition(
+            lambda: check_haproxy_ready(config.stats_port),
+            timeout=10,
+            retry_interval_ms=500,
+        )
+
+        # Request a non-existent path and verify the error message
+        response = requests.get(
+            f"http://127.0.0.1:{config.frontend_port}/nonexistent",
+            timeout=5,
+        )
+
+        assert response.status_code == 404, "Should return 404 for non-existent path"
+        assert (
+            "Path '/nonexistent' not found" in response.text
+        ), f"Error message should contain path. Got: {response.text}"
+        assert (
+            "Ping http://.../-/routes for available routes" in response.text
+        ), f"Error message should contain routes hint. Got: {response.text}"
 
 
 if __name__ == "__main__":
