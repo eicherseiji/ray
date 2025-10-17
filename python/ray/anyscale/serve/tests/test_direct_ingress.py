@@ -1010,8 +1010,18 @@ def test_only_running_apps_are_used_for_target_groups(
 
     http_ports = get_http_ports(first_only=False)
     grpc_ports = get_grpc_ports(first_only=False)
-    assert set(http_ports) == {30000, 30001, 8000}
-    assert set(grpc_ports) == {40000, 40001, 9000}
+    # In HAProxy mode, we don't return itself or the Serve proxy as a target yet.
+    # This will change when we support scale to/from zero.
+    assert (
+        set(http_ports) == {30000, 30001}
+        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+        else {30000, 30001, 8000}
+    )
+    assert (
+        set(grpc_ports) == {40000, 40001}
+        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+        else {40000, 40001, 9000}
+    )
 
     ray.get(signal_actor.send.remote())
 
