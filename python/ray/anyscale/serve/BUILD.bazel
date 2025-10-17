@@ -12,6 +12,8 @@ py_test_module_list(
             "tests/test_direct_ingress.py",
             "tests/test_direct_ingress_standalone.py",
             "tests/test_haproxy.py",
+            "tests/test_haproxy_api.py",
+            "tests/test_metrics_haproxy.py",
         ],
     ),
     tags = [
@@ -151,6 +153,8 @@ py_test_module_list(
     },
     files = [
         "tests/test_haproxy.py",
+        "tests/test_haproxy_api.py",
+        "tests/test_metrics_haproxy.py",
     ],
     tags = [
         "exclusive",
