@@ -171,6 +171,7 @@ def test_default_shuffle_aggregator_args(ray_start_regular_shared):
             "num_cpus": 0.0,
             "memory": 131072,
             "scheduling_strategy": "SPREAD",
+            "allow_out_of_order_execution": True,
         } == args
 
         # - 4 partitions per aggregator
@@ -189,6 +190,7 @@ def test_default_shuffle_aggregator_args(ray_start_regular_shared):
             "num_cpus": 0.02,
             "memory": 83886080,
             "scheduling_strategy": "SPREAD",
+            "allow_out_of_order_execution": True,
         } == args
 
 
