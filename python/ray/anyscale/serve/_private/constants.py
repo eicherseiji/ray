@@ -79,6 +79,24 @@ ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S = (
     else None
 )
 
+# Number of consecutive failed server health checks that must occur
+# before haproxy marks the server as down.
+ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL", "2")
+)
+
+# Number of consecutive successful server health checks that must occur
+# before haproxy marks the server as up.
+ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE", "2")
+)
+
+# Time interval between each haproxy health check attempt. Also the
+# timeout of each health check before being considered as failed.
+ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER = os.environ.get(
+    "ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER", "5s"
+)
+
 # For now, this is used only for testing. In the suite of tests that
 # use gRPC to send requests, we flip this flag on.
 ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = (

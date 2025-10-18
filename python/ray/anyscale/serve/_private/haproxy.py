@@ -18,6 +18,9 @@ import ray
 from ray._common.utils import get_or_create_event_loop
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
+    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL,
+    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE,
+    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER,
     ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN,
     ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT,
     ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD,
@@ -274,14 +277,14 @@ class HAProxyConfig:
     health_check_endpoint: str = "/-/healthz"
     # Global health check parameters (used as defaults for backends)
     # Number of consecutive failed health checks that must occur before a service instance is marked as unhealthy
-    health_check_fall: Optional[int] = 2
+    health_check_fall: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL
 
     # Number of consecutive successful health checks required to mark an unhealthy service instance as healthy again
-    health_check_rise: Optional[int] = 2
+    health_check_rise: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE
 
     # Interval, or the amount of time, between each health check attempt
-    health_check_inter: Optional[str] = "1s"
-    health_check_path: Optional[str] = None  # For HTTP health checks
+    health_check_inter: Optional[str] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER
+    health_check_path: Optional[str] = "/-/healthz"  # For HTTP health checks
 
     http_options: HTTPOptions = field(default_factory=HTTPOptions)
 
