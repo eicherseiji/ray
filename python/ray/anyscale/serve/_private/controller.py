@@ -74,7 +74,7 @@ class AnyscaleServeController(ServeController):
             grpc_options=grpc_options,
         )
 
-        self._last_broadcasted_target_groups: Dict[Tuple[str, str], TargetGroup] = []
+        self._last_broadcasted_target_groups: List[TargetGroup] = []
 
     def get_target_groups(
         self,
@@ -328,18 +328,14 @@ class AnyscaleServeController(ServeController):
             from_proxy_manager=True,
         )
 
-        protocol_route_to_target_group = {
-            (tg.protocol, tg.route_prefix): tg for tg in target_groups
-        }
-
-        # Check if target groups have changed by comparing the mappings directly
-        if self._last_broadcasted_target_groups == protocol_route_to_target_group:
+        # Check if target groups have changed by comparing the objects directly
+        if self._last_broadcasted_target_groups == target_groups:
             return
 
         self.long_poll_host.notify_changed(
             {LongPollNamespace.TARGET_GROUPS: target_groups}
         )
-        self._last_broadcasted_target_groups = protocol_route_to_target_group
+        self._last_broadcasted_target_groups = target_groups
 
     def allocate_replica_port(
         self, node_id: str, replica_id: str, protocol: RequestProtocol

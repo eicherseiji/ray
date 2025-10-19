@@ -611,7 +611,7 @@ def test_haproxy_metrics(ray_shutdown):
     assert metrics_response.status_code == 200
 
     http_backend_metrics = (
-        'haproxy_backend_http_responses_total{proxy="http-",code="2xx"} 1'
+        'haproxy_backend_http_responses_total{proxy="http-default",code="2xx"} 1'
     )
     assert http_backend_metrics in metrics_response.text
 
@@ -781,8 +781,8 @@ def test_haproxy_healthcheck_multiple_apps_and_backends(ray_shutdown):
     # Helpers
     SOCKET_PATH = "/tmp/haproxy-serve/admin.sock"
 
-    def route_to_backend(route: str) -> str:
-        return f"http-{route.lstrip('/')}"
+    def app_to_backend(app: str) -> str:
+        return f"http-{app}"
 
     def haproxy_show_stat() -> str:
         result = subprocess.run(
@@ -842,7 +842,7 @@ def test_haproxy_healthcheck_multiple_apps_and_backends(ray_shutdown):
         )
 
     # Wait until each backend shows 2 primary servers in HAProxy stats
-    backends = [route_to_backend(route) for _, route in apps]
+    backends = [app_to_backend(app) for app, _ in apps]
     for be in backends:
         wait_for_condition(lambda b=be: len(list_primary_servers(b)) >= 2, timeout=20)
 

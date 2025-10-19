@@ -744,8 +744,11 @@ class HAProxyApi(ProxyApi):
         self,
         backend_configs: Dict[str, BackendConfig],
     ) -> None:
+        if backend_configs:
+            self.cfg.has_received_routes = True
+
         self.backend_configs = backend_configs
-        self.cfg.has_received_routes = True
+
         self.cfg.has_received_servers = self.cfg.has_received_servers or any(
             len(bc.servers) > 0 for bc in backend_configs.values()
         )
@@ -967,17 +970,12 @@ class HAProxyManager(ProxyActorInterface):
     def _target_group_to_backend(self, target_group: TargetGroup) -> BackendConfig:
         """Convert a target group to a backend name."""
         servers = self._targets_to_servers(target_group.targets)
-        # The name is of format <protocol>:<route_prefix>, with slashes
-        # in the route prefix converted to dots and the leading slash
-        # removed from the route prefix, e.g. if the protocol is HTTP
-        # and the route prefix is /foo/bar, the backend label becomes
-        # `HTTP:foo.bar`, and if the route prefix is /, the label will
-        # be `HTTP:`.
-        route_prefix = target_group.route_prefix.lstrip("/")
+        # The name is lowercased and formatted as <protocol>-<app_name>. Special
+        # characters in the name are converted to comply with haproxy config's
+        # allowed characters, e.g. `#` -> `-`.
         return BackendConfig(
-            # TODO: use app name instead of route prefix
             name=self.get_safe_name(
-                f"{target_group.protocol.value.lower()}-{route_prefix}"
+                f"{target_group.protocol.value.lower()}-{target_group.app_name}"
             ),
             path_prefix=target_group.route_prefix,
             servers=servers,
