@@ -26,10 +26,12 @@ def _patch_class_with_dataclass_mixin(original_cls, dataclass_mixin_cls):
     mixin_instance = dataclass_mixin_cls()
     for field in fields(dataclass_mixin_cls):
         setattr(original_cls, field.name, getattr(mixin_instance, field.name))
-    # Patch properties
+    # Patch properties and methods
     for name, method in dataclass_mixin_cls.__dict__.items():
-        if isinstance(method, property):
-            setattr(original_cls, name, method)
+        if isinstance(method, property) or callable(method):
+            # Skip special methods and private methods starting with underscore
+            if not name.startswith("_"):
+                setattr(original_cls, name, method)
 
 
 def _patch_default_execution_callbacks():

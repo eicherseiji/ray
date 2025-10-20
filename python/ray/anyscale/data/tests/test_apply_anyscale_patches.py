@@ -36,6 +36,19 @@ def test__patch_class_with_dataclass_mixin(ray_start_regular_shared):
     # Check that DataContext has custom rayturbo methods and attributes.
     assert hasattr(ray.data.DataContext, "checkpoint_config")
 
+    # Check that GPU join configuration is available
+    ctx = ray.data.DataContext.get_current()
+    assert hasattr(ctx, "use_polars_gpu_join")
+    assert hasattr(ctx, "polars_gpu_device_id")
+    assert hasattr(ctx, "polars_gpu_raise_on_fail")
+    assert hasattr(ctx, "validate_polars_gpu_config")
+    assert hasattr(ctx, "get_polars_gpu_engine")
+
+    # Test default values
+    assert ctx.use_polars_gpu_join is False
+    assert ctx.polars_gpu_device_id is None
+    assert ctx.polars_gpu_raise_on_fail is False
+
 
 def test_patch_aggregations(ray_start_regular_shared):
     _patch_aggregations()

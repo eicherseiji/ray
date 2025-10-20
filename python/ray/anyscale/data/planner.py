@@ -74,6 +74,14 @@ def plan_join_op(
             JoinOperatorWithPolars,
         )
 
+        # Validate GPU configuration if GPU joins are enabled
+        if (
+            hasattr(data_context, "use_polars_gpu_join")
+            and data_context.use_polars_gpu_join
+        ):
+            if hasattr(data_context, "validate_polars_gpu_config"):
+                data_context.validate_polars_gpu_config()
+
         return JoinOperatorWithPolars(
             data_context=data_context,
             left_input_op=physical_children[0],

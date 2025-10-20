@@ -7,6 +7,7 @@ from ray.data._internal.execution.operators.join import (
     JoinOperator,
     JoiningShuffleAggregation,
 )
+from ray.data._internal.util import _check_import
 
 
 import logging
@@ -82,6 +83,10 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
         assert (
             self.data_context.use_polars_join
         ), "use_polars_join must be set to True in the DataContext"
+
+        _check_import(self, module="pyarrow", package="pyarrow")
+        _check_import(self, module="polars", package="polars")
+
         import polars as pl
 
         left_on, right_on = list(self._left_key_col_names), list(
@@ -158,7 +163,46 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
             if duplicate_columns:
                 joined = joined.drop(duplicate_columns)
 
-        supported = joined.collect().to_arrow()
+        # Determine execution engine
+        gpu_engine = None
+        if (
+            hasattr(self.data_context, "use_polars_gpu_join")
+            and self.data_context.use_polars_gpu_join
+            and hasattr(self.data_context, "get_polars_gpu_engine")
+        ):
+            gpu_engine = self.data_context.get_polars_gpu_engine()
+
+        # Execute with appropriate engine
+        if gpu_engine is not None:
+            try:
+                import polars as pl
+
+                with pl.Config() as cfg:
+                    cfg.set_verbose(True)
+                    supported = joined.collect(engine=gpu_engine).to_arrow()
+            except (NotImplementedError, ImportError) as e:
+                # Handle specific GPU execution failures
+                if (
+                    hasattr(self.data_context, "polars_gpu_raise_on_fail")
+                    and self.data_context.polars_gpu_raise_on_fail
+                ):
+                    raise
+                # Log the specific GPU failure and fall back to CPU
+                logger.debug(f"GPU join not supported, falling back to CPU: {e}")
+                # Fall back to CPU - this is the only place CPU execution happens for GPU case
+                supported = joined.collect().to_arrow()
+            except Exception as e:
+                # Handle other unexpected failures
+                if (
+                    hasattr(self.data_context, "polars_gpu_raise_on_fail")
+                    and self.data_context.polars_gpu_raise_on_fail
+                ):
+                    raise
+                logger.debug(f"GPU join failed unexpectedly, falling back to CPU: {e}")
+                supported = joined.collect().to_arrow()
+        else:
+            # Direct CPU execution when GPU is not enabled
+            supported = joined.collect().to_arrow()
 
         # Add back unsupported columns (join type logic is in should_index_* variables)
         supported = self._postprocess(
