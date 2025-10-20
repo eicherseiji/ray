@@ -7,8 +7,8 @@ import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List
-
+from typing import Dict, List, Callable
+from typing import Optional
 import ray
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
@@ -83,11 +83,27 @@ class FakeAutoscalingCoordinator(AutoscalingCoordinator):
     """A lightweight implementation for testing.
 
     This implementation always allocates the requested resources to the requester.
-    It ignores the `expire_after_s`, `request_remaining`, and `priority` parameters.
+    It doesn't support the `priority` parameter.
     """
 
-    def __init__(self):
-        self._allocated_resources: Dict[str, List[ResourceDict]] = {}
+    @dataclass
+    class Allocation:
+        resources: List[ResourceDict]
+        expiration_time_s: float
+        request_remaining: bool
+
+    def __init__(
+        self,
+        get_time: Callable[[], float] = time.time,
+        remaining: Optional[List[ResourceDict]] = None,
+    ):
+        if remaining is None:
+            remaining = []
+
+        self._get_time = get_time
+        self._remaining = remaining
+
+        self._allocations: Dict[str, self.Allocation] = {}
 
     def request_resources(
         self,
@@ -97,14 +113,41 @@ class FakeAutoscalingCoordinator(AutoscalingCoordinator):
         request_remaining: bool = False,
         priority: ResourceRequestPriority = ResourceRequestPriority.MEDIUM,
     ) -> None:
-        self._allocated_resources[requester_id] = resources
+        if priority != ResourceRequestPriority.MEDIUM:
+            raise NotImplementedError(
+                "This fake implementation doesn't support the `priority` parameter."
+            )
+
+        self._allocations[requester_id] = self.Allocation(
+            resources=resources,
+            expiration_time_s=self._get_time() + expire_after_s,
+            request_remaining=request_remaining,
+        )
 
     def cancel_request(self, requester_id: str):
-        if requester_id in self._allocated_resources:
-            del self._allocated_resources[requester_id]
+        if requester_id in self._allocations:
+            del self._allocations[requester_id]
 
     def get_allocated_resources(self, requester_id: str) -> List[ResourceDict]:
-        return self._allocated_resources.get(requester_id, [])
+        allocation = self._allocations.get(requester_id)
+
+        # Case 1: The requester hasn't been allocated any resources.
+        if allocation is None:
+            return []
+
+        # Case 2: The requester's allocation has expired.
+        elif allocation.expiration_time_s < self._get_time():
+            del self._allocations[requester_id]
+            return []
+
+        # Case 3: The requester has been allocated resources, and they haven't expired.
+        else:
+            allocated_resources = allocation.resources
+
+            if allocation.request_remaining:
+                allocated_resources.extend(self._remaining)
+
+            return allocated_resources
 
 
 @dataclass

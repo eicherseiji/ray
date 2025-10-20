@@ -117,6 +117,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         get_node_counts: Callable[[], Dict[NodeType, int]] = _get_node_types_and_counts,
         cluster_scaling_up_factor: float = DEFAULT_CLUSTER_SCALING_UP_FACTOR,
         min_gap_between_autoscaling_requests_s: int = MIN_GAP_BETWEEN_AUTOSCALING_REQUESTS_S,
+        autoscaling_request_expire_time_s: int = AUTOSCALING_REQUEST_EXPIRE_TIME_S,
     ):
         """Initialize the cluster autoscaler.
 
@@ -134,6 +135,8 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             cluster_scaling_up_factor: The factor to scale up the cluster.
             min_gap_between_autoscaling_requests_s: The minimum gap between two
                 autoscaling requests. This is exposed as a seam for testing.
+            autoscaling_request_expire_time_s: The number of seconds before requested
+                resources expire. This is exposed as a seam for testing.
         """
         assert all(isinstance(op, SupportsClusterAutoscaling) for op in ops)
 
@@ -149,6 +152,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         self._min_gap_between_autoscaling_requests = (
             min_gap_between_autoscaling_requests_s
         )
+        self._autoscaling_request_expire_time_s = autoscaling_request_expire_time_s
 
         self._last_request_time = 0
         self._requester_id = f"data-{execution_id}"
@@ -220,9 +224,6 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
                 tags={"requester": self._requester_id, "operator": repr(op)},
             )
 
-        if not productivities:
-            return
-
         # Limit the frequency of autoscaling requests.
         now = time.time()
         if now - self._last_request_time < self._min_gap_between_autoscaling_requests:
@@ -230,6 +231,14 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         # Log metrics. We don't log these every call because they can be spammy.
         logger.debug(f"Operator productivities: {productivities}")
+
+        # Still send an empty request if we couldn't compute any scores. This is
+        # necessary to renew our registration with the autoscaling coordinator and
+        # ensure we request the remaining resources for operators that don't support
+        # autoscaling.
+        if not productivities:
+            self._send_resource_request([])
+            return []
 
         bottleneck_op = min(productivities, key=productivities.get)
         needed_node_types = self._find_needed_node_types(bottleneck_op)
@@ -284,7 +293,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         self._autoscaling_coordinator.request_resources(
             requester_id=self._requester_id,
             resources=resource_request,
-            expire_after_s=self.AUTOSCALING_REQUEST_EXPIRE_TIME_S,
+            expire_after_s=self._autoscaling_request_expire_time_s,
             request_remaining=True,
         )
         self._last_request_time = time.time()

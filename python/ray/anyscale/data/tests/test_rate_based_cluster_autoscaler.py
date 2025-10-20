@@ -102,6 +102,41 @@ def test_autoscaler_doubles_nodes_for_bottleneck_op():
     ]
 
 
+def test_autoscaler_requests_resources_if_no_scalable_ops():
+    """Test the autoscaler requests resources even if no ops support cluster
+    autoscaling.
+
+    Some operators don't support cluster autoscaling. If a DAG only contains these
+    operators, the autoscaler should still request the remaining resources. Otherwise,
+    the operators won't get any resources and the pipeline won't run.
+    """
+    time = 0
+    autoscaler = RateBasedClusterAutoscaler(
+        ops=[],
+        execution_id="test",
+        productivity_calculator=StubProductivityCalculator({}),
+        autoscaling_coordinator=FakeAutoscalingCoordinator(
+            get_time=lambda: time, remaining=[{"CPU": 1}]
+        ),
+        get_node_counts=lambda: {NodeType({"CPU": 1}): 1},
+        min_gap_between_autoscaling_requests_s=0,
+        autoscaling_request_expire_time_s=1,
+    )
+
+    # The autoscaler should immediately request the remaining resources.
+    assert autoscaler.get_total_resources() == ExecutionResources(cpu=1)
+
+    # After the specified `autoscaling_request_expire_time_s` has passed, the autoscaler
+    # shouldn't get any resources.
+    time += 2
+    assert autoscaler.get_total_resources() == ExecutionResources()
+
+    # Calling `try_trigger_scaling` should re-request the remaining resources, even if
+    # there aren't any scalable ops.
+    autoscaler.try_trigger_scaling()
+    assert autoscaler.get_total_resources() == ExecutionResources(cpu=1)
+
+
 @dataclass
 class StubResourceManager:
     global_limits: Optional[ExecutionResources] = None
