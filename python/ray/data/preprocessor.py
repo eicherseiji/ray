@@ -399,6 +399,12 @@ class Preprocessor(abc.ABC):
         """
         return BatchFormat.PANDAS
 
+    def get_input_columns(self) -> List[str]:
+        return getattr(self, "columns", [])
+
+    def get_output_columns(self) -> List[str]:
+        return getattr(self, "output_columns", [])
+
     def __getstate__(self) -> Dict[str, Any]:
         state = self.__dict__.copy()
         # Exclude unpicklable attributes

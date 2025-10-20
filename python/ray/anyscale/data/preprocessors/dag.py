@@ -37,12 +37,8 @@ class _AggregationNode:
         self.dependencies: Set[_AggregationNode] = set()
         self.dependents: Set[_AggregationNode] = set()
         self.completed: bool = False
-        self.read_cols: Set[str] = set(getattr(preprocessor, "columns", []))
-        self.write_cols: Set[str] = set(
-            getattr(
-                preprocessor, "output_columns", getattr(preprocessor, "columns", [])
-            )
-        )
+        self.read_cols: Set[str] = set(preprocessor.get_input_columns())
+        self.write_cols: Set[str] = set(preprocessor.get_output_columns())
 
     def is_ready(self):
         """Returns True if all dependent nodes have completed."""
