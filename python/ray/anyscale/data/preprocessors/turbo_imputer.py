@@ -5,11 +5,13 @@ import numpy as np
 from ray.anyscale.data.preprocessors.turbo_preprocessor import TurboPreprocessor
 from ray.data.aggregate import Mean, ValueCounter
 import ray.data.preprocessors as preprocessors_module
+from ray.data.preprocessors.version_support import SerializablePreprocessor
 
 # Store original reference before potential patching
 _OriginalSimpleImputer = preprocessors_module.SimpleImputer
 
 
+@SerializablePreprocessor(version=1, identifier="io.ray.preprocessors.simple_imputer")
 class SimpleImputer(_OriginalSimpleImputer, TurboPreprocessor):
     def _fit(self, ds):
         if self.strategy == "mean":
