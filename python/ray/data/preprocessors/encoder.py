@@ -297,8 +297,6 @@ class OneHotEncoder(Preprocessor):
     def _transform_pandas(self, df: pd.DataFrame):
         _validate_df(df, *self.columns)
 
-        # This is a copy of self.safe_get for the apply() call below.
-
         # Compute new one-hot encoded columns
         for column, output_column in zip(self.columns, self.output_columns):
             stats = self.stats_[f"unique_values({column})"]
@@ -747,7 +745,6 @@ def compute_unique_value_indices(
             )
 
     def get_pd_value_counts_per_column(col: pd.Series) -> Dict:
-
         # special handling for lists
         if _is_series_composed_of_lists(col):
             if encode_lists:
