@@ -188,22 +188,6 @@ class PandasBlockColumnAccessor(BlockColumnAccessor):
     ) -> Optional[U]:
         return self._column.quantile(q=q)
 
-    def top_k(self, k: int) -> BlockColumn:
-        return pd.Series(self._column.value_counts().head(k).index)
-
-    def unique(self) -> BlockColumn:
-
-        pd = lazy_import_pandas()
-        try:
-            return pd.Series(self._column.unique())
-        except ValueError as e:
-            if "buffer source array is read-only" in str(e):
-                # NOTE: Pandas < 2.0 somehow tries to update the underlying buffer
-                #       when computing unique values hence failing
-                return pd.Series(self._column.copy().unique())
-            else:
-                raise
-
     def value_counts(self) -> Optional[Dict[str, List]]:
         value_counts = self._column.value_counts()
         if len(value_counts) == 0:
@@ -226,6 +210,23 @@ class PandasBlockColumnAccessor(BlockColumnAccessor):
         df = pl.from_pandas(self._column.to_frame())
         hashes = df.hash_rows().cast(pl.Int64, wrap_numerical=True)
         return hashes.to_pandas()
+
+    def top_k(self, k: int) -> BlockColumn:
+        return pd.Series(self._column.value_counts().head(k).index)
+
+    def unique(self) -> BlockColumn:
+
+        pd = lazy_import_pandas()
+
+        try:
+            return pd.Series(self._column.unique())
+        except ValueError as e:
+            if "buffer source array is read-only" in str(e):
+                # NOTE: Pandas < 2.0 somehow tries to update the underlying buffer
+                #       when computing unique values hence failing
+                return pd.Series(self._column.copy().unique())
+            else:
+                raise
 
     def flatten(self) -> BlockColumn:
 
