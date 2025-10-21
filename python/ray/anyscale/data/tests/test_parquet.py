@@ -25,6 +25,7 @@ from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
 )
 
+from packaging.version import parse as parse_version
 import ray
 from ray.data.tests.conftest import *  # noqa
 
@@ -1555,6 +1556,53 @@ def test_read_files_with_checkpoint_ids_no_skip_fragment(
     assert len(tables) > 0, "Expected some tables to be returned"
     total_rows = sum(table.num_rows for table in tables)
     assert total_rows == 100, f"Expected 100 rows (no filtering), got {total_rows}"
+
+
+@pytest.mark.skipif(
+    parse_version(pa.__version__) < parse_version("12.0.1"),
+    reason="PyArrow version < 12.0.1 does not support batch_readahead parameter",
+)
+def test_parquet_reader_batch_readahead_parameter(tmp_path):
+    """Test that batch_readahead parameter is handled correctly."""
+    from ray.anyscale.data._internal.readers.parquet_reader import ParquetReader
+
+    path = os.path.join(tmp_path, "test_data.parquet")
+    ray.data.range_tensor(100, shape=(10,)).write_parquet(path)
+
+    # Test 1: Default behavior
+    reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        to_batches_kwargs={},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+    assert reader._DEFAULT_BATCH_READAHEAD == ParquetReader._DEFAULT_BATCH_READAHEAD
+    assert "batch_readahead" in reader._to_batches_kwargs
+    assert (
+        reader._to_batches_kwargs["batch_readahead"]
+        == ParquetReader._DEFAULT_BATCH_READAHEAD
+    )
+
+    # Test 2: Custom to_batches_kwargs override
+    reader = ParquetReader(
+        schema=None,
+        dataset_kwargs={},
+        batch_size=None,
+        to_batches_kwargs={"batch_readahead": 6},
+        block_udf=None,
+        include_paths=False,
+        partitioning=None,
+        target_block_size=None,
+    )
+    assert reader._to_batches_kwargs["batch_readahead"] == 6
+
+    # Test 3: Reading works
+    ds = ray.data.read_parquet(path)
+    assert ds.count() == 100
 
 
 if __name__ == "__main__":

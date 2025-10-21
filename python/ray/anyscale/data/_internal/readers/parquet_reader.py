@@ -1,6 +1,5 @@
 import functools
 import logging
-import os
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import (
@@ -20,7 +19,9 @@ import numpy as np
 import pyarrow
 import pyarrow as pa
 import pyarrow.dataset
+from packaging.version import parse as parse_version
 
+from ray._private.arrow_utils import get_pyarrow_version
 from ray.data.expressions import Expr
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -57,6 +58,7 @@ from ray.anyscale.data.checkpoint.util import (
     exclude_checkpointed_rows,
 )
 
+from ray._private.ray_constants import env_integer
 
 from .file_reader import FileReader
 from .in_memory_size_estimator import (
@@ -66,6 +68,9 @@ from .supports_metadata import MetadataType, SupportsMetadata, SupportsSchema
 
 
 logger = logging.getLogger(__name__)
+
+
+_MIN_PYARROW_VERSION_TO_BATCHES_READAHEAD = parse_version("12.0.1")
 
 
 class ParquetFileChunkMetadata(ChunkMetadata):
@@ -108,13 +113,13 @@ class ParquetFileChunker:
         # Initialize the chunker with a target chunk size, use this order of precedence:
         # 1. Target chunk size passed in to the constructor
         # 2. Environment variable RAY_TURBO_PARQUET_CHUNKER_TARGET_CHUNK_SIZE
-        # 3. Default target chunk size
+        # 3. DataContext.parquet_chunker_target_chunk_size
+        # 4. Default target chunk size
+        ctx = DataContext.get_current()
         if target_chunk_size is not None:
             self._target_chunk_size = target_chunk_size
-        elif os.environ.get("RAY_TURBO_PARQUET_CHUNKER_TARGET_CHUNK_SIZE"):
-            self._target_chunk_size = int(
-                os.environ.get("RAY_TURBO_PARQUET_CHUNKER_TARGET_CHUNK_SIZE")
-            )
+        elif ctx.parquet_chunker_target_chunk_size is not None:
+            self._target_chunk_size = ctx.parquet_chunker_target_chunk_size
         else:
             self._target_chunk_size = self._DEFAULT_TARGET_CHUNK_SIZE
 
@@ -145,11 +150,34 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     using multiple threads.
     """
 
-    _NUM_THREADS_PER_TASK = 16
+    # Refer to https://arrow.apache.org/docs/12.0/python/generated/pyarrow.dataset.Dataset.html#pyarrow.dataset.Dataset.to_batches
+    # `batch_readahead` was introduced in PyArrow 12.0.1.
+    #
+    # NOTE: Both of these parameters are tuned up accordingly to balance memory
+    #       footprint of individual read tasks
+    #
+    #       See https://anyscale1.atlassian.net/browse/DATA-1408 for more details
+    _NUM_THREADS_PER_TASK = env_integer(
+        "RAY_DATA_PARQUET_READER_NUM_THREADS_PER_TASK", 4
+    )
+    _DEFAULT_BATCH_READAHEAD = env_integer("RAY_DATA_PARQUET_READER_BATCH_READAHEAD", 8)
+    # NOTE: We're essentially stubbing out this value as currently
+    #       ParquetReader reads individual fragments independently
+    _DEFAULT_FRAGMENT_READAHEAD = 1
+
+    # Refer https://arrow.apache.org/docs/python/generated/pyarrow.dataset.Dataset.html#pyarrow.dataset.Dataset.to_batches
+    # In `to_batches`,
+    # - `batch_readahead` = `_DEFAULT_BATCH_READAHEAD` (16 by default), but overriden to _BATCH_READAHEAD
+    # - `fragment_readahead` = `_DEFAULT_FRAGMENT_READAHEAD` (4 by default), but only kicks in when `use_threads` is True
+    # - `use_threads` = False (Set to False by default in `_read_batches_from`)
+    # Based on the above,
+    # Worst case in-memory usage = `target_block_size` * `_NUM_THREADS_PER_TASK` * `_BATCH_READAHEAD` = 128MB * 5 * 4 = 2.5GB
 
     # NOTE: This is a mostly arbitrary number. We might get better performance by tuning
     # this value.
-    _COUNT_ROWS_BATCH_SIZE = 16
+    _COUNT_ROWS_BATCH_SIZE = env_integer(
+        "RAY_DATA_PARQUET_READER_COUNT_ROWS_BATCH_SIZE", 16
+    )
 
     def __init__(
         self,
@@ -181,6 +209,16 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             target_block_size: The target block size to use for reading the data.
         """
         super().__init__()
+
+        # Override default `batch_readahead` value to reduce amount of data prefetched
+        # by Pyarrow's Parquet reader
+        if get_pyarrow_version() >= _MIN_PYARROW_VERSION_TO_BATCHES_READAHEAD:
+            to_batches_kwargs.setdefault(
+                "batch_readahead", self._DEFAULT_BATCH_READAHEAD
+            )
+            to_batches_kwargs.setdefault(
+                "fragment_readahead", self._DEFAULT_FRAGMENT_READAHEAD
+            )
 
         self._schema = schema
         self._dataset_kwargs = dataset_kwargs

@@ -25,6 +25,10 @@ DEFAULT_DISABLE_LARGE_FILE_CHUNKING = env_bool(
     "RAY_TURBO_DISABLE_LARGE_FILE_CHUNKING", False
 )
 
+DEFAULT_PARQUET_READER_TARGET_CHUNK_SIZE = env_integer(
+    "RAY_TURBO_PARQUET_CHUNKER_TARGET_CHUNK_SIZE", None
+)
+
 # Default setting for GPU-accelerated Polars joins (disabled by default for compatibility)
 DEFAULT_USE_POLARS_GPU_JOIN = env_bool("RAY_TURBO_USE_POLARS_GPU_JOIN", False)
 
@@ -164,6 +168,11 @@ class DataContextMixin:
     # Controls whether large file chunking is disabled.
     # When True, uses WholeFileChunker instead of more granular chunking strategies.
     disable_large_file_chunking: bool = DEFAULT_DISABLE_LARGE_FILE_CHUNKING
+
+    # Target chunk size for ParquetFileChunker
+    parquet_chunker_target_chunk_size: Optional[
+        int
+    ] = DEFAULT_PARQUET_READER_TARGET_CHUNK_SIZE
 
     @property
     def checkpoint_config(self) -> Optional[CheckpointConfig]:
