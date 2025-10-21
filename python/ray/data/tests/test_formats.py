@@ -10,6 +10,7 @@ from fsspec.implementations.local import LocalFileSystem
 
 import ray
 from ray.data.block import BlockAccessor
+from ray.data.datasource import DummyOutputDatasink
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
 from ray.data.tests.conftest import *  # noqa
 from ray.data.tests.mock_http_server import *  # noqa
@@ -223,6 +224,23 @@ def test_read_example_data(ray_start_regular_shared, tmp_path):
             "variety": "Setosa",
         }
     ]
+
+
+def test_write_datasink(ray_start_regular_shared):
+    output = DummyOutputDatasink()
+    ds = ray.data.range(10, override_num_blocks=2)
+    ds.write_datasink(output)
+    assert output.num_ok == 1
+    assert output.num_failed == 0
+    assert ray.get(output.data_sink.get_rows_written.remote()) == 10
+
+    output.enabled = False
+    ds = ray.data.range(10, override_num_blocks=2)
+    with pytest.raises(ValueError):
+        ds.write_datasink(output, ray_remote_args={"max_retries": 0})
+    assert output.num_ok == 1
+    assert output.num_failed == 1
+    assert ray.get(output.data_sink.get_rows_written.remote()) == 10
 
 
 @pytest.mark.skipif(

@@ -133,6 +133,7 @@ class OrdinalEncoder(Preprocessor):
         return self
 
     def _transform_pandas(self, df: pd.DataFrame):
+
         _validate_df(df, *self.columns)
 
         def encode_list(element: list, *, name: str):
@@ -599,6 +600,12 @@ class LabelEncoder(Preprocessor):
         df[self.label_column] = df[self.output_column].transform(column_label_decoder)
         return df
 
+    def get_input_columns(self) -> List[str]:
+        return [self.label_column]
+
+    def get_output_columns(self) -> List[str]:
+        return [self.output_column]
+
     def __repr__(self):
         return f"{self.__class__.__name__}(label_column={self.label_column!r}, output_column={self.output_column!r})"
 
@@ -705,6 +712,7 @@ class Categorizer(Preprocessor):
             post_key_fn=lambda col: col,
             columns=columns_to_get,
         )
+
         return self
 
     def _transform_pandas(self, df: pd.DataFrame):
