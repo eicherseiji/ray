@@ -17,14 +17,21 @@ import ray
 
 from ray._common.utils import get_or_create_event_loop
 from ray.anyscale.serve._private.constants import (
+    ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG,
     ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
+    ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S,
     ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL,
     ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE,
     ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER,
+    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER,
+    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER,
     ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN,
     ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT,
     ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD,
+    ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_BASE,
+    ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_FILE,
     ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH,
+    ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S,
     ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S,
     ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S,
 )
@@ -231,6 +238,12 @@ class BackendConfig:
     # Interval, or the amount of time, between each health check attempt
     health_check_inter: Optional[str] = None
 
+    # The interval between two consecutive health checks when the server is in any of the transition states: UP - transitionally DOWN or DOWN - transitionally UP
+    health_check_fastinter: Optional[str] = None
+
+    # The interval between two consecutive health checks when the server is in the DOWN state
+    health_check_downinter: Optional[str] = None
+
     # Endpoint path that the health check mechanism will send a request to. It's typically an HTTP path.
     health_check_path: Optional[str] = "/-/healthz"
 
@@ -239,6 +252,72 @@ class BackendConfig:
 
     # The app name for this backend.
     app_name: str = field(default_factory=str)
+
+    def build_health_check_config(self, global_config: "HAProxyConfig") -> dict:
+        """Build health check configuration for HAProxy backend.
+
+        Returns a dict with:
+        - health_path: path for HTTP health checks (or None)
+        - default_server_directive: complete "default-server" line with all params
+        """
+        # Resolve values: backend-specific overrides global defaults
+        fall = (
+            self.health_check_fall
+            if self.health_check_fall is not None
+            else global_config.health_check_fall
+        )
+        rise = (
+            self.health_check_rise
+            if self.health_check_rise is not None
+            else global_config.health_check_rise
+        )
+        inter = (
+            self.health_check_inter
+            if self.health_check_inter is not None
+            else global_config.health_check_inter
+        )
+        fastinter = (
+            self.health_check_fastinter
+            if self.health_check_fastinter is not None
+            else global_config.health_check_fastinter
+        )
+        downinter = (
+            self.health_check_downinter
+            if self.health_check_downinter is not None
+            else global_config.health_check_downinter
+        )
+        health_path = (
+            self.health_check_path
+            if self.health_check_path is not None
+            else global_config.health_check_path
+        )
+
+        # Build default-server directive
+        parts = []
+
+        # Add optional fastinter/downinter only if provided
+        if fastinter is not None:
+            parts.append(f"fastinter {fastinter}")
+        if downinter is not None:
+            parts.append(f"downinter {downinter}")
+
+        # Add required fall/rise/inter if any are set
+        if fall is not None:
+            parts.append(f"fall {fall}")
+        if rise is not None:
+            parts.append(f"rise {rise}")
+        if inter is not None:
+            parts.append(f"inter {inter}")
+
+        # Always add check at the end
+        parts.append("check")
+
+        default_server_directive = "default-server " + " ".join(parts)
+
+        return {
+            "health_path": health_path,
+            "default_server_directive": default_server_directive,
+        }
 
     def __str__(self) -> str:
         return f"BackendConfig(app_name='{self.app_name}', name='{self.name}', path_prefix='{self.path_prefix}', servers={self.servers})"
@@ -252,6 +331,11 @@ class HAProxyConfig:
     """Configuration for HAProxy."""
 
     socket_path: str = ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH
+    server_state_base: str = ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_BASE
+    server_state_file: str = ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_FILE
+    # Enable HAProxy optimizations (server state persistence, etc.)
+    # Disabled by default to prevent test suite interference
+    enable_hap_optimization: bool = ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG
     maxconn: int = ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN
     nbthread: int = ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD
     stats_port: int = 8404
@@ -261,9 +345,10 @@ class HAProxyConfig:
     # All timeout values are in seconds
     timeout_queue_s: Optional[int] = None
     timeout_connect_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S
-    timeout_client_s: Optional[int] = None
+    timeout_client_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S
     timeout_server_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S
     timeout_http_request_s: Optional[int] = None
+    hard_stop_after_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S
     custom_global: Dict[str, str] = field(default_factory=dict)
     custom_defaults: Dict[str, str] = field(default_factory=dict)
     inject_process_id_header: bool = False
@@ -284,6 +369,17 @@ class HAProxyConfig:
 
     # Interval, or the amount of time, between each health check attempt
     health_check_inter: Optional[str] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER
+
+    # The interval between two consecutive health checks when the server is in any of the transition states: UP - transitionally DOWN or DOWN - transitionally UP
+    health_check_fastinter: Optional[
+        str
+    ] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER
+
+    # The interval between two consecutive health checks when the server is in the DOWN state
+    health_check_downinter: Optional[
+        str
+    ] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER
+
     health_check_path: Optional[str] = "/-/healthz"  # For HTTP health checks
 
     http_options: HTTPOptions = field(default_factory=HTTPOptions)
@@ -415,6 +511,11 @@ class HAProxyApi(ProxyApi):
         socket_dir = os.path.dirname(self.cfg.socket_path)
         os.makedirs(socket_dir, exist_ok=True)
 
+        # Create a server state directory only if optimization is enabled
+        if self.cfg.enable_hap_optimization:
+            server_state_dir = os.path.dirname(self.cfg.server_state_file)
+            os.makedirs(server_state_dir, exist_ok=True)
+
         # Create a single error file for both 502 and 504 errors
         # Both will be normalized to 500 Internal Server Error
         error_file_path = os.path.join(config_dir, "500.http")
@@ -443,6 +544,8 @@ class HAProxyApi(ProxyApi):
         # Add any extra args (like -sf for graceful reload)
         args.extend(extra_args)
 
+        logger.debug(f"Starting HAProxy with args: {args}")
+
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
@@ -452,16 +555,29 @@ class HAProxyApi(ProxyApi):
         await self._wait_for_hap_availability(proc)
         return proc
 
+    async def _save_server_state(self) -> None:
+        """Save the server state to the file."""
+        server_state = await self._send_socket_command("show servers state")
+        with open(self.cfg.server_state_file, "w") as f:
+            f.write(server_state)
+
     async def _graceful_reload(self) -> None:
         """Perform a graceful reload of HAProxy by starting a new process with -sf."""
         try:
             old_proc = self._proc
             await self._wait_for_hap_availability(old_proc)
 
+            # Save server state if optimization is enabled
+            if self.cfg.enable_hap_optimization:
+                await self._save_server_state()
+
             # Start new HAProxy process with -sf flag to gracefully take over from old process
-            self._proc = await self._start_and_wait_for_haproxy(
-                "-sf", str(old_proc.pid)
-            )
+            # Use -x socket transfer for seamless reloads if optimization is enabled
+            reload_args = ["-sf", str(old_proc.pid)]
+            if self.cfg.enable_hap_optimization:
+                reload_args.extend(["-x", self.cfg.socket_path])
+
+            self._proc = await self._start_and_wait_for_haproxy(*reload_args)
 
             logger.info(
                 "Successfully performed graceful HAProxy reload with process restart."
@@ -511,6 +627,15 @@ class HAProxyApi(ProxyApi):
                 key=lambda be: (-len(be.path_prefix), be.path_prefix),
             )
 
+            # Enrich backends with precomputed health check configuration strings
+            backends_with_health_config = [
+                {
+                    "backend": backend,
+                    "health_config": backend.build_health_check_config(self.cfg),
+                }
+                for backend in backends
+            ]
+
             health_route_info = self.cfg.build_health_route_info(backends)
 
             # Render healthz rules separately for readability/reuse
@@ -528,6 +653,7 @@ class HAProxyApi(ProxyApi):
                 {
                     "config": self.cfg,
                     "backends": backends,
+                    "backends_with_health_config": backends_with_health_config,
                     "healthz_rules": healthz_rules,
                     "route_info": health_route_info,
                 }

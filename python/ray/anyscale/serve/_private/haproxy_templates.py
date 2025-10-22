@@ -23,6 +23,13 @@ HAPROXY_CONFIG_TEMPLATE = """global
     stats timeout 30s
     maxconn {{ config.maxconn }}
     nbthread {{ config.nbthread }}
+    {%- if config.enable_hap_optimization %}
+    server-state-base {{ config.server_state_base }}
+    server-state-file {{ config.server_state_file }}
+    {%- endif %}
+    {%- if config.hard_stop_after_s is not none %}
+    hard-stop-after {{ config.hard_stop_after_s }}s
+    {%- endif %}
 defaults
     mode http
     option log-health-checks
@@ -35,10 +42,16 @@ defaults
     log global
     option httplog
     option abortonclose
+    {%- if config.enable_hap_optimization %}
+    option idle-close-on-response
+    {%- endif %}
     # Normalize 502 and 504 errors to 500 per Serve's default behavior
     {%- if config.error_file_path %}
     errorfile 502 {{ config.error_file_path }}
     errorfile 504 {{ config.error_file_path }}
+    {%- endif %}
+    {%- if config.enable_hap_optimization %}
+    load-server-state-from-file global
     {%- endif %}
 frontend prometheus
     bind :{{ config.metrics_port }}
@@ -65,7 +78,9 @@ frontend http_frontend
     default_backend default_backend
 backend default_backend
     http-request return status 404 content-type text/plain lf-string "Path \'%[path]\' not found. Ping http://.../-/routes for available routes."
-{%- for backend in backends %}
+{%- for item in backends_with_health_config %}
+{%- set backend = item.backend %}
+{%- set hc = item.health_config %}
 backend {{ backend.name or 'unknown' }}
     log global
     balance leastconn
@@ -95,22 +110,12 @@ backend {{ backend.name or 'unknown' }}
     timeout tunnel {{ backend.timeout_tunnel_s }}s
     {%- endif %}
     # Health check configuration - use backend-specific or global defaults
-    {%- set fall_param = backend.health_check_fall if backend.health_check_fall is not none else config.health_check_fall -%}
-    {%- set rise_param = backend.health_check_rise if backend.health_check_rise is not none else config.health_check_rise -%}
-    {%- set inter_param = backend.health_check_inter if backend.health_check_inter is not none else config.health_check_inter -%}
-    {%- set health_path = backend.health_check_path if backend.health_check_path is not none else config.health_check_path -%}
-    {%- if health_path %}
+    {%- if hc.health_path %}
     # HTTP health check with custom path
-    option httpchk GET {{ health_path }}
+    option httpchk GET {{ hc.health_path }}
     http-check expect status 200
     {%- endif %}
-    {%- if fall_param is not none and rise_param is not none and inter_param is not none %}
-    default-server fall {{ fall_param }} rise {{ rise_param }} inter {{ inter_param }} check
-    {%- elif fall_param is not none or rise_param is not none or inter_param is not none %}
-    default-server{% if fall_param is not none %} fall {{ fall_param }}{% endif %}{% if rise_param is not none %} rise {{ rise_param }}{% endif %}{% if inter_param is not none %} inter {{ inter_param }}{% endif %} check
-    {%- else %}
-    default-server check
-    {%- endif %}
+    {{ hc.default_server_directive }}
     # Servers in this backend
     {%- for server in backend.servers %}
     server {{ server.name }} {{ server.host }}:{{ server.port }} check

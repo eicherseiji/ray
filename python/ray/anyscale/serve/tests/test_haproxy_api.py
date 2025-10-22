@@ -204,6 +204,7 @@ def test_generate_config_file_internal(haproxy_api_cleanup):
             ),
             has_received_routes=True,
             has_received_servers=True,
+            enable_hap_optimization=True,
         )
         backend_config_stub = {
             "api_backend": BackendConfig(
@@ -264,6 +265,8 @@ global
     stats timeout 30s
     maxconn 1000
     nbthread 2
+    server-state-base /tmp/haproxy-serve
+    server-state-file /tmp/haproxy-serve/server-state
 defaults
     mode http
     option log-health-checks
@@ -276,9 +279,11 @@ defaults
     log global
     option httplog
     option abortonclose
+    option idle-close-on-response
     # Normalize 502 and 504 errors to 500 per Serve's default behavior
     errorfile 502 {temp_dir}/500.http
     errorfile 504 {temp_dir}/500.http
+    load-server-state-from-file global
 frontend prometheus
     bind :9101
     mode http

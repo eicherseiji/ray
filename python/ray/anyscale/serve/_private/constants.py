@@ -61,6 +61,29 @@ ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH = os.environ.get(
     "ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH", "/tmp/haproxy-serve/admin.sock"
 )
 
+# Enable HAProxy optimized configuration (server state persistence, etc.)
+# Disabled by default to prevent test suite interference
+ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG = (
+    os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG", "0") == "1"
+)
+
+# HAProxy server state path
+ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_BASE = os.environ.get(
+    "ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_BASE", "/tmp/haproxy-serve"
+)
+
+# HAProxy server state path
+ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_FILE = os.environ.get(
+    "ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_FILE", "/tmp/haproxy-serve/server-state"
+)
+
+# HAProxy hard stop after timeout
+ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S = (
+    int(os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S"))
+    if os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S")
+    else None
+)
+
 # HAProxy metrics export port
 ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT = int(
     os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT", "9101")
@@ -76,6 +99,13 @@ ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S = (
 ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S = (
     int(os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S"))
     if os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S")
+    else None
+)
+
+# HAProxy timeout client
+ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S = (
+    int(os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S"))
+    if os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S")
     else None
 )
 
@@ -95,6 +125,16 @@ ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE = int(
 # timeout of each health check before being considered as failed.
 ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER = os.environ.get(
     "ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER", "5s"
+)
+
+# Time interval between each haproxy health check attempt when the server is in any of the transition states: UP - transitionally DOWN or DOWN - transitionally UP
+ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER = os.environ.get(
+    "ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER", None
+)
+
+# Time interval between each haproxy health check attempt when the server is in the DOWN state
+ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER = os.environ.get(
+    "ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER", None
 )
 
 # For now, this is used only for testing. In the suite of tests that
