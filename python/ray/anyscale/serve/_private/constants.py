@@ -64,7 +64,7 @@ ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH = os.environ.get(
 # Enable HAProxy optimized configuration (server state persistence, etc.)
 # Disabled by default to prevent test suite interference
 ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG = (
-    os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG", "0") == "1"
+    os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG", "1") == "1"
 )
 
 # HAProxy server state path
