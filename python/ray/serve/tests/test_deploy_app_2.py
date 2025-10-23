@@ -325,7 +325,7 @@ def test_deployments_not_listed_in_config(serve_instance):
         "applications": [{"import_path": "ray.serve.tests.test_config_files.pid.node"}]
     }
     client.deploy_apps(ServeDeploySchema(**config), _blocking=True)
-    wait_for_condition(check_running, timeout=0.1)
+    check_running()
     pid1, _ = httpx.get("http://localhost:8000/").json()
 
     # Redeploy the same config (with no deployments listed)
@@ -410,7 +410,7 @@ def test_deploy_does_not_affect_dynamic_apps(serve_instance):
         ],
     )
     client.deploy_apps(config, _blocking=True)
-    wait_for_condition(check_running, app_name="declarative-app-1", timeout=0.1)
+    check_running(app_name="declarative-app-1")
     url = get_application_url(app_name="declarative-app-1")
     assert httpx.post(url).text == "wonderful world"
 
@@ -435,7 +435,7 @@ def test_deploy_does_not_affect_dynamic_apps(serve_instance):
         ),
     )
     client.deploy_apps(config, _blocking=True)
-    wait_for_condition(check_running, app_name="declarative-app-2", timeout=0.1)
+    check_running(app_name="declarative-app-2")
     url = get_application_url(app_name="declarative-app-2")
     assert httpx.post(url).text == "wonderful world"
 
@@ -473,7 +473,7 @@ def test_deploy_does_not_affect_dynamic_apps(serve_instance):
         ),
     ]
     client.deploy_apps(config, _blocking=True)
-    wait_for_condition(check_running, app_name="declarative-app-1", timeout=0.1)
+    check_running(app_name="declarative-app-1")
     url = get_application_url(app_name="declarative-app-1")
     assert httpx.post(url).text == "wonderful world"
 
@@ -519,7 +519,7 @@ def test_deploy_does_not_affect_dynamic_apps(serve_instance):
         ),
     ]
     client.deploy_apps(config, _blocking=True)
-    wait_for_condition(check_running, app_name="declarative-app-2", timeout=0.1)
+    check_running(app_name="declarative-app-2")
     url = get_application_url(app_name="declarative-app-2")
     assert httpx.post(url).text == "wonderful world"
 
@@ -540,7 +540,7 @@ def test_change_route_prefix(serve_instance):
     client.deploy_apps(
         ServeDeploySchema(**{"applications": [app_config]}), _blocking=True
     )
-    wait_for_condition(check_running, timeout=0.1)
+    check_running()
     url = get_application_url()
     pid1 = httpx.get(url).json()[0]
     # Redeploy application with route prefix /new.
