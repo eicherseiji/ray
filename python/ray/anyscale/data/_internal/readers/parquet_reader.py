@@ -163,15 +163,16 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     _DEFAULT_BATCH_READAHEAD = env_integer("RAY_DATA_PARQUET_READER_BATCH_READAHEAD", 8)
     # NOTE: We're essentially stubbing out this value as currently
     #       ParquetReader reads individual fragments independently
-    _DEFAULT_FRAGMENT_READAHEAD = 1
+    _DEFAULT_FRAGMENT_READAHEAD = env_integer(
+        "RAY_DATA_PARQUET_READER_FRAGMENT_READAHEAD", 1
+    )
 
     # Refer https://arrow.apache.org/docs/python/generated/pyarrow.dataset.Dataset.html#pyarrow.dataset.Dataset.to_batches
     # In `to_batches`,
-    # - `batch_readahead` = `_DEFAULT_BATCH_READAHEAD` (16 by default), but overriden to _BATCH_READAHEAD
-    # - `fragment_readahead` = `_DEFAULT_FRAGMENT_READAHEAD` (4 by default), but only kicks in when `use_threads` is True
-    # - `use_threads` = False (Set to False by default in `_read_batches_from`)
+    # - `batch_readahead` = 16, but overriden to `_DEFAULT_BATCH_READAHEAD`
+    # - `fragment_readahead` = 4, but overridden to `_DEFAULT_FRAGMENT_READAHEAD` and only kicks in when `use_threads` is True
     # Based on the above,
-    # Worst case in-memory usage = `target_block_size` * `_NUM_THREADS_PER_TASK` * `_BATCH_READAHEAD` = 128MB * 5 * 4 = 2.5GB
+    # Worst case in-memory usage = `target_block_size` * `_NUM_THREADS_PER_TASK` * `_DEFAULT_FRAGMENT_READAHEAD` * `_BATCH_READAHEAD` = 128MB * 4 * 1 * 8 = 4GB
 
     # NOTE: This is a mostly arbitrary number. We might get better performance by tuning
     # this value.
