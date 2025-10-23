@@ -1,3 +1,4 @@
+import copy
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
@@ -10,7 +11,15 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
 from ray.anyscale.data._internal.readers import FileReader
 from ray.anyscale.data._internal.readers.supports_metadata import SupportsSchema
 from ray.data._internal.compute import TaskPoolStrategy
-from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
+from ray.data._internal.datasource.parquet_datasource import (
+    _combine_projection,
+    _combine_rename_map,
+)
+from ray.data._internal.logical.interfaces import (
+    LogicalOperator,
+    SourceOperator,
+    LogicalOperatorSupportsProjectionPushdown,
+)
 from ray.data._internal.logical.operators.map_operator import AbstractMap
 from ray.data.block import BlockAccessor, Schema
 
@@ -70,7 +79,7 @@ def _rename_columns_in_expr(expr: "Expr", column_mapping: Dict[str, str]) -> "Ex
         return expr
 
 
-class ReadFiles(SourceOperator, AbstractMap):
+class ReadFiles(LogicalOperatorSupportsProjectionPushdown, SourceOperator, AbstractMap):
     def __init__(
         self,
         input_dependency: LogicalOperator,
@@ -109,6 +118,26 @@ class ReadFiles(SourceOperator, AbstractMap):
             )
         self.columns = columns
         self.columns_rename = columns_rename
+
+    def supports_projection_pushdown(self) -> bool:
+        return True
+
+    def get_current_projection(self) -> Optional[List[str]]:
+        return self.columns
+
+    def apply_projection(
+        self,
+        columns: Optional[List[str]],
+        column_rename_map: Optional[Dict[str, str]],
+    ) -> LogicalOperator:
+        clone = copy.copy(self)
+
+        clone.columns = _combine_projection(self.columns, columns)
+        clone.columns_rename = _combine_rename_map(
+            self.columns_rename, column_rename_map
+        )
+
+        return clone
 
     def pushdown_predicate(
         self, predicate_expr: Union["Expr", "pd.Expression"]

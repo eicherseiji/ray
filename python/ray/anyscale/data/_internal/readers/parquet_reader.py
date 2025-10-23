@@ -563,15 +563,10 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 data_columns=data_columns,
                 partition_columns=partition_columns,
                 predicate_expr=predicate_expr,
-                columns_rename=columns_rename,
+                columns_rename_map=columns_rename,
                 generated_id_column=generated_id_column,
                 checkpoint_file_fragment=checkpoint_file_fragment,
             ):
-                if columns_rename is not None:
-                    table = table.rename_columns(
-                        [columns_rename.get(col, col) for col in table.schema.names]
-                    )
-
                 yield table
 
     def _calculate_batch_size(self, avg_row_size: float, num_rows: int) -> int:
@@ -659,7 +654,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         data_columns: Optional[List[str]],
         partition_columns: Optional[List[str]],
         predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]] = None,
-        columns_rename: Optional[Dict[str, str]] = None,
+        columns_rename_map: Optional[Dict[str, str]] = None,
         checkpoint_file_fragment: Optional[pa.StructScalar] = None,
         generated_id_column: Optional[str],
     ) -> Iterable[pyarrow.Table]:
@@ -731,6 +726,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 fragment,
                 schema=schema,
                 data_columns=data_columns,
+                data_columns_rename_map=columns_rename_map,
                 partition_columns=partition_columns,
                 partitioning=self._partitioning,
                 filter_expr=predicate_expr,  # Use converted PyArrow expression

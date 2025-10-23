@@ -21,6 +21,9 @@ class FileReader(abc.ABC):
     files.
     """
 
+    def supports_projection_pushdown(self) -> bool:
+        return False
+
     @abc.abstractmethod
     def read_files(
         self,

@@ -183,7 +183,6 @@ def _add_optimization_rules():
 
     from ._internal.logical.rules import (
         PredicatePushdown,
-        ProjectionPushdown,
         PushdownCountFiles,
     )
 
@@ -192,7 +191,6 @@ def _add_optimization_rules():
     logical_ruleset = get_logical_ruleset()
     logical_ruleset.add(PredicatePushdown)
     logical_ruleset.add(PushdownCountFiles)
-    logical_ruleset.add(ProjectionPushdown)
     logical_ruleset.add(CombineRepartitions)
     logical_ruleset.add(FuseMapWithRepartitionRule)
     logical_ruleset.add(CombineDownloads)
