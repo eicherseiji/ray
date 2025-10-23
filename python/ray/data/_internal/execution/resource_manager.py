@@ -47,7 +47,7 @@ class ResourceManager:
     # store memory limit for the streaming executor,
     # when `ReservationOpResourceAllocator` is enabled.
     DEFAULT_OBJECT_STORE_MEMORY_LIMIT_FRACTION = env_float(
-        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.5
+        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.75
     )
 
     # The fraction of the object store capacity that will be used as the default object
@@ -277,6 +277,14 @@ class ResourceManager:
         """Return the resource usage of the given operator at the current time."""
         return self._op_usages[op]
 
+    def get_mem_op_internal(self, op: PhysicalOperator) -> int:
+        """Return the memory usage of the internal buffers of the given operator."""
+        return self._mem_op_internal[op]
+
+    def get_mem_op_outputs(self, op: PhysicalOperator) -> int:
+        """Return the memory usage of the outputs of the given operator."""
+        return self._mem_op_outputs[op]
+
     def get_op_usage_str(self, op: PhysicalOperator) -> str:
         """Return a human-readable string representation of the resource usage of
         the given operator."""
@@ -288,8 +296,8 @@ class ResourceManager:
         )
         if self._debug:
             usage_str += (
-                f" (in={memory_string(self._mem_op_internal[op])},"
-                f"out={memory_string(self._mem_op_outputs[op])})"
+                f" (in={memory_string(self.get_mem_op_internal(op))},"
+                f"out={memory_string(self.get_mem_op_outputs(op))})"
             )
             if (
                 isinstance(self._op_resource_allocator, ReservationOpResourceAllocator)
@@ -646,6 +654,13 @@ class ReservationOpResourceAllocator(OpResourceAllocator):
             remaining = remaining.max(ExecutionResources.zero())
 
         self._total_shared = remaining
+
+    def can_submit_new_task(self, op: PhysicalOperator) -> bool:
+        if op not in self._op_budgets:
+            return True
+        budget = self._op_budgets[op]
+        res = op.incremental_resource_usage().satisfies_limit(budget)
+        return res
 
     def get_budget(self, op: PhysicalOperator) -> Optional[ExecutionResources]:
         return self._op_budgets.get(op)

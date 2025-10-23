@@ -289,6 +289,7 @@ class PartitionActor:
         nrows_per_partition = math.floor(
             target_nbytes_per_partition / avg_nbytes_per_row
         )
+
         return nrows_per_partition
 
     def _sample_sizes(self, uris: List[str]) -> List[int]:

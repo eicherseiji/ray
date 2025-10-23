@@ -15,11 +15,18 @@ def create_actor_autoscaler(
     resource_manager: "ResourceManager",
     config: "AutoscalingConfig",
 ) -> ActorAutoscaler:
-    return DefaultActorAutoscaler(
-        topology,
-        resource_manager,
-        config=config,
-    )
+    from ray._private.ray_constants import env_bool
+
+    if env_bool("RAY_DATA_ENABLE_RAYTURBO_ACTOR_AUTOSCALER", True):
+        from ray.anyscale.data._internal.actor_autoscaler import RayTurboActorAutoscaler
+
+        return RayTurboActorAutoscaler(topology, resource_manager)
+    else:
+        return DefaultActorAutoscaler(
+            topology,
+            resource_manager,
+            config=config,
+        )
 
 
 __all__ = [

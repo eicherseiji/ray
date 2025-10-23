@@ -1,10 +1,12 @@
 import hashlib
 from collections import deque
-from typing import Any, Callable, Deque, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Deque, Dict, List, Optional, Union
 
-from ray.data import Dataset
 from ray.data.aggregate import AggregateFnV2
 from ray.util.annotations import DeveloperAPI
+
+if TYPE_CHECKING:
+    from ray.data.dataset import Dataset
 
 
 @DeveloperAPI
@@ -150,7 +152,7 @@ class StatComputationPlan:
             )
         )
 
-    def compute(self, dataset: Dataset) -> Dict[str, Any]:
+    def compute(self, dataset: "Dataset") -> Dict[str, Any]:
         """
         Executes all registered aggregators and stat functions.
 
