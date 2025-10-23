@@ -3,11 +3,17 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
 from ray.anyscale.serve._private.constants import (
+    ANYSCALE_FREEZE_GC_ON_STARTUP,
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
+    ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT,
 )
 from ray.serve._private.common import DeploymentID, RequestProtocol
 from ray.serve._private.constants import (
+    RAY_SERVE_LOG_TO_STDERR,
+    RAY_SERVE_REQUEST_PATH_LOG_BUFFER_SIZE,
+    RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD,
+    RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP,
     RAY_SERVE_THROUGHPUT_OPTIMIZED,
     SERVE_LOGGER_NAME,
 )
@@ -44,15 +50,7 @@ class AnyscaleServeController(ServeController):
     ):
         # Set the feature flags for throughput optimized Ray Serve.
         if RAY_SERVE_THROUGHPUT_OPTIMIZED:
-            logger.info(
-                "Throughput optimized Ray Serve enabled with the following configurations:\n"
-                "  • Direct ingress enabled\n"
-                "  • gRPC communication enabled\n"
-                "  • User code and router running in main thread (not separate)\n"
-                "  • Request path log buffer size: 1000\n"
-                "  • Log to stderr is disabled\n"
-                "  • Garbage collector is frozen on startup\n"
-            )
+            self._log_throughput_opt_message()
 
         self._ha_proxy_enabled = ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
         self._direct_ingress_enabled = ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
@@ -75,6 +73,23 @@ class AnyscaleServeController(ServeController):
         )
 
         self._last_broadcasted_target_groups: List[TargetGroup] = []
+
+    def _log_throughput_opt_message(self) -> None:
+        msg = "Throughput optimized Ray Serve enabled with the following configurations:\n"
+        if ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+            msg += "  • Direct ingress enabled\n"
+        if ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT:
+            msg += "  • gRPC communication enabled\n"
+        if not RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD:
+            msg += "  • User code running in main thread (not separate)\n"
+        if not RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP:
+            msg += "  • Router running in main thread (not separate)\n"
+        if not RAY_SERVE_LOG_TO_STDERR:
+            msg += "  • Log to stderr disabled\n"
+        if ANYSCALE_FREEZE_GC_ON_STARTUP:
+            msg += "  • Garbage collector is frozen on startup\n"
+        msg += f"  • Request path log buffer size: {RAY_SERVE_REQUEST_PATH_LOG_BUFFER_SIZE}\n"
+        logger.info(msg)
 
     def get_target_groups(
         self,

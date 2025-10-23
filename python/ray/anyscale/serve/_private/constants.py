@@ -211,9 +211,15 @@ ANYSCALE_FREEZE_GC_ON_STARTUP = (
 if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = True
 
-# If throughput optimized Ray Serve is enabled, set the following constants.
-# This should be at the end.
+# If throughput optimized Ray Serve is enabled, enable the following flags
+# unless they are explicitly set.
 if os.environ.get("RAY_SERVE_THROUGHPUT_OPTIMIZED", "0") == "1":
-    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = True
-    ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = True
-    ANYSCALE_FREEZE_GC_ON_STARTUP = True
+    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = (
+        os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "1") == "1"
+    )
+    ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = (
+        os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "1") == "1"
+    )
+    ANYSCALE_FREEZE_GC_ON_STARTUP = (
+        os.environ.get("ANYSCALE_FREEZE_GC_ON_STARTUP", "1") == "1"
+    )
