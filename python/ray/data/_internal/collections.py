@@ -1,4 +1,4 @@
-from typing import TypeVar, Dict
+from typing import Dict, TypeVar
 
 K = TypeVar("K")
 
@@ -17,12 +17,10 @@ def collapse_transitive_map(d: Dict[K, K]) -> Dict[K, K]:
         such that K and V are starting and terminal point of a chain
 
     Examples:
-        >>> collapse_transitive_map({"a": "b", "b": "c"})
-        {"a": "c"}
         >>> collapse_transitive_map({"a": "b", "b": "c", "c": "d"})
-        {"a": "d"}
+        {'a': 'd'}
         >>> collapse_transitive_map({"a": "b", "x": "y"})
-        {"a": "b", "x": "y"}
+        {'a': 'b', 'x': 'y'}
     """
     if not d:
         return {}

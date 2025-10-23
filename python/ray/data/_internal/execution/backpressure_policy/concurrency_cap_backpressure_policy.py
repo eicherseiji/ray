@@ -83,6 +83,7 @@ class ConcurrencyCapBackpressurePolicy(BackpressurePolicy):
     K_DEV = 4.0
 
     def __init__(self, *args, **kwargs):
+        """Initialize the ConcurrencyCapBackpressurePolicy."""
         super().__init__(*args, **kwargs)
 
         # Explicit concurrency caps for each operator. Infinite if not specified.
@@ -164,7 +165,10 @@ class ConcurrencyCapBackpressurePolicy(BackpressurePolicy):
 
         # Observe fresh queue size for this operator and its downstream.
         current_queue_size_bytes = (
-            self._resource_manager.get_op_outputs_usage_with_internal_and_downstream(op)
+            self._resource_manager.get_op_internal_object_store_usage(op)
+            + self._resource_manager.get_op_outputs_object_store_usage_with_downstream(
+                op
+            )
         )
 
         # Update short history and refresh the adaptive threshold.
@@ -180,7 +184,7 @@ class ConcurrencyCapBackpressurePolicy(BackpressurePolicy):
             last_effective_cap = self._last_effective_caps.get(op, None)
             if last_effective_cap != effective_cap:
                 logger.debug(
-                    "Effective concurrency cap changed for operator %s: %d -> %d"
+                    "Effective concurrency cap changed for operator %s: %d -> %d "
                     "running=%d tasks, queue=%d bytes, threshold=%d bytes",
                     op.name,
                     last_effective_cap,
@@ -204,8 +208,7 @@ class ConcurrencyCapBackpressurePolicy(BackpressurePolicy):
         Motivation: Adaptive thresholds prevent both over-throttling (too aggressive) and
         under-throttling (too permissive). The logic balances responsiveness with stability:
         - Fast upward response to pressure spikes (immediate threshold increase)
-        - Gradual downward response to prevent oscillation (EWMA smoothing)
-        - Complete reset when idle (threshold = 0) to avoid stuck high thresholds
+        - Thresholds only increase, never decrease, since we don't know if low pressure is steady state
 
         Args:
             op: Operator whose threshold is being updated.
@@ -215,56 +218,23 @@ class ConcurrencyCapBackpressurePolicy(BackpressurePolicy):
             The updated threshold in bytes.
 
         Examples:
-            # Example 1: First sample (bootstrap)
+            # Bootstrap: first sample sets threshold
             # Input: current_queue_size_bytes = 1000, level_prev = 0, dev_prev = 0
-            # EWMA: level = 1000, dev = 0 (first sample)
-            # Base: 1000 + 4*0 = 1000
-            # Threshold: max(1000, 1000) = 1000
-            # prev_threshold = 0, threshold = 1000
+            # EWMA: level = 1000, dev = 0
+            # Base: 1000 + 4*0 = 1000, Threshold: max(1000, 1000) = 1000
             # Result: 1000 (bootstrap)
 
-            # Example 2: Upward adjustment (immediate)
+            # Pressure increase: threshold updated immediately
             # Input: current_queue_size_bytes = 1500, level_prev = 1000, dev_prev = 100
-            # EWMA: level = 1000 + 0.2*(1500-1000) = 1100, dev = 100 + 0.2*(500-100) = 180
-            # Base: 1100 + 4*180 = 1820
-            # Threshold: max(1820, 1500) = 1820
-            # prev_threshold = 1000, threshold = 1820
-            # Result: 1820 (immediate upward)
+            # EWMA: level = 1100, dev = 180, Base: 1100 + 4*180 = 1820
+            # Threshold: max(1820, 1500) = 1820, prev_threshold = 1000
+            # Result: 1820 (threshold increased)
 
-            # Example 3: Downward adjustment (smoothed)
+            # Pressure decrease: threshold maintained (no decrease)
             # Input: current_queue_size_bytes = 100, level_prev = 200, dev_prev = 50
-            # EWMA: level = 200 + 0.2*(100-200) = 180, dev = 50 + 0.2*(100-50) = 60
-            # Base: 180 + 4*60 = 420
-            # Threshold: max(420, 100) = 420
-            # prev_threshold = 500, threshold = 420
-            # smoothed = asymmetric_ewma(500, 420) = 500 + 0.2*(420-500) = 484
-            # Result: 484 (gradual downward adjustment using asymmetric EWMA)
-
-            # Example 4: System becomes idle
-            # Input: current_queue_size_bytes = 0, level_prev = 200, dev_prev = 50
-            # EWMA: level = 200 + 0.2*(0-200) = 160, dev = 50 + 0.2*(200-50) = 80
-            # Base: 160 + 4*80 = 480
-            # Threshold: max(480, 0) = 480
-            # prev_threshold = 484, threshold = 480
-            # smoothed = asymmetric_ewma(484, 480) = 484 + 0.2*(480-484) = 483
-            # Result: 483 (gradual downward adjustment using asymmetric EWMA)
-
-            # Example 5: Continued idle (gradual decay)
-            # Input: current_queue_size_bytes = 0, level_prev = 160, dev_prev = 80
-            # EWMA: level = 160 + 0.2*(0-160) = 128, dev = 80 + 0.2*(160-80) = 96
-            # Base: 128 + 4*96 = 512
-            # Threshold: max(512, 0) = 512
-            # prev_threshold = 483, threshold = 512
-            # Result: 512 (gradual upward, EWMA still adjusting using asymmetric EWMA)
-
-            # Example 6: After many idle samples (threshold finally resets)
-            # Input: current_queue_size_bytes = 0, level_prev = 50, dev_prev = 10
-            # EWMA: level = 50 + 0.2*(0-50) = 40, dev = 10 + 0.2*(50-10) = 18
-            # Base: 40 + 4*18 = 112
-            # Threshold: max(112, 0) = 112
-            # prev_threshold = 200, threshold = 112
-            # smoothed = asymmetric_ewma(200, 112) = 200 + 0.2*(112-200) = 182
-            # Result: 182 (gradual downward adjustment using asymmetric EWMA)
+            # EWMA: level = 180, dev = 60, Base: 180 + 4*60 = 420
+            # Threshold: max(420, 100) = 420, prev_threshold = 500
+            # Result: 500 (threshold maintained, no decrease)
 
         """
         hist = self._queue_history[op]
@@ -299,36 +269,21 @@ class ConcurrencyCapBackpressurePolicy(BackpressurePolicy):
         # Step 3: fast ramp-up
         threshold = max(1, int(max(base, q)))
 
-        # Step 4: cache & return with gentle downward response using EWMA_ALPHA
+        # Step 4: cache & return
         prev_threshold = self._queue_thresholds[op]
-
-        # Idle/off allowed
-        if threshold == 0:
-            self._queue_thresholds[op] = 0
-            return 0
 
         # Bootstrap
         if prev_threshold == 0:
             self._queue_thresholds[op] = max(1, threshold)
             return self._queue_thresholds[op]
 
-        # Upward: apply immediately
-        if threshold >= prev_threshold:
+        # Only increase threshold when there's clear pressure
+        if threshold > prev_threshold:
             self._queue_thresholds[op] = max(1, threshold)
             return self._queue_thresholds[op]
 
-        # Downward: smooth using asymmetric EWMA
-        # Prevents oscillation by allowing gradual downward adjustments
-        # Uses same asymmetric behavior as EWMA: slow to adjust downward
-        # Example: prev_threshold=200, threshold=100 -> smoothed using asymmetric EWMA
-        smoothed = int(self._update_ewma_asymmetric(prev_threshold, threshold))
-        if smoothed >= prev_threshold:
-            # Ensures progress when small deltas round to 0
-            # Example: prev_threshold=200, threshold=195 -> smoothed=199, but 199>=200, so use 199
-            smoothed = prev_threshold - 1
-
-        self._queue_thresholds[op] = max(1, smoothed)
-        return self._queue_thresholds[op]
+        # Keep existing threshold when pressure decreases
+        return prev_threshold
 
     def _effective_cap(self, op: "PhysicalOperator") -> int:
         """Compute a reduced concurrency cap via a tiny {-1,0,+1,+2} controller.
@@ -367,7 +322,7 @@ class ConcurrencyCapBackpressurePolicy(BackpressurePolicy):
             |          |          |          | (immediate reduction to        |                  |
             |          |          |          |  prevent overload)             |                  |
             +----------+----------+----------+--------------------------------+------------------+
-            | >= +1.0  | > 0.0    | 0        | Wait and see                   | +1.5, +0.5 -> 0  |
+            | >= +1.0  | >= 0.0   | 0        | Wait and see                   | +1.5, +0.5 -> 0  |
             |          |          |          | (let current level stabilize)  |                  |
             +----------+----------+----------+--------------------------------+------------------+
             | <= -1.0  | <= -1.0  | +1       | Conservative growth            | -1.5, -1.0 -> +1 |
@@ -423,16 +378,7 @@ class ConcurrencyCapBackpressurePolicy(BackpressurePolicy):
         trend_signal = (recent_avg - older_avg) / scale
 
         # Quantized controller decision
-        if pressure_signal >= 2.0 and trend_signal >= 1.0:
-            step = -1
-        elif pressure_signal >= 1.0 and trend_signal > 0.0:
-            step = 0
-        elif pressure_signal <= -1.0 and trend_signal <= -1.0:
-            step = +1
-        elif pressure_signal <= -2.0 and trend_signal <= -2.0:
-            step = +2
-        else:
-            step = 0
+        step = self._quantized_controller_step(pressure_signal, trend_signal)
 
         # Apply step to current running concurrency, clamp by configured cap.
         target = max(1, running + step)
@@ -440,3 +386,33 @@ class ConcurrencyCapBackpressurePolicy(BackpressurePolicy):
         if not math.isinf(cap_cfg):
             target = min(target, int(cap_cfg))
         return target
+
+    def _quantized_controller_step(
+        self, pressure_signal: float, trend_signal: float
+    ) -> int:
+        """Compute the quantized controller step based on pressure and trend signals.
+
+        This method implements the decision logic for the quantized controller:
+        - High pressure + growing trend = emergency backoff (-1)
+        - High pressure + stable/declining trend = wait and see (0)
+        - Low pressure + declining trend = safe to grow (+1)
+        - Very low pressure + strong improvement = aggressive growth (+2)
+        - Moderate signals = maintain current concurrency (0)
+
+        Args:
+            pressure_signal: Normalized pressure signal (queue vs threshold)
+            trend_signal: Normalized trend signal (recent vs older average)
+
+        Returns:
+            Step adjustment: -1, 0, +1, or +2
+        """
+        if pressure_signal >= 2.0 and trend_signal >= 1.0:
+            return -1
+        elif pressure_signal >= 1.0 and trend_signal >= 0.0:
+            return 0
+        elif pressure_signal <= -2.0 and trend_signal <= -2.0:
+            return +2
+        elif pressure_signal <= -1.0 and trend_signal <= -1.0:
+            return +1
+        else:
+            return 0
