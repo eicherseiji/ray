@@ -1,0 +1,15 @@
+group: runtime core tests
+depends_on:
+  - forge
+  - ray-core-build
+  - ray-dashboard-build
+steps:
+  - label: ":ray: core: runtime tests"
+    instance_type: medium
+    commands:
+      - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/tests/... core
+    depends_on: corebuild
+    job_env: forge
+    tags:
+      - python
+      - core-turbo

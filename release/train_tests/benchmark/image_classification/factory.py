@@ -205,6 +205,7 @@ class CustomArrowCollateFn(ArrowBatchCollateFn):
             arrow_batch_to_tensors,
         )
 
+        batch = batch.select(["image", "label"])
         tensors = arrow_batch_to_tensors(
             batch,
             dtypes=self.dtypes,

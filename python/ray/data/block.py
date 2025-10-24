@@ -685,6 +685,9 @@ class BlockColumnAccessor:
         """Returns requested quantile of the given column"""
         raise NotImplementedError()
 
+    def top_k(self, k: int) -> BlockColumn:
+        raise NotImplementedError()
+
     def unique(self) -> BlockColumn:
         """Returns new column holding only distinct values of the current one"""
         raise NotImplementedError()

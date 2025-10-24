@@ -343,6 +343,16 @@ def add_rllib_example_script_args(
     return parser
 
 
+def seed_testing_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--num-cpus-for-main-process", type=int, default=1)
+    parser.add_argument("--inference-num-cpus-per-process", type=int, default=1)
+    parser.add_argument("--inference-num-gpus-per-process", type=float, default=0)
+    parser.add_argument("--inference-batch-size", type=int, default=1)
+    parser.add_argument("--n-inference-processes", type=int, default=1)
+
+    return parser
+
+
 def check(x, y, decimals=5, atol=None, rtol=None, false=False):
     """
     Checks two structures (dict, tuple, list,

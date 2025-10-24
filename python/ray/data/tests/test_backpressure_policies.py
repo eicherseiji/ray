@@ -421,7 +421,6 @@ class TestConcurrencyCapBackpressurePolicy(unittest.TestCase):
             with self.subTest(description=description):
                 # Use the actual helper method from the policy
                 step = policy._quantized_controller_step(pressure_signal, trend_signal)
-
                 self.assertEqual(
                     step,
                     expected_step,
