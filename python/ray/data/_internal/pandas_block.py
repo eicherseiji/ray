@@ -384,6 +384,9 @@ class PandasBlockAccessor(OptimizedTableBlockMixin, TableBlockAccessor):
         table.reset_index(drop=True, inplace=True)
         return table
 
+    def drop(self, columns: List[str]) -> Block:
+        return self._table.drop(columns, axis="columns")
+
     def select(self, columns: List[str]) -> "pandas.DataFrame":
         if not all(isinstance(col, str) for col in columns):
             raise ValueError(
