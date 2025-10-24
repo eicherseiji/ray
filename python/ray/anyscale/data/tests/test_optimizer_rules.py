@@ -482,9 +482,6 @@ def test_projection_pushdown_merge_rename(ray_start_regular_shared):
     # Check that both "sepal.length" and "petal.width" are present in the columns,
     # regardless of their order.
     assert select_op.exprs == [
-        # TODO fix (renaming doesn't remove prev columns)
-        col("sepal.length"),
-        col("petal.width"),
         col("sepal.length").alias("length"),
         col("petal.width").alias("width"),
     ]
