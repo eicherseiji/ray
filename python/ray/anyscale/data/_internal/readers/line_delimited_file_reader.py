@@ -279,7 +279,7 @@ class LineDelimitedFileReader(NativeFileReader):
         For uncompressed files, returns a seekable file for efficient chunking.
         For compressed files, falls back to super's streaming reads since seeking is not supported.
         """
-        compression = self.resolve_compression(path)
+        compression = self.resolve_compression(path, self._open_args)
 
         # For compressed files, use the parent's streaming implementation
         if compression:

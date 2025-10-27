@@ -2,7 +2,6 @@ import logging
 from typing import TYPE_CHECKING, Iterable, Optional
 
 import pandas as pd
-
 from .native_file_reader import NativeFileReader
 from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 from ray.data._internal.datasource.json_datasource import (
@@ -29,6 +28,9 @@ class PandasJSONLReader(NativeFileReader):
     # reads bigger blocks at once.
     _BUFFER_SIZE = 1024**2
 
+    # In the case of zipped json files, we cannot infer the chunk_size.
+    _DEFAULT_CHUNK_SIZE = 10000
+
     # Target output size in bytes, if the target max block size isn't set.
     _DEFAULT_TARGET_OUTPUT_SIZE_BYTES = 128 * 1024**2
 
@@ -48,10 +50,14 @@ class PandasJSONLReader(NativeFileReader):
         *,
         filesystem,
     ) -> "pyarrow.NativeFile":
-        # Use seekable file so we can reset the file after sampling the first row.
-        file = filesystem.open_input_file(path)
-        assert file.seekable(), "File must be seekable"
-        return file
+        open_args = self._open_args.copy()
+        compression = self.resolve_compression(path, open_args)
+
+        if compression is None:
+            # We use a seekable file to estimate chunksize.
+            return filesystem.open_input_file(path, **open_args)
+
+        return super().open_input_source(path, filesystem=filesystem)
 
     def read_stream(
         self,
@@ -77,8 +83,9 @@ class PandasJSONLReader(NativeFileReader):
 
         This is necessary to avoid OOMs while reading the file.
         """
+        if not f.seekable():
+            return self._DEFAULT_CHUNK_SIZE
         assert f.tell() == 0, "File pointer must be at the beginning"
-
         stream = StrictBufferedReader(f, buffer_size=self._BUFFER_SIZE)
         with pd.read_json(stream, chunksize=1, lines=True) as reader:
             try:

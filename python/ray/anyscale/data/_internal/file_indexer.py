@@ -17,7 +17,7 @@ from ray.data.datasource.path_util import (
     _has_file_extension,
     _resolve_paths_and_filesystem,
 )
-from ray.anyscale.data._internal.util.compression import infer_compression
+from ray.data._internal.util import infer_compression
 from ray._private.ray_constants import env_integer
 
 

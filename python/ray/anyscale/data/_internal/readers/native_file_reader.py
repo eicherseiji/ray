@@ -20,7 +20,7 @@ from ray.data.block import DataBatch
 from ray.data.context import DataContext
 from ray.data.datasource import Partitioning, PathPartitionParser
 from ray.anyscale.data._internal.file_indexer import ChunkMetadata
-from ray.anyscale.data._internal.util.compression import infer_compression
+from ray.data._internal.util import infer_compression
 
 
 class NativeFileReader(FileReader):
@@ -124,11 +124,43 @@ class NativeFileReader(FileReader):
         else:
             yield from _read_paths(zip(paths, file_chunk_metadatas))
 
-    def resolve_compression(self, path: str) -> Optional[str]:
-        compression = self._open_args.get("compression", None)
+    def resolve_compression(
+        self, path: str, open_args: Dict[str, Any]
+    ) -> Optional[str]:
+        """Resolves the compression format for a stream.
+
+        Args:
+            path: The file path to resolve compression for.
+            open_args: kwargs passed to
+            `pyarrow.fs.FileSystem.open_input_stream <https://arrow.apache.org/docs/python/generated/pyarrow.fs.FileSystem.html#pyarrow.fs.FileSystem.open_input_stream>`_.
+            when opening input files to read.
+
+        Returns:
+            The compression format (e.g., "gzip", "snappy", "bz2") or None if
+            no compression is detected or specified.
+        """
+        compression = open_args.get("compression", None)
         if compression is None:
             compression = infer_compression(path)
         return compression
+
+    def _resolve_buffer_size(self, open_args: Dict[str, Any]) -> Optional[int]:
+        buffer_size = open_args.pop("buffer_size", None)
+        if buffer_size is None:
+            buffer_size = self._data_context.streaming_read_buffer_size
+        return buffer_size
+
+    def _file_to_snappy_stream(
+        self, file: "pyarrow.NativeFile"
+    ) -> "pyarrow.PythonFile":
+        import pyarrow as pa
+        import snappy
+
+        stream = io.BytesIO()
+        snappy.stream_decompress(src=file, dst=stream)
+        stream.seek(0)
+
+        return pa.PythonFile(stream, mode="r")
 
     def open_input_source(
         self,
@@ -142,43 +174,22 @@ class NativeFileReader(FileReader):
         `DataContext.streaming_read_buffer_size` as the buffer size if none is given by
         the caller.
         """
-        import pyarrow as pa
-        from pyarrow.fs import HadoopFileSystem
-
         open_args = self._open_args.copy()
-        compression = self.resolve_compression(path)
-
-        buffer_size = open_args.pop("buffer_size", None)
-        if buffer_size is None:
-            buffer_size = self._data_context.streaming_read_buffer_size
+        compression = self.resolve_compression(path, open_args)
+        buffer_size = self._resolve_buffer_size(open_args)
 
         if compression == "snappy":
             # Arrow doesn't support streaming Snappy decompression since the canonical
             # C++ Snappy library doesn't natively support streaming decompression. We
             # works around this by manually decompressing the file with python-snappy.
             open_args["compression"] = None
-        else:
-            open_args["compression"] = compression
+            file = filesystem.open_input_stream(
+                path, buffer_size=buffer_size, **open_args
+            )
+            return self._file_to_snappy_stream(file)
 
-        file = filesystem.open_input_stream(
-            path,
-            buffer_size=buffer_size,
-            **open_args,
-        )
-
-        if compression == "snappy":
-            import snappy
-
-            stream = io.BytesIO()
-            if isinstance(filesystem.unwrap(), HadoopFileSystem):
-                snappy.hadoop_snappy.stream_decompress(src=file, dst=stream)
-            else:
-                snappy.stream_decompress(src=file, dst=stream)
-            stream.seek(0)
-
-            file = pa.PythonFile(stream, mode="r")
-
-        return file
+        open_args["compression"] = compression
+        return filesystem.open_input_stream(path, buffer_size=buffer_size, **open_args)
 
 
 def _rename_columns(batch: DataBatch, columns_rename: Dict[str, str]) -> DataBatch:
