@@ -1,3 +1,4 @@
+import logging
 from typing import TYPE_CHECKING
 
 from ray.anyscale.data.preprocessors.dag import _build_aggregation_dag
@@ -12,6 +13,8 @@ _OriginalChain = preprocessors_module.Chain
 if TYPE_CHECKING:
     from ray.data import Dataset
 
+logger = logging.getLogger(__name__)
+
 
 class Chain(_OriginalChain, TurboPreprocessor):
     def __init__(self, *preprocessors: Preprocessor):
@@ -21,7 +24,7 @@ class Chain(_OriginalChain, TurboPreprocessor):
             p.is_chain = True
         self.is_chain = True
 
-    def transform(self, ds: "Dataset", **kwargs) -> "Dataset":
+    def _transform(self, ds: "Dataset", **kwargs) -> "Dataset":
         """
         Transforms the dataset by executing dependency-aware lazy aggregations.
 
@@ -32,6 +35,19 @@ class Chain(_OriginalChain, TurboPreprocessor):
         :param kwargs: Additional keyword arguments passed to each preprocessor's transform method.
         :return: The transformed Ray Dataset.
         """
+
+        if all(p.has_stats() for p in self.preprocessors if p._is_fittable):
+            # Lazy aggregation computes stats for all preprocessors in one _transform() call.
+            # If all fittable preprocessor have stats, lazy aggregation has completed.
+            return super()._transform(ds, **kwargs)
+        if any(p.has_stats() for p in self.preprocessors if p._is_fittable):
+            logger.warning(
+                f"Unexpected state: some fittable preprocessors have stats while others don't. "
+                f"Fitted: {[p for p in self.preprocessors if p._is_fittable and p.has_stats()]}. "
+                f"Not fitted: {[p for p in self.preprocessors if p._is_fittable and not p.has_stats()]}. "
+                "Recomputing aggregations."
+            )
+
         transformed_preprocessors = set()
         aggregation_nodes = _build_aggregation_dag(self.preprocessors)
         pending_nodes = set(aggregation_nodes)
@@ -43,6 +59,10 @@ class Chain(_OriginalChain, TurboPreprocessor):
 
             aggregates = [n.agg_fn for n in ready]
             stats = ds.aggregate(*aggregates)
+            preprocessors = {n.preprocessor for n in ready}
+            logger.info(
+                f"Running {len(aggregates)} aggregations for {len(preprocessors)} preprocessors: {preprocessors}"
+            )
 
             for node in ready:
                 p = node.preprocessor

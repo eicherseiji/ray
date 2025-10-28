@@ -142,6 +142,9 @@ class Preprocessor(abc.ABC):
         self.stats_ |= self.stat_computation_plan.compute(dataset)
         return self
 
+    def has_stats(self) -> bool:
+        return hasattr(self, "stats_") and len(self.stats_) > 0
+
     def fit_transform(
         self,
         ds: "Dataset",
