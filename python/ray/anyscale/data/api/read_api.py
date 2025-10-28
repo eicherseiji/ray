@@ -51,10 +51,7 @@ from ray.data.datasource.file_based_datasource import FileShuffleConfig
 from ray.data._internal.datasource.image_datasource import ImageDatasource
 from ray.data._internal.datasource.json_datasource import JSON_FILE_EXTENSIONS
 from ray.data._internal.datasource.numpy_datasource import NumpyDatasource
-from ray.data._internal.datasource.parquet_datasource import (
-    ParquetDatasource,
-    emit_file_extensions_future_warning,
-)
+from ray.data._internal.datasource.parquet_datasource import ParquetDatasource
 from ray.data._internal.logical.interfaces import LogicalPlan
 from ray.data._internal.plan import ExecutionPlan
 from ray.data._internal.stats import DatasetStats
@@ -63,11 +60,9 @@ from ray.data.dataset import Dataset
 from ray.data.datasource import FileMetadataProvider, Partitioning, PathPartitionFilter
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
 from ray.data.datasource.path_util import (
-    _has_file_extension,
     _resolve_paths_and_filesystem,
 )
 from ray.data.read_api import _resolve_parquet_args, _validate_shuffle_arg
-from ray.util.debug import log_once
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 if TYPE_CHECKING:
@@ -117,7 +112,7 @@ def read_parquet(
     partition_filter: Optional[PathPartitionFilter] = None,
     partitioning: Partitioning = Partitioning("hive"),
     include_paths: bool = False,
-    file_extensions: Optional[List[str]] = None,
+    file_extensions: Optional[List[str]] = ParquetDatasource._FILE_EXTENSIONS,
     shuffle: Union[Literal["files"], None] = None,
     concurrency: Optional[int] = None,
     **arrow_parquet_args,
@@ -175,27 +170,6 @@ def read_parquet(
             predicate_expr = pq.filters_to_expression(filters)
 
     to_batches_kwargs = arrow_parquet_args
-
-    # ------------------------------------------------------------------
-    # Driver-side warning for upcoming default `file_extensions` change.
-    # Mirrors OSS behaviour so every read triggers its own warning and
-    # `pytest.warns(...)` can see it.
-    # ------------------------------------------------------------------
-    if file_extensions is None:
-        # Best-effort resolution of concrete file paths.
-        try:
-            resolved_paths, _ = _resolve_paths_and_filesystem(paths, filesystem)
-        except Exception:
-            resolved_paths = [paths] if isinstance(paths, str) else list(paths)
-
-        for _p in resolved_paths:
-            if not _has_file_extension(
-                _p, ParquetDatasource._FUTURE_FILE_EXTENSIONS
-            ) and log_once("read_parquet_file_extensions_future_warning"):
-                emit_file_extensions_future_warning(
-                    ParquetDatasource._FUTURE_FILE_EXTENSIONS
-                )
-                break
 
     if "partitioning" in dataset_kwargs:
         raise ValueError(
