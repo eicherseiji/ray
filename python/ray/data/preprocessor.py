@@ -1,6 +1,7 @@
 import abc
 import base64
 import collections
+import logging
 import pickle
 import warnings
 from enum import Enum
@@ -24,6 +25,9 @@ if TYPE_CHECKING:
 
     from ray.air.data_batch_type import DataBatchType
     from ray.data.dataset import Dataset
+
+
+logger = logging.getLogger(__name__)
 
 
 @PublicAPI(stability="beta")

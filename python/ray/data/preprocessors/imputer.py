@@ -14,10 +14,11 @@ from ray.data.preprocessors.version_support import (
 )
 from ray.util.annotations import PublicAPI
 
-logger = logging.getLogger(__name__)
-
 if TYPE_CHECKING:
     from ray.data.dataset import Dataset
+
+
+logger = logging.getLogger(__name__)
 
 
 @PublicAPI(stability="alpha")
@@ -221,19 +222,13 @@ class SimpleImputer(SerializablePreprocessorBase):
         }
 
     def _set_serializable_fields(self, fields: Dict[str, Any], version: int):
-        # Required fields
-        for field_name in ["columns", "output_columns", "strategy"]:
-            value = fields.pop(field_name, None)
-            if value is None:
-                logger.error(
-                    f"Missing required field '{field_name}' in serialized data"
-                )
-                raise ValueError(f"Missing required field '{field_name}'")
-            setattr(self, field_name, value)
-
-        # Optional fields
-        self._fitted = fields.pop("_fitted", None)
-        self.fill_value = fields.pop("fill_value", None)
+        # required fields
+        self.columns = fields["columns"]
+        self.output_columns = fields["output_columns"]
+        self.strategy = fields["strategy"]
+        # optional fields
+        self._fitted = fields.get("_fitted")
+        self.fill_value = fields.get("fill_value")
 
         if self.strategy == "constant":
             self._is_fittable = False
