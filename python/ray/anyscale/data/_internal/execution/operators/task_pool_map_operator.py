@@ -39,12 +39,13 @@ class TaskPoolMapOperator(OSSTaskPoolMapOperator, ReportsExtraResourceUsage):
                 object_store_memory=object_store_memory_per_task
                 * self.num_active_tasks(),
             )
-        elif self._concurrency is not None:
+        elif self._max_concurrency is not None:
             resources = ExecutionResources(
-                cpu=num_cpus_per_task * self._concurrency,
-                gpu=num_gpus_per_task * self._concurrency,
-                memory=memory_per_task * self._concurrency,
-                object_store_memory=object_store_memory_per_task * self._concurrency,
+                cpu=num_cpus_per_task * self._max_concurrency,
+                gpu=num_gpus_per_task * self._max_concurrency,
+                memory=memory_per_task * self._max_concurrency,
+                object_store_memory=object_store_memory_per_task
+                * self._max_concurrency,
             )
         else:
             resources = ExecutionResources.for_limits()

@@ -137,6 +137,9 @@ class LocationAwareBundleQueue(BundleQueue):
             assert nbytes >= 0, nbytes
             self._bundle_nbytes[bundle] = nbytes
 
+    def num_blocks(self) -> int:
+        return self._fifo_queue.num_blocks()
+
     def is_empty(self) -> bool:
         with self._lock:
             return not self._fifo_queue and not self._bundle_nbytes

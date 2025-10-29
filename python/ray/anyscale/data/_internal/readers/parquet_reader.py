@@ -34,7 +34,6 @@ from ray.data._internal.datasource.parquet_datasource import (
     PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT,
     ParquetDatasource,
     check_for_legacy_tensor_type,
-    emit_file_extensions_future_warning,
     get_parquet_dataset,
     _read_batches_from,
     _get_partition_columns_schema,
@@ -48,8 +47,6 @@ from ray.data._internal.util import (
 from ray.data.block import Block, BlockMetadata, DataBatch, Schema
 from ray.data.context import DataContext, MAX_SAFE_BLOCK_SIZE_FACTOR
 from ray.data.datasource import Partitioning, PathPartitionParser
-from ray.data.datasource.path_util import _has_file_extension
-from ray.util.debug import log_once
 from ray.anyscale.data.checkpoint.util import (
     CheckpointedFragmentInfo,
     parse_checkpointed_fragment_info,
@@ -261,14 +258,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         generated_id_column = self._generated_id_column
 
         paths = list(file_manifest.paths)
-        for path in paths:
-            if not _has_file_extension(
-                path, ParquetDatasource._FUTURE_FILE_EXTENSIONS
-            ) and log_once("read_parquet_file_extensions_future_warning"):
-                emit_file_extensions_future_warning(
-                    ParquetDatasource._FUTURE_FILE_EXTENSIONS
-                )
-                break
         chunk_metadatas = list(file_manifest.file_chunk_metadatas)
         assert (
             len(paths)

@@ -2,7 +2,6 @@ import copy
 import logging
 import math
 import os
-import warnings
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
@@ -53,7 +52,6 @@ from ray.data.datasource.partitioning import (
     PathPartitionParser,
 )
 from ray.data.datasource.path_util import (
-    _has_file_extension,
     _resolve_paths_and_filesystem,
 )
 from ray.util.debug import log_once
@@ -173,7 +171,7 @@ class ParquetDatasource(Datasource):
     cost of some potential performance and/or compatibility penalties.
     """
 
-    _FUTURE_FILE_EXTENSIONS = ["parquet"]
+    _FILE_EXTENSIONS = ["parquet"]
 
     def __init__(
         self,
@@ -316,14 +314,6 @@ class ParquetDatasource(Datasource):
         self._default_batch_size = _estimate_reader_batch_size(
             sampled_file_infos, DataContext.get_current().target_max_block_size
         )
-
-        if file_extensions is None:
-            for path in self._pq_paths:
-                if not _has_file_extension(
-                    path, self._FUTURE_FILE_EXTENSIONS
-                ) and log_once("read_parquet_file_extensions_future_warning"):
-                    emit_file_extensions_future_warning(self._FUTURE_FILE_EXTENSIONS)
-                    break
 
     def estimate_inmemory_data_size(self) -> int:
         # In case of empty projections no data will be read
@@ -913,7 +903,6 @@ def _sample_fragments(
 def _add_partitions_to_table(
     partition_col_values: Dict[str, PartitionDataType], table: "pyarrow.Table"
 ) -> "pyarrow.Table":
-
     for partition_col, value in partition_col_values.items():
         field_index = table.schema.get_field_index(partition_col)
         if field_index == -1:
@@ -1000,14 +989,66 @@ def _get_partition_columns_schema(
     return pa.schema(fields)
 
 
-def emit_file_extensions_future_warning(future_file_extensions: List[str]):
-    warnings.warn(
-        "The default `file_extensions` for `read_parquet` will change "
-        f"from `None` to {future_file_extensions} after Ray 2.43, and your dataset "
-        "contains files that don't match the new `file_extensions`. To maintain "
-        "backwards compatibility, set `file_extensions=None` explicitly.",
-        FutureWarning,
-    )
+def _derive_schema(
+    read_schema: Optional["pyarrow.Schema"],
+    *,
+    file_schema: "pyarrow.Schema",
+    partition_schema: Optional["pyarrow.Schema"],
+    projected_columns: Optional[List[str]],
+    _block_udf,
+) -> "pyarrow.Schema":
+    """Derives target schema for read operation"""
+
+    import pyarrow as pa
+
+    # Use target read schema if provided
+    if read_schema is not None:
+        target_schema = read_schema
+    else:
+        file_schema_fields = list(file_schema)
+        partition_schema_fields = (
+            list(partition_schema) if partition_schema is not None else []
+        )
+
+        # Otherwise, fallback to file + partitioning schema by default
+        target_schema = pa.schema(
+            fields=(
+                file_schema_fields
+                + [
+                    f
+                    for f in partition_schema_fields
+                    # Ignore fields from partition schema overlapping with
+                    # file's schema
+                    if file_schema.get_field_index(f.name) == -1
+                ]
+            ),
+            metadata=file_schema.metadata,
+        )
+
+    # Project schema if necessary
+    if projected_columns is not None:
+        target_schema = pa.schema(
+            [target_schema.field(column) for column in projected_columns],
+            target_schema.metadata,
+        )
+
+    if _block_udf is not None:
+        # Try to infer dataset schema by passing dummy table through UDF.
+        dummy_table = target_schema.empty_table()
+        try:
+            target_schema = _block_udf(dummy_table).schema.with_metadata(
+                target_schema.metadata
+            )
+        except Exception:
+            logger.debug(
+                "Failed to infer schema of dataset by passing dummy table "
+                "through UDF due to the following exception:",
+                exc_info=True,
+            )
+
+    check_for_legacy_tensor_type(target_schema)
+
+    return target_schema
 
 
 def _infer_data_and_partition_columns(
