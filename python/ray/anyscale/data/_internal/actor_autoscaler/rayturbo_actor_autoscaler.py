@@ -209,7 +209,9 @@ class RayTurboActorAutoscaler(ActorAutoscaler):
         util: float,
     ):
         # Do not scale up, if the op is completed or no more inputs are coming.
-        if op.completed() or (op._inputs_complete and op.internal_queue_size() == 0):
+        if op.completed() or (
+            op._inputs_complete and op.internal_input_queue_num_blocks() == 0
+        ):
             return False
         if actor_pool.current_size() < actor_pool.min_size():
             # Scale up, if the actor pool is below min size.
@@ -221,7 +223,8 @@ class RayTurboActorAutoscaler(ActorAutoscaler):
         if not op_state._scheduling_status.under_resource_limits:
             return False
         # Do not scale up, if the op has enough free slots for the existing inputs.
-        if op_state.total_enqueued_input_bundles() <= actor_pool.num_free_task_slots():
+        # TODO: this should be normalized with op.metrics.average_num_inputs_per_task.
+        if op_state.total_enqueued_input_blocks() <= actor_pool.num_free_task_slots():
             return False
         if actor_pool.num_pending_actors() > 0:
             # Do not scale up, if the last scale-up hasn't finished.
@@ -236,7 +239,9 @@ class RayTurboActorAutoscaler(ActorAutoscaler):
         util: float,
     ):
         # Scale down, if the op is completed or no more inputs are coming.
-        if op.completed() or (op._inputs_complete and op.internal_queue_size() == 0):
+        if op.completed() or (
+            op._inputs_complete and op.internal_input_queue_num_blocks() == 0
+        ):
             return True
         if actor_pool.current_size() > actor_pool.max_size():
             # Scale down, if the actor pool is above max size.

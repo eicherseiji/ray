@@ -402,10 +402,10 @@ class TestActorPoolAutoscaling:
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
             completed=MagicMock(return_value=False),
             _inputs_complete=False,
-            internal_queue_size=MagicMock(return_value=1),
+            internal_input_queue_num_blocks=MagicMock(return_value=1),
         )
         op_state = MagicMock(
-            spec=OpState, total_enqueued_input_bundles=MagicMock(return_value=10)
+            spec=OpState, total_enqueued_input_blocks=MagicMock(return_value=10)
         )
         op_scheduling_status = MagicMock(under_resource_limits=True)
         op_state._scheduling_status = op_scheduling_status
@@ -516,10 +516,10 @@ class TestActorPoolAutoscaling:
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
             completed=MagicMock(return_value=False),
             _inputs_complete=False,
-            internal_queue_size=MagicMock(return_value=1),
+            internal_input_queue_num_blocks=MagicMock(return_value=1),
         )
         op_state = MagicMock(
-            spec=OpState, total_enqueued_input_bundles=MagicMock(return_value=100)
+            spec=OpState, total_enqueued_input_blocks=MagicMock(return_value=100)
         )
         op_scheduling_status = MagicMock(under_resource_limits=True)
         op_state._scheduling_status = op_scheduling_status
@@ -635,10 +635,10 @@ class TestActorPoolAutoscaling:
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
             completed=MagicMock(return_value=False),
             _inputs_complete=False,
-            internal_queue_size=MagicMock(return_value=1),
+            internal_input_queue_num_blocks=MagicMock(return_value=1),
         )
         op_state = MagicMock(
-            spec=OpState, total_enqueued_input_bundles=MagicMock(return_value=10)
+            spec=OpState, total_enqueued_input_blocks=MagicMock(return_value=10)
         )
         op_scheduling_status = MagicMock(under_resource_limits=True)
         op_state._scheduling_status = op_scheduling_status
@@ -693,10 +693,10 @@ class TestActorPoolAutoscaling:
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
             completed=MagicMock(return_value=False),
             _inputs_complete=False,
-            internal_queue_size=MagicMock(return_value=1),
+            internal_input_queue_num_blocks=MagicMock(return_value=1),
         )
         op_state = MagicMock(
-            spec=OpState, total_enqueued_input_bundles=MagicMock(return_value=10)
+            spec=OpState, total_enqueued_input_blocks=MagicMock(return_value=10)
         )
         op_scheduling_status = MagicMock(under_resource_limits=True)
         op_state._scheduling_status = op_scheduling_status
@@ -760,7 +760,7 @@ class TestActorPoolAutoscaling:
         with patch(op, "completed", True):
             assert_should_scale_up(False)
         with patch(op, "_inputs_complete", True, is_method=False):
-            with patch(op, "internal_queue_size", 0):
+            with patch(op, "internal_input_queue_num_blocks", 0):
                 assert_should_scale_up(False)
 
         # Shouldn't scale up since the op doesn't have enough resources.
@@ -774,7 +774,7 @@ class TestActorPoolAutoscaling:
 
         # Shouldn't scale up since the op has enough free slots for
         # the existing inputs.
-        with patch(op_state, "total_enqueued_input_bundles", 5):
+        with patch(op_state, "total_enqueued_input_blocks", 5):
             assert_should_scale_up(False)
 
         # Shouldn't scale up when there are pending actors.
@@ -818,7 +818,7 @@ class TestActorPoolAutoscaling:
         with patch(op, "completed", True):
             assert_should_scale_down(True)
         with patch(op, "_inputs_complete", True, is_method=False):
-            with patch(op, "internal_queue_size", 0):
+            with patch(op, "internal_input_queue_num_blocks", 0):
                 assert_should_scale_down(True)
 
 
