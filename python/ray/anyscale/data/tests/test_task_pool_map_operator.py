@@ -29,7 +29,7 @@ def test_min_max_resource_requirements(ray_start_regular_shared, restore_data_co
     assert (
         # At a minimum, you need enough processors to run one task and enough object
         # store memory for a pending task.
-        min_resource_usage_bound == ExecutionResources(cpu=1, object_store_memory=1)
+        min_resource_usage_bound == ExecutionResources.zero()
         # As long as the operator is still receiving inputs, it can't determine an
         # upper bound on the resource usage.
         and max_resource_usage_bound == ExecutionResources.for_limits()
@@ -55,7 +55,7 @@ def test_min_max_resource_requirements_with_inputs_complete(
         max_resource_usage_bound,
     ) = op.min_max_resource_requirements()
 
-    assert min_resource_usage_bound == ExecutionResources(cpu=1, object_store_memory=1)
+    assert min_resource_usage_bound == ExecutionResources.zero()
     # If the operator is done receiving inputs, it knows it doesn't need more resources
     # than to run the active tasks.
     assert max_resource_usage_bound == ExecutionResources(cpu=2, object_store_memory=2)

@@ -330,8 +330,8 @@ class FileBasedDatasource(Datasource):
         Args:
             path: The file path to resolve compression for.
             open_args: kwargs passed to
-            `pyarrow.fs.FileSystem.open_input_stream <https://arrow.apache.org/docs/python/generated/pyarrow.fs.FileSystem.html#pyarrow.fs.FileSystem.open_input_stream>`_.
-            when opening input files to read.
+                `pyarrow.fs.FileSystem.open_input_stream <https://arrow.apache.org/docs/python/generated/pyarrow.fs.FileSystem.html#pyarrow.fs.FileSystem.open_input_stream>`_
+                when opening input files to read.
 
         Returns:
             The compression format (e.g., "gzip", "snappy", "bz2") or None if
@@ -349,13 +349,19 @@ class FileBasedDatasource(Datasource):
         return buffer_size
 
     def _file_to_snappy_stream(
-        self, file: "pyarrow.NativeFile"
+        self,
+        file: "pyarrow.NativeFile",
+        filesystem: "RetryingPyFileSystem",
     ) -> "pyarrow.PythonFile":
         import pyarrow as pa
         import snappy
+        from pyarrow.fs import HadoopFileSystem
 
         stream = io.BytesIO()
-        snappy.stream_decompress(src=file, dst=stream)
+        if isinstance(filesystem.unwrap(), HadoopFileSystem):
+            snappy.hadoop_snappy.stream_decompress(src=file, dst=stream)
+        else:
+            snappy.stream_decompress(src=file, dst=stream)
         stream.seek(0)
 
         return pa.PythonFile(stream, mode="r")
@@ -387,7 +393,7 @@ class FileBasedDatasource(Datasource):
             file = filesystem.open_input_stream(
                 path, buffer_size=buffer_size, **open_args
             )
-            return self._file_to_snappy_stream(file)
+            return self._file_to_snappy_stream(file, filesystem)
 
         open_args["compression"] = compression
         return filesystem.open_input_stream(path, buffer_size=buffer_size, **open_args)
