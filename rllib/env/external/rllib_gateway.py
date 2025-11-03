@@ -6,11 +6,11 @@ import time
 
 import numpy as np
 
-from ray.rllib.core import Columns, COMPONENT_RL_MODULE
+from ray.rllib.core import COMPONENT_RL_MODULE, Columns
 from ray.rllib.env.external.rllink import (
+    RLlink,
     get_rllink_message,
     send_rllink_message,
-    RLlink,
 )
 from ray.rllib.env.single_agent_episode import SingleAgentEpisode
 from ray.rllib.utils.metrics import WEIGHTS_SEQ_NO
