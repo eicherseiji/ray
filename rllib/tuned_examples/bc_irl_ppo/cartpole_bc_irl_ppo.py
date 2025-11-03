@@ -1,5 +1,4 @@
 import warnings
-
 from pathlib import Path
 
 from ray.rllib.algorithms.bc_irl_ppo.bc_irl_ppo import BCIRLPPOConfig
@@ -10,7 +9,6 @@ from ray.rllib.utils.metrics import (
     EVALUATION_RESULTS,
 )
 from ray.rllib.utils.test_utils import add_rllib_example_script_args
-
 
 parser = add_rllib_example_script_args(
     default_timesteps=5e6,
