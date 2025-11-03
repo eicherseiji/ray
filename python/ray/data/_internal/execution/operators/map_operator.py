@@ -230,9 +230,9 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
             )
 
         if isinstance(compute_strategy, TaskPoolStrategy):
-            from ray.data._internal.execution.operators.task_pool_map_operator import (
+            from ray.anyscale.data._internal.execution.operators.task_pool_map_operator import (
                 TaskPoolMapOperator,
-            )
+            )  # noqa: E501
 
             return TaskPoolMapOperator(
                 map_transformer,
@@ -248,9 +248,9 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
                 ray_remote_args=ray_remote_args,
             )
         elif isinstance(compute_strategy, ActorPoolStrategy):
-            from ray.data._internal.execution.operators.actor_pool_map_operator import (
+            from ray.anyscale.data._internal.execution.operators.actor_pool_map_operator import (
                 ActorPoolMapOperator,
-            )
+            )  # noqa: E501
 
             return ActorPoolMapOperator(
                 map_transformer,
@@ -573,7 +573,14 @@ def _map_task(
     ctx.kwargs.update(kwargs)
     TaskContext.set_current(ctx)
     stats = BlockExecStats.builder()
-    map_transformer.override_target_max_block_size(ctx.target_max_block_size_override)
+
+    # NOTE: Only override target max-block size of the transformer in case it's
+    #       required by the operator
+    if ctx.target_max_block_size_override is not None:
+        map_transformer.override_target_max_block_size(
+            ctx.target_max_block_size_override
+        )
+
     with MemoryProfiler(data_context.memory_usage_poll_interval_s) as profiler:
         for b_out in map_transformer.apply_transform(iter(blocks), ctx):
             # TODO(Clark): Add input file propagation from input blocks.
