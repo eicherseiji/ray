@@ -2,7 +2,7 @@ from typing import List
 
 import requests
 
-PYTHON_VERSIONS = ["cp39-cp39", "cp310-cp310", "cp311-cp311", "cp312-cp312"]
+PYTHON_VERSIONS = ["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313"]
 HOST_TYPES = ["x86_64", "aarch64"]
 
 

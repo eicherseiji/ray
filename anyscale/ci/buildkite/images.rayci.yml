@@ -27,6 +27,7 @@ steps:
       - "3.10"
       - "3.11"
       - "3.12"
+      - "3.13"
 
   - label: ":tapioca: rayturbo py{{matrix}} wheel aarch64"
     key: rayturbo-wheels-aarch64
@@ -43,6 +44,7 @@ steps:
       - "3.10"
       - "3.11"
       - "3.12"
+      - "3.13"
 
   - label: "Check ray wheels"
     key: check-ray-wheels
