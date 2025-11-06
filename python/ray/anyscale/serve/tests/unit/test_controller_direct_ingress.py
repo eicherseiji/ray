@@ -363,7 +363,7 @@ def test_get_target_groups_with_running_apps(
         node_id="node1",
         node_ip="10.0.0.1",
         availability_zone="az1",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
     replica_info2 = RunningReplicaInfo(
@@ -371,7 +371,7 @@ def test_get_target_groups_with_running_apps(
         node_id="node2",
         node_ip="10.0.0.2",
         availability_zone="az2",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
 
@@ -523,7 +523,7 @@ def test_get_target_groups_with_port_not_allocated(
         node_id="node1",
         node_ip="10.0.0.1",
         availability_zone="az1",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
     replica_info2 = RunningReplicaInfo(
@@ -531,7 +531,7 @@ def test_get_target_groups_with_port_not_allocated(
         node_id="node2",
         node_ip="10.0.0.2",
         availability_zone="az2",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
 
@@ -607,7 +607,7 @@ def test_get_target_groups_only_includes_ingress_deployments(
         node_id="node1",
         node_ip="10.0.0.1",
         availability_zone="az1",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
 
@@ -621,7 +621,7 @@ def test_get_target_groups_only_includes_ingress_deployments(
         node_id="node2",
         node_ip="10.0.0.2",
         availability_zone="az2",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
 
@@ -748,7 +748,7 @@ def test_get_target_groups_app_with_no_running_replicas(
         node_id="node1",
         node_ip="10.0.0.1",
         availability_zone="az1",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
 
@@ -849,7 +849,7 @@ async def test_control_loop_pruning(
         node_id="node1",
         node_ip="10.0.0.1",
         availability_zone="az1",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
     replica_info2 = RunningReplicaInfo(
@@ -857,7 +857,7 @@ async def test_control_loop_pruning(
         node_id="node1",
         node_ip="10.0.0.1",
         availability_zone="az1",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
     replica_info3 = RunningReplicaInfo(
@@ -865,7 +865,7 @@ async def test_control_loop_pruning(
         node_id="node2",
         node_ip="10.0.0.2",
         availability_zone="az2",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
 

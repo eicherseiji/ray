@@ -12,6 +12,7 @@ from ray._common.test_utils import SignalActor
 from ray.anyscale.serve._private.replica_scheduler.replica_wrapper import (
     AnyscaleRunningReplica,
 )
+from ray.serve._private.constants import SERVE_NAMESPACE
 from ray.serve._private.common import (
     DeploymentID,
     ReplicaID,
@@ -155,19 +156,25 @@ class FakeReplicaActor:
 
 @pytest.fixture
 def setup_fake_replica(ray_instance, request) -> RunningReplicaInfo:
-    actor_handle = FakeReplicaActor.remote()
+    actor_handle = FakeReplicaActor.options(name="fake_replica").remote()
     port = ray.get(actor_handle.start.remote())
 
+    replica_id = ReplicaID(
+        "fake_replica", deployment_id=DeploymentID(name="fake_deployment")
+    )
+    actor_name = replica_id.to_full_id_str()
+    # Create actor with a name so it can be retrieved by get_actor_handle()
+    _ = FakeReplicaActor.options(
+        name=actor_name, namespace=SERVE_NAMESPACE, lifetime="detached"
+    ).remote()
+
     return RunningReplicaInfo(
-        ReplicaID(
-            "fake_replica",
-            deployment_id=DeploymentID(name="fake_deployment"),
-        ),
+        replica_id=replica_id,
         node_id=None,
         # Just use local node IP
         node_ip="127.0.0.1",
         availability_zone=None,
-        actor_handle=actor_handle,
+        actor_name=actor_name,
         max_ongoing_requests=10,
         is_cross_language=False,
         # Get grpc port from FakeReplicaActor

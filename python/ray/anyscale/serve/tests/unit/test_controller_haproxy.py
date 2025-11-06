@@ -88,7 +88,7 @@ def test_get_target_groups_haproxy(
         node_id="node1",
         node_ip="10.0.0.1",
         availability_zone="az1",
-        actor_handle=mock.Mock(),
+        actor_name=mock.Mock(),
         max_ongoing_requests=100,
     )
 

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.3-labs
 
 # Base this on the existing servebuild image to avoid duplicating dependencies like wrk
-FROM cr.ray.io/rayproject/servebuild
+FROM cr.ray.io/rayproject/servebuild-py3.10
 
 # Set environment variables to avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
