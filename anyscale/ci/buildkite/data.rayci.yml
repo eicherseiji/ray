@@ -9,9 +9,9 @@ steps:
     commands:
       - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/data/... data
         --parallelism-per-worker 3
-        --build-name data9build
+        --build-name data9build-py3.10 --python-version 3.10
         --test-env RAY_DATA_USE_STREAMING_EXECUTOR=1
-    depends_on: data9build
+    depends_on: data9build-multipy
     job_env: forge
     tags:
       - data
@@ -22,9 +22,9 @@ steps:
     commands:
       - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/data/... data
         --parallelism-per-worker 3
-        --build-name datalbuild
+        --build-name datalbuild-py3.10 --python-version 3.10
         --test-env RAY_DATA_USE_STREAMING_EXECUTOR=1
-    depends_on: datalbuild
+    depends_on: datalbuild-multipy
     job_env: forge
     tags:
       - data
@@ -36,9 +36,9 @@ steps:
     commands:
       - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/data/... data
         --parallelism-per-worker 3
-        --build-name datanbuild
+        --build-name datanbuild-py3.10 --python-version 3.10
         --test-env RAY_DATA_USE_STREAMING_EXECUTOR=1
-    depends_on: datanbuild
+    depends_on: datanbuild-multipy
     job_env: forge
     tags:
       - data
