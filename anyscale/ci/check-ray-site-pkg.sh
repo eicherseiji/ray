@@ -4,7 +4,7 @@ set -euo pipefail
 
 source anyscale/ci/setup-env.sh
 
-PY_VERSION_CODES=(py39 py310 py311 py312)
+PY_VERSION_CODES=(py310 py311 py312)
 SUM_FILES=(sums-min.txt sums-aarch64.txt sums-default.txt)
 
 tmp_dir="$(mktemp -d)"
