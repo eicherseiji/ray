@@ -156,17 +156,15 @@ class FakeReplicaActor:
 
 @pytest.fixture
 def setup_fake_replica(ray_instance, request) -> RunningReplicaInfo:
-    actor_handle = FakeReplicaActor.options(name="fake_replica").remote()
-    port = ray.get(actor_handle.start.remote())
-
     replica_id = ReplicaID(
         "fake_replica", deployment_id=DeploymentID(name="fake_deployment")
     )
     actor_name = replica_id.to_full_id_str()
     # Create actor with a name so it can be retrieved by get_actor_handle()
-    _ = FakeReplicaActor.options(
+    actor_handle = FakeReplicaActor.options(
         name=actor_name, namespace=SERVE_NAMESPACE, lifetime="detached"
     ).remote()
+    port = ray.get(actor_handle.start.remote())
 
     return RunningReplicaInfo(
         replica_id=replica_id,
@@ -249,7 +247,7 @@ async def test_send_request_with_rejection(
     is_streaming: bool,
     on_separate_loop: bool,
 ):
-    actor_handle = setup_fake_replica.actor_handle
+    actor_handle = setup_fake_replica.get_actor_handle()
     replica = AnyscaleRunningReplica(setup_fake_replica)
     ray.get(
         actor_handle.set_replica_queue_length_info.remote(
