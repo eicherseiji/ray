@@ -1,13 +1,13 @@
 import math
 import time
 import unittest
-from contextlib import contextmanager
 from typing import Optional, OrderedDict
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import ray
+from ray.data.context import AutoscalingConfig
 from ray.anyscale.data._internal.actor_autoscaler.rayturbo_actor_autoscaler import (
     DefaultActorPoolResizingPolicy,
     RayTurboActorAutoscaler,
@@ -32,10 +32,18 @@ from ray.data._internal.execution.streaming_executor_state import OpState
 
 @pytest.fixture(autouse=True)
 def patch_autoscaling_coordinator():
+    mock_coordinator = MagicMock()
+
     with patch(
-        "ray.anyscale.air._internal.autoscaling_coordinator.get_or_create_autoscaling_coordinator"  # noqa: E501
+        "ray.anyscale.air._internal.autoscaling_coordinator.get_or_create_autoscaling_coordinator",
+        return_value=mock_coordinator,
     ):
-        yield
+        # Patch ray.get in the autoscaling_coordinator module to avoid issues with MagicMock ObjectRefs
+        with patch(
+            "ray.anyscale.air._internal.autoscaling_coordinator.ray.get",
+            return_value=None,
+        ):
+            yield
 
 
 @pytest.fixture
@@ -393,8 +401,6 @@ class TestActorPoolAutoscaling:
             max_tasks_in_flight_per_actor=max_tasks_in_flight_per_actor,
             per_actor_resource_usage=ExecutionResources(cpu=1),
         )
-        scaling_up_threadhold = 0.8
-        scaling_down_threadhold = 0.5
         scaling_up_factor = 3
 
         op = MagicMock(
@@ -411,14 +417,16 @@ class TestActorPoolAutoscaling:
         op_state._scheduling_status = op_scheduling_status
 
         resource_manager = MagicMock()
-        resource_manager._op_resource_allocator.get_budget = MagicMock(
+        resource_manager.get_budget = MagicMock(
             return_value=ExecutionResources.for_limits()
         )
         autoscaler = RayTurboActorAutoscaler(
             topology={op: op_state},
             resource_manager=resource_manager,
-            actor_pool_scaling_up_threshold=scaling_up_threadhold,
-            actor_pool_scaling_down_threshold=scaling_down_threadhold,
+            config=AutoscalingConfig(
+                actor_pool_util_upscaling_threshold=1.0,
+                actor_pool_util_downscaling_threshold=0.5,
+            ),
             actor_pool_util_check_interval_s=0,
             actor_pool_util_avg_window_s=0.1,
             actor_pool_resizing_policy=DefaultActorPoolResizingPolicy(
@@ -443,8 +451,10 @@ class TestActorPoolAutoscaling:
         actor_pool._current_in_flight_tasks = 7
         util = autoscaler._calculate_actor_pool_util(actor_pool)
         assert util is not None
-        # 7 / (2 * 4) = 0.875 > 0.8
-        assert util == pytest.approx(7 / (min_size * max_tasks_in_flight_per_actor))
+
+        assert util == pytest.approx(
+            7 / (actor_pool.max_actor_concurrency() * actor_pool.num_running_actors())
+        )
         # Scale-up should be triggered.
         autoscaler.try_trigger_scaling()
         assert actor_pool.current_size() == math.ceil(
@@ -460,8 +470,8 @@ class TestActorPoolAutoscaling:
         util = autoscaler._calculate_actor_pool_util(actor_pool)
         assert util is not None
         assert util == pytest.approx(
-            24 / (actor_pool.current_size() * max_tasks_in_flight_per_actor)
-        )  # 24 / (6 * 4) = 1.0 > 0.8
+            24 / (actor_pool.max_actor_concurrency() * actor_pool.num_running_actors())
+        )  # 24 / (1 * 6) = 4.0 > 1.0
         # Scale-up should be triggered.
         # The size should be capped by max_size.
         autoscaler.try_trigger_scaling()
@@ -472,24 +482,25 @@ class TestActorPoolAutoscaling:
         for _ in range(actor_pool.num_pending_actors()):
             actor_pool.pending_to_running()
         # Updated the number of used task slots and check the util.
-        actor_pool._current_in_flight_tasks = 15
+        actor_pool._current_in_flight_tasks = 3
         util = autoscaler._calculate_actor_pool_util(actor_pool)
         assert util is not None
         assert util == pytest.approx(
-            15 / (actor_pool.current_size() * max_tasks_in_flight_per_actor),
-        )  # 15 / (8 * 4) = 0.46875 < 0.5
+            3 / (actor_pool.max_actor_concurrency() * actor_pool.num_running_actors()),
+        )  # 3 / (1 * 8) = 0.375 < 0.5
         # Scale-down should be triggered.
         autoscaler.try_trigger_scaling()
         assert actor_pool.current_size() == max_size - 1  # current_size = 8 - 1 = 7
         current_time.increment()
 
         # Check the util again.
+        actor_pool._current_in_flight_tasks = 4
         util = autoscaler._calculate_actor_pool_util(actor_pool)
         assert util is not None
         assert util == pytest.approx(
             util,
-            15 / (actor_pool.current_size() * max_tasks_in_flight_per_actor),
-        )  # 15 / (7 * 4) = 0.5357 > 0.5
+            4 / (actor_pool.max_actor_concurrency() * actor_pool.num_running_actors()),
+        )  # 4 / (1 * 7) = 0.5714 > 0.5
         # Neither scale-up nor scale-down should be triggered.
         autoscaler.try_trigger_scaling()
         assert actor_pool.current_size() == max_size - 1
@@ -525,14 +536,16 @@ class TestActorPoolAutoscaling:
         op_state._scheduling_status = op_scheduling_status
 
         resource_manager = MagicMock()
-        resource_manager._op_resource_allocator.get_budget = MagicMock(
+        resource_manager.get_budget = MagicMock(
             return_value=ExecutionResources.for_limits()
         )
 
         autoscaler = RayTurboActorAutoscaler(
             topology={op: op_state},
             resource_manager=resource_manager,
-            actor_pool_scaling_up_threshold=0.8,  # High utilization threshold to ensure scaling
+            config=AutoscalingConfig(
+                actor_pool_util_upscaling_threshold=1.0,
+            ),
             actor_pool_util_check_interval_s=0,
             actor_pool_util_avg_window_s=0.1,
             actor_pool_resizing_policy=DefaultActorPoolResizingPolicy(
@@ -546,7 +559,9 @@ class TestActorPoolAutoscaling:
             actor_pool.pending_to_running()
 
         # Set high task utilization to trigger scaling
-        actor_pool._current_in_flight_tasks = min_size * max_tasks_in_flight_per_actor
+        actor_pool._current_in_flight_tasks = (
+            min_size * actor_pool.max_actor_concurrency()
+        )
 
         # Test scaling at different capacity ratios
         expected_sizes = []
@@ -644,17 +659,15 @@ class TestActorPoolAutoscaling:
         op_state._scheduling_status = op_scheduling_status
 
         resource_manager = MagicMock()
-        resource_manager._op_resource_allocator.get_budget = MagicMock(
-            return_value=budget
-        )
-        scaling_up_threadhold = 0.8
-        scaling_down_threadhold = 0.5
+        resource_manager.get_budget = MagicMock(return_value=budget)
         scaling_up_factor = 3
         autoscaler = RayTurboActorAutoscaler(
             topology={op: op_state},
             resource_manager=resource_manager,
-            actor_pool_scaling_up_threshold=scaling_up_threadhold,
-            actor_pool_scaling_down_threshold=scaling_down_threadhold,
+            config=AutoscalingConfig(
+                actor_pool_util_upscaling_threshold=1.0,
+                actor_pool_util_downscaling_threshold=0.5,
+            ),
             actor_pool_util_check_interval_s=0,
             actor_pool_util_avg_window_s=0.1,
             actor_pool_resizing_policy=DefaultActorPoolResizingPolicy(
@@ -675,151 +688,6 @@ class TestActorPoolAutoscaling:
         autoscaler.try_trigger_scaling()
         actual_scale_up = actor_pool.current_size() - min_size
         assert actual_scale_up == expected_scale_up
-
-    def test_should_scale_up_and_down_conditions(self):
-        """Test conditions for `_actor_pool_should_scale_up` and
-        `_actor_pool_should_scale_down`."""
-        # Current actor pool utilization is 0.9, which is above the threshold.
-        actor_pool = MagicMock(
-            min_size=MagicMock(return_value=5),
-            max_size=MagicMock(return_value=15),
-            current_size=MagicMock(return_value=10),
-            num_free_task_slots=MagicMock(return_value=5),
-            num_pending_actors=MagicMock(return_value=0),
-        )
-
-        op = MagicMock(
-            spec=PhysicalOperator,
-            get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
-            completed=MagicMock(return_value=False),
-            _inputs_complete=False,
-            internal_input_queue_num_blocks=MagicMock(return_value=1),
-        )
-        op_state = MagicMock(
-            spec=OpState, total_enqueued_input_blocks=MagicMock(return_value=10)
-        )
-        op_scheduling_status = MagicMock(under_resource_limits=True)
-        op_state._scheduling_status = op_scheduling_status
-
-        scaling_up_threadhold = 0.8
-        scaling_down_threadhold = 0.5
-        autoscaler = RayTurboActorAutoscaler(
-            topology={op: op_state},
-            resource_manager=MagicMock(),
-            actor_pool_scaling_up_threshold=scaling_up_threadhold,
-            actor_pool_scaling_down_threshold=scaling_down_threadhold,
-            actor_pool_util_check_interval_s=0,
-            actor_pool_util_avg_window_s=0.1,
-        )
-        autoscaler._calculate_actor_pool_util = MagicMock(return_value=0.9)
-
-        @contextmanager
-        def patch(mock, attr, value, is_method=True):
-            original = getattr(mock, attr)
-            if is_method:
-                value = MagicMock(return_value=value)
-            setattr(mock, attr, value)
-            yield
-            setattr(mock, attr, original)
-
-        # === Test scaling up ===
-
-        def assert_should_scale_up(expected):
-            nonlocal actor_pool, op, op_state
-
-            util = autoscaler._calculate_actor_pool_util(actor_pool)
-            assert util is not None
-
-            assert (
-                autoscaler._actor_pool_should_scale_up(
-                    actor_pool=actor_pool,
-                    op=op,
-                    op_state=op_state,
-                    util=util,
-                )
-                == expected
-            )
-
-        # Should scale up since the util above the threshold.
-        assert_should_scale_up(True)
-
-        # Shouldn't scale up since the util is below the threshold.
-        with patch(autoscaler, "_calculate_actor_pool_util", 0.7):
-            assert_should_scale_up(False)
-
-        # Shouldn't scale up since we have reached the max size.
-        with patch(actor_pool, "current_size", 15):
-            assert_should_scale_up(False)
-
-        # Should scale up since the pool is below the min size.
-        with patch(actor_pool, "current_size", 4):
-            assert_should_scale_up(True)
-
-        # Shouldn't scale up since if the op is completed, or
-        # the op has no more inputs.
-        with patch(op, "completed", True):
-            assert_should_scale_up(False)
-        with patch(op, "_inputs_complete", True, is_method=False):
-            with patch(op, "internal_input_queue_num_blocks", 0):
-                assert_should_scale_up(False)
-
-        # Shouldn't scale up since the op doesn't have enough resources.
-        with patch(
-            op_scheduling_status,
-            "under_resource_limits",
-            False,
-            is_method=False,
-        ):
-            assert_should_scale_up(False)
-
-        # Shouldn't scale up since the op has enough free slots for
-        # the existing inputs.
-        with patch(op_state, "total_enqueued_input_blocks", 5):
-            assert_should_scale_up(False)
-
-        # Shouldn't scale up when there are pending actors.
-        with patch(actor_pool, "num_pending_actors", 1):
-            assert_should_scale_up(False)
-
-        # === Test scaling down ===
-
-        def assert_should_scale_down(expected):
-
-            util = autoscaler._calculate_actor_pool_util(actor_pool)
-            assert util is not None
-
-            assert (
-                autoscaler._actor_pool_should_scale_down(
-                    actor_pool=actor_pool,
-                    op=op,
-                    util=util,
-                )
-                == expected
-            )
-
-        # Shouldn't scale down since the util above the threshold.
-        assert autoscaler._calculate_actor_pool_util(actor_pool) == 0.9
-        assert_should_scale_down(False)
-
-        # Should scale down since the util is below the threshold.
-        with patch(autoscaler, "_calculate_actor_pool_util", 0.4):
-            assert_should_scale_down(True)
-
-        # Should scale down since the pool is above the max size.
-        with patch(actor_pool, "current_size", 16):
-            assert_should_scale_down(True)
-
-        # Shouldn't scale down since we have reached the min size.
-        with patch(actor_pool, "current_size", 5):
-            assert_should_scale_down(False)
-
-        # Should scale down since if the op is completed, or
-        # the op has no more inputs.
-        with patch(op, "completed", True):
-            assert_should_scale_down(True)
-        with patch(op, "_inputs_complete", True, is_method=False):
-            with patch(op, "internal_input_queue_num_blocks", 0):
-                assert_should_scale_down(True)
 
 
 if __name__ == "__main__":
