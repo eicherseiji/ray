@@ -1,10 +1,7 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional, Dict, Union
 
 from ray.anyscale.data.checkpoint.interfaces import CheckpointBackend, CheckpointConfig
-from ray.anyscale.data.issue_detection.issue_detector_configuration import (
-    IssueDetectorsConfiguration,
-)
 from ray.data.context import (
     DEFAULT_TARGET_MAX_BLOCK_SIZE,
     DEFAULT_TARGET_MIN_BLOCK_SIZE,
@@ -15,9 +12,6 @@ from ray.data._internal.util import _check_import
 
 if TYPE_CHECKING:
     import polars as pl
-    from ray.anyscale.data.issue_detection.issue_detector_configuration import (
-        IssueDetectorsConfiguration,
-    )
 
 DEFAULT_NUM_BLOCKS_PER_READ_TASK = 8
 
@@ -112,15 +106,6 @@ def _check_polars_gpu_availability(
         return False
 
 
-def _issue_detectors_config_factory() -> "IssueDetectorsConfiguration":
-    # Lazily import to avoid circular dependencies.
-    from ray.anyscale.data.issue_detection.issue_detector_configuration import (
-        IssueDetectorsConfiguration,
-    )
-
-    return IssueDetectorsConfiguration()
-
-
 @dataclass
 class DataContextMixin:
     """A mix-in class that allows adding Anyscale proprietary
@@ -129,11 +114,6 @@ class DataContextMixin:
     # Configuration for Ray Data checkpointing.
     # If None, checkpointing is disabled.
     _checkpoint_config: Optional[CheckpointConfig] = None
-
-    # Configuration for Issue Detection
-    issue_detectors_config: "IssueDetectorsConfiguration" = field(
-        default_factory=_issue_detectors_config_factory
-    )
 
     # Overrides viability of fusion for file reading ops
     _enable_read_files_fusion_override: Optional[bool] = None

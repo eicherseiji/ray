@@ -34,18 +34,6 @@ def _patch_class_with_dataclass_mixin(original_cls, dataclass_mixin_cls):
                 setattr(original_cls, name, method)
 
 
-def _patch_default_execution_callbacks():
-    from ...data._internal.execution.execution_callback import add_execution_callback
-
-    from ._internal.execution.callbacks.insert_issue_detectors import (
-        IssueDetectionExecutionCallback,
-    )
-
-    add_execution_callback(
-        IssueDetectionExecutionCallback(), ray.data.context.DataContext.get_current()
-    )
-
-
 def _patch_aggregations():
     from .aggregate_vectorized import (
         MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS,
@@ -85,7 +73,6 @@ def _patch_map_transformations():
 
 def _patch_preprocessors():
     if ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS:
-
         from ...data import preprocessors
 
         from .preprocessors import (
@@ -121,48 +108,6 @@ def _patch_arrow_ops():
         transform_pyarrow.hash_partition = hash_partition_optimized
     except Exception:
         pass
-
-
-def _patch_observability_metrics():
-    """
-    This function patches the OpRuntimeMetrics class to add custom metrics on the
-    RayTurbo side.
-
-    In particular, it adds counter metrics to track the number of detector issues.
-    For rendering RayTurbo dashboard, these counters are indexed by timestamp so are
-    performant to query across multiple datasets.
-
-    We also persist the details of each issue as exported events. These details are not
-    indexed by timestamp and are not performant to query across multiple datasets. We
-    will only query these details at the operator level in RayTurbo dashboard.
-    """
-    from ...data._internal.execution.interfaces.op_runtime_metrics import (
-        MetricsGroup,
-        OpRuntimeMetrics,
-        metric_property,
-    )
-
-    OpRuntimeMetrics._issue_detector_hanging = 0
-    OpRuntimeMetrics._issue_detector_high_memory = 0
-
-    @metric_property(
-        description="Indicates if the operator is hanging.",
-        metrics_group=MetricsGroup.MISC,
-        internal_only=True,
-    )
-    def issue_detector_hanging(self) -> int:
-        return self._issue_detector_hanging
-
-    @metric_property(
-        description="Indicates if the operator is using high memory.",
-        metrics_group=MetricsGroup.MISC,
-        internal_only=True,
-    )
-    def issue_detector_high_memory(self) -> int:
-        return self._issue_detector_high_memory
-
-    OpRuntimeMetrics.issue_detector_hanging = issue_detector_hanging
-    OpRuntimeMetrics.issue_detector_high_memory = issue_detector_high_memory
 
 
 def _add_optimization_rules():
@@ -247,9 +192,6 @@ def apply_anyscale_patches():
     # Patches ``MapTransformer`` and ``MapTransformFn``s
     _patch_map_transformations()
 
-    # Patch observability metrics
-    _patch_observability_metrics()
-
     # Patch Arrow operations with optimized implementations
     _patch_arrow_ops()
 
@@ -274,6 +216,3 @@ def apply_anyscale_patches():
     _patch_class_with_mixin(ray.data.dataset.Dataset, DatasetMixin)
     _patch_class_with_dataclass_mixin(ray.data.context.DataContext, DataContextMixin)
     _patch_class_with_mixin(ray.data.iterator.DataIterator, DataIteratorMixin)
-
-    # Patch default execution callbacks
-    _patch_default_execution_callbacks()
