@@ -305,8 +305,9 @@ def test_simple_self_join(
             lsuffix=left_suffix,
             rsuffix=right_suffix,
         ).reset_index(drop=True)
+        expected_pd_sorted = expected_pd.sort_values(by=["id"]).reset_index(drop=True)
 
-        pd.testing.assert_frame_equal(expected_pd, joined_pd_sorted)
+        pd.testing.assert_frame_equal(expected_pd_sorted, joined_pd_sorted)
 
 
 def test_invalid_join_config(
