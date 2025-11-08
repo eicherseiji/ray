@@ -1,11 +1,14 @@
 import abc
 import logging
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, Iterator, List, Optional, Tuple
 from typing import TypedDict, Type, get_type_hints
+from dataclasses import dataclass
 
 import math
 import pyarrow as pa
 from pyarrow.fs import FileSelector, FileSystem, FileType
+
+from ray._private.ray_constants import env_integer
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -17,11 +20,21 @@ from ray.data.datasource.path_util import (
     _has_file_extension,
     _resolve_paths_and_filesystem,
 )
+from ray.data._internal.util import make_async_gen
 from ray.data._internal.util import infer_compression
-from ray._private.ray_constants import env_integer
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FileInfo:
+    """File information for file listing."""
+
+    # The path to the file.
+    path: str
+    # The size of the file in bytes.
+    size: Optional[int]
 
 
 class ChunkMetadata(TypedDict):
@@ -143,6 +156,7 @@ class FileIndexer(abc.ABC):
         file_extensions: Optional[List[str]] = None,
         partition_filter: Optional[PathPartitionFilter] = None,
         checkpoint_ids: Optional[Block] = None,
+        preserve_order: bool = False,
     ) -> Iterable[FileManifest]:
         """List files and their on-disk sizes for the given path.
 
@@ -152,6 +166,7 @@ class FileIndexer(abc.ABC):
             file_extensions: A list of file extensions to filter by.
             partition_filter: A partition filter to filter by.
             checkpoint_ids: A block of checkpointed IDs.
+            preserve_order: Whether to preserve order in file listing.
 
         Returns:
             An iterator of `FileManifest` objects, each of which contains a file path
@@ -174,6 +189,15 @@ class NonSamplingFileIndexer(FileIndexer):
         "RAY_DATA_MAX_PATHS_PER_LIST_FILES_OUTPUT", 1000
     )
 
+    # Queue size for threaded file discovery
+    _QUEUE_SIZE_PER_THREAD = env_integer(
+        "RAY_DATA_LIST_FILES_QUEUE_SIZE_PER_THREAD",
+        _MAX_PATHS_PER_LIST_FILES_OUTPUT * 4,
+    )
+
+    # Number of producer worker threads. When <= 1, this will use sequential processing.
+    _THREADED_NUM_WORKERS = env_integer("RAY_DATA_LIST_FILES_THREADED_NUM_WORKERS", 4)
+
     def __init__(
         self,
         *,
@@ -193,11 +217,10 @@ class NonSamplingFileIndexer(FileIndexer):
         file_extensions: Optional[List[str]] = None,
         partition_filter: Optional[PathPartitionFilter] = None,
         checkpoint_ids: Optional[Block] = None,
+        preserve_order: bool = False,
     ) -> Iterable[FileManifest]:
         from ray.anyscale.data.checkpoint.util import (
-            get_checkpoint_fragments_info_for_file,
             index_checkpointed_fragments,
-            is_file_fragments_fully_checkpointed,
         )
 
         if checkpoint_ids is not None:
@@ -208,59 +231,104 @@ class NonSamplingFileIndexer(FileIndexer):
         else:
             checkpointed_fragments_by_path = {}
 
+        # Use threaded iterator (handles sequential case when num_workers=1)
+        file_info_iterator = (
+            self._get_file_info_iterator_threaded(paths, filesystem, preserve_order)
+            if self._THREADED_NUM_WORKERS > 1
+            else self._get_file_info_iterator_sequential(paths, filesystem)
+        )
+
+        yield from self._process_file_infos_to_manifests(
+            file_info_iterator,
+            file_extensions,
+            partition_filter,
+            checkpoint_ids,
+            checkpointed_fragments_by_path,
+        )
+
+    def _get_file_info_iterator_sequential(
+        self,
+        paths: "BlockColumn",
+        filesystem: "FileSystem",
+    ) -> Iterable[FileInfo]:
+        """Sequential file info iterator."""
+        for input_path in paths.to_pylist():
+            resolved_paths, _ = _resolve_paths_and_filesystem(input_path, filesystem)
+            assert len(resolved_paths) == 1
+
+            for path, file_size in _get_file_infos(
+                resolved_paths[0], filesystem, self._ignore_missing_paths
+            ):
+                yield FileInfo(path=path, size=file_size)
+
+    def _get_file_info_iterator_threaded(
+        self,
+        paths: "BlockColumn",
+        filesystem: "FileSystem",
+        preserve_order: bool = False,
+    ) -> Iterable[FileInfo]:
+        """Threaded file info iterator with guaranteed deterministic order for preserving order case."""
+        paths_list = paths.to_pylist()
+        num_workers = min(self._THREADED_NUM_WORKERS, len(paths_list))
+
+        def process_paths(path_iterator: Iterator[str]) -> Iterator[FileInfo]:
+            """Transform function: processes paths and yields FileInfo objects."""
+            for input_path in path_iterator:
+                resolved_paths, _ = _resolve_paths_and_filesystem(
+                    input_path, filesystem
+                )
+                assert len(resolved_paths) == 1
+
+                for path, file_size in _get_file_infos(
+                    resolved_paths[0],
+                    filesystem,
+                    self._ignore_missing_paths,
+                ):
+                    yield FileInfo(path=path, size=file_size)
+
+        yield from make_async_gen(
+            base_iterator=iter(paths_list),
+            fn=process_paths,
+            preserve_ordering=preserve_order,
+            num_workers=num_workers,
+            buffer_size=self._QUEUE_SIZE_PER_THREAD,
+        )
+
+    def _process_file_infos_to_manifests(
+        self,
+        file_infos: Iterable[FileInfo],
+        file_extensions: Optional[List[str]],
+        partition_filter: Optional[PathPartitionFilter],
+        checkpoint_ids: Optional[Block],
+        checkpointed_fragments_by_path: dict[str, int],
+    ) -> Iterable[FileManifest]:
+        """Convert file infos to manifests"""
         running_paths = []
         running_file_sizes = []
         running_file_chunk_metadatas = []
         running_file_fragments_checkpoint = []
         manifests_count = 0
-        filtered_paths_count = 0
         file_chunks_count = 0
-        for input_path in paths.to_pylist():
-            resolved_paths, _ = _resolve_paths_and_filesystem(input_path, filesystem)
-            assert len(resolved_paths) == 1
-            for path, file_size in _get_file_infos(
-                resolved_paths[0], filesystem, self._ignore_missing_paths
-            ):
-                # Some filesystems (e.g., HTTP) return `None` for file size,
-                # so we explicitly check for zero-byte files rather than checking for
-                # a falsey file size.
-                if file_size == 0:
-                    logger.warning(f"Skipping zero-size file: {path!r}")
-                    continue
 
-                # Skip if path doesn't match file extensions or partition filter
-                if filter_file_path(path, file_extensions, partition_filter):
-                    filtered_paths_count += 1
-                    continue
+        for file_info in file_infos:
+            processed = self._process_file_info(
+                file_info,
+                file_extensions,
+                partition_filter,
+                checkpoint_ids,
+                checkpointed_fragments_by_path,
+            )
 
-                checkpoint_fragments_info = None
-                if checkpoint_ids is not None:
-                    # Get checkpoint file fragments for this file
-                    checkpoint_fragments_info = get_checkpoint_fragments_info_for_file(
-                        checkpoint_ids, path, checkpointed_fragments_by_path
+            if processed:
+                for chunk_data in processed:
+                    running_paths.append(chunk_data["path"])
+                    running_file_sizes.append(chunk_data["size"])
+                    running_file_chunk_metadatas.append(chunk_data["chunk_metadata"])
+                    running_file_fragments_checkpoint.append(
+                        chunk_data["checkpoint_fragments_info"]
                     )
-
-                    # Check if the file is fully checkpointed
-                    if (
-                        checkpoint_fragments_info.checkpointed_file_fragments
-                        is not None
-                        and is_file_fragments_fully_checkpointed(
-                            checkpoint_fragments_info
-                        )
-                    ):
-                        logger.debug(
-                            f"list_files: Skipping fully checkpointed file: {path!r}"
-                        )
-                        continue
-
-                for chunk_metadata, size in self._file_chunker.generate_chunk_metadatas(
-                    path, file_size
-                ):
-                    running_paths.append(path)
-                    running_file_sizes.append(size)
-                    running_file_chunk_metadatas.append(chunk_metadata)
-                    running_file_fragments_checkpoint.append(checkpoint_fragments_info)
                     file_chunks_count += 1
+
                     if len(running_paths) >= self._MAX_PATHS_PER_LIST_FILES_OUTPUT:
                         manifests_count += 1
                         yield FileManifest.construct_manifest(
@@ -273,6 +341,7 @@ class NonSamplingFileIndexer(FileIndexer):
                         running_file_sizes = []
                         running_file_chunk_metadatas = []
                         running_file_fragments_checkpoint = []
+
         if running_paths:
             manifests_count += 1
             yield FileManifest.construct_manifest(
@@ -281,9 +350,68 @@ class NonSamplingFileIndexer(FileIndexer):
                 running_file_chunk_metadatas,
                 running_file_fragments_checkpoint,
             )
+
         logger.debug(
-            f"Listing files: filtered {filtered_paths_count} paths, constructed manifests {manifests_count} with {file_chunks_count} file chunks"
+            f"Listing files: constructed manifests {manifests_count} with {file_chunks_count} file chunks"
         )
+
+    def _process_file_info(
+        self,
+        file_info: FileInfo,
+        file_extensions: Optional[List[str]],
+        partition_filter: Optional[PathPartitionFilter],
+        checkpoint_ids: Optional[Block],
+        checkpointed_fragments_by_path: dict[str, int],
+    ) -> Optional[List[dict]]:
+        """Process a single file info and return chunk data."""
+        from ray.anyscale.data.checkpoint.util import (
+            get_checkpoint_fragments_info_for_file,
+            is_file_fragments_fully_checkpointed,
+        )
+
+        path, file_size = file_info.path, file_info.size
+
+        # Some filesystems (e.g., HTTP) return `None` for file size,
+        # so we explicitly check for zero-byte files rather than checking for
+        # a falsey file size.
+        if file_size == 0:
+            logger.warning(f"Skipping zero-size file: {path!r}")
+            return None
+
+        # Skip if path doesn't match file extensions or partition filter
+        if filter_file_path(path, file_extensions, partition_filter):
+            return None
+
+        checkpoint_fragments_info = None
+        if checkpoint_ids is not None:
+            # Get checkpoint file fragments for this file
+            checkpoint_fragments_info = get_checkpoint_fragments_info_for_file(
+                checkpoint_ids, path, checkpointed_fragments_by_path
+            )
+
+            # Check if the file is fully checkpointed
+            if (
+                checkpoint_fragments_info.checkpointed_file_fragments is not None
+                and is_file_fragments_fully_checkpointed(checkpoint_fragments_info)
+            ):
+                logger.debug(f"list_files: Skipping fully checkpointed file: {path!r}")
+                return None
+
+        # Generate chunk metadata
+        chunks = []
+        for chunk_metadata, size in self._file_chunker.generate_chunk_metadatas(
+            path, file_size
+        ):
+            chunks.append(
+                {
+                    "path": path,
+                    "size": size,
+                    "chunk_metadata": chunk_metadata,
+                    "checkpoint_fragments_info": checkpoint_fragments_info,
+                }
+            )
+
+        return chunks
 
 
 def _get_file_infos(

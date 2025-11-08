@@ -69,6 +69,7 @@ def plan_list_files_op(
                 filesystem=filesystem,
                 file_extensions=file_extensions,
                 partition_filter=partition_filter,
+                preserve_order=data_context.execution_options.preserve_order,
             ),
             # NOTE: Disable block-shaping to produce blocks as is
             disable_block_shaping=True,
@@ -172,6 +173,7 @@ def list_files_for_each_block(
     filesystem: FileSystem,
     file_extensions: Optional[List[str]],
     partition_filter: Optional[PathPartitionFilter],
+    preserve_order: bool,
 ) -> Iterable[Block]:
     checkpoint_ids = None
     if CHECKPOINTED_IDS_KWARG_NAME in ctx.kwargs:
@@ -183,6 +185,7 @@ def list_files_for_each_block(
             checkpoint_ids=checkpoint_ids,
             file_extensions=file_extensions,
             partition_filter=partition_filter,
+            preserve_order=preserve_order,
         ):
             assert (
                 len(file_manifest) > 0
