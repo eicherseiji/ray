@@ -55,7 +55,7 @@ class PandasJSONLReader(NativeFileReader):
 
         if compression is None:
             # We use a seekable file to estimate chunksize.
-            return filesystem.open_input_file(path, **open_args)
+            return filesystem.open_input_file(path)
 
         return super().open_input_source(path, filesystem=filesystem)
 

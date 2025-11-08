@@ -151,13 +151,19 @@ class NativeFileReader(FileReader):
         return buffer_size
 
     def _file_to_snappy_stream(
-        self, file: "pyarrow.NativeFile"
+        self,
+        file: "pyarrow.NativeFile",
+        filesystem: "RetryingPyFileSystem",
     ) -> "pyarrow.PythonFile":
         import pyarrow as pa
         import snappy
+        from pyarrow.fs import HadoopFileSystem
 
         stream = io.BytesIO()
-        snappy.stream_decompress(src=file, dst=stream)
+        if isinstance(filesystem.unwrap(), HadoopFileSystem):
+            snappy.hadoop_snappy.stream_decompress(src=file, dst=stream)
+        else:
+            snappy.stream_decompress(src=file, dst=stream)
         stream.seek(0)
 
         return pa.PythonFile(stream, mode="r")
@@ -186,7 +192,7 @@ class NativeFileReader(FileReader):
             file = filesystem.open_input_stream(
                 path, buffer_size=buffer_size, **open_args
             )
-            return self._file_to_snappy_stream(file)
+            return self._file_to_snappy_stream(file, filesystem)
 
         open_args["compression"] = compression
         return filesystem.open_input_stream(path, buffer_size=buffer_size, **open_args)
