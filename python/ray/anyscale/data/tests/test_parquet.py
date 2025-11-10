@@ -529,7 +529,6 @@ def test_read_parquet_batching(ray_start_regular_shared, tmp_path, test_case):
     tables = list(
         reader.read_files(
             file_manifest,
-            predicate_expr=None,
             columns=None,
             columns_rename=None,
             filesystem=pa.fs.LocalFileSystem(),

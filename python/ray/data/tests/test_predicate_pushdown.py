@@ -139,32 +139,6 @@ def test_chained_filter_with_expressions(parquet_ds):
     )
 
 
-@pytest.mark.parametrize(
-    "filter_fn,expected_suffix",
-    [
-        (
-            lambda ds: ds.filter(lambda r: r["sepal.length"] > 5.0),
-            "Filter[Filter(<lambda>)]",  # UDF filter doesn't push down
-        ),
-        (
-            lambda ds: ds.filter(expr=col("sepal.length") > 5.0),
-            "",  # Expression filter pushes down to read
-        ),
-    ],
-)
-def test_filter_pushdown_csv(csv_ds, filter_fn, expected_suffix):
-    """Test filtering on CSV files with predicate pushdown."""
-    filtered_ds = filter_fn(csv_ds)
-    filtered_data = filtered_ds.take_all()
-    assert filtered_ds.count() == 118
-    assert all(record["sepal.length"] > 5.0 for record in filtered_data)
-    _check_plan_with_flexible_read(
-        filtered_ds,
-        expected_suffix,
-        filtered_data,
-    )
-
-
 def test_filter_mixed(csv_ds):
     """Test that mixed function and expressions work (CSV supports predicate pushdown)."""
     csv_ds = csv_ds.filter(lambda r: r["sepal.length"] < 5.0)
@@ -199,24 +173,6 @@ def test_filter_mixed_expression_first_parquet(ray_start_regular_shared):
     _check_plan_with_flexible_read(
         ds,
         "Filter[Filter(<lambda>)]",  # Expressions pushed down, UDF remains
-        filtered_expr_data,
-    )
-
-
-def test_filter_mixed_expression_first_csv(ray_start_regular_shared):
-    """Test that mixed functional and expressions work with CSV (supports predicate pushdown)."""
-    ds = ray.data.read_csv("example://iris.csv")
-    ds = ds.filter(expr="sepal.length > 3.0")
-    ds = ds.filter(expr="sepal.length > 4.0")
-    ds = ds.filter(lambda r: r["sepal.length"] < 5.0)
-    filtered_expr_data = ds.take_all()
-    assert ds.count() == 22
-    assert all(record["sepal.length"] < 5.0 for record in filtered_expr_data)
-    assert all(record["sepal.length"] > 4.0 for record in filtered_expr_data)
-    # Expression filters pushed down to read, UDF filter remains
-    _check_plan_with_flexible_read(
-        ds,
-        "Filter[Filter(<lambda>)]",
         filtered_expr_data,
     )
 

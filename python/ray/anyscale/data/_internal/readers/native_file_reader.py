@@ -1,11 +1,10 @@
 import abc
 import io
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import pyarrow
 
-from ray.data.expressions import Expr
 
 from .file_reader import FileReader
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
@@ -66,7 +65,6 @@ class NativeFileReader(FileReader):
         *,
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
-        predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]] = None,
         filesystem: "pyarrow.fs.FileSystem",
     ) -> Iterable[DataBatch]:
         paths = file_manifest.paths
@@ -131,9 +129,9 @@ class NativeFileReader(FileReader):
 
         Args:
             path: The file path to resolve compression for.
-            open_args: kwargs passed to
-            `pyarrow.fs.FileSystem.open_input_stream <https://arrow.apache.org/docs/python/generated/pyarrow.fs.FileSystem.html#pyarrow.fs.FileSystem.open_input_stream>`_.
-            when opening input files to read.
+            open_args: Keyword arguments passed to
+                `pyarrow.fs.FileSystem.open_input_stream <https://arrow.apache.org/docs/python/generated/pyarrow.fs.FileSystem.html#pyarrow.fs.FileSystem.open_input_stream>`_
+                when opening input files to read.
 
         Returns:
             The compression format (e.g., "gzip", "snappy", "bz2") or None if

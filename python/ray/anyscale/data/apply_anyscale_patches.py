@@ -127,14 +127,12 @@ def _add_optimization_rules():
     )
 
     from ._internal.logical.rules import (
-        PredicatePushdown,
         PushdownCountFiles,
     )
 
     # Logical optimization rules
 
     logical_ruleset = get_logical_ruleset()
-    logical_ruleset.add(PredicatePushdown)
     logical_ruleset.add(PushdownCountFiles)
     logical_ruleset.add(CombineRepartitions)
     logical_ruleset.add(FuseMapWithRepartitionRule)

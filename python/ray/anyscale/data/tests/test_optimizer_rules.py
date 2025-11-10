@@ -85,53 +85,11 @@ def test_filter_with_udfs(parquet_ds):
 def test_filter_with_expressions(parquet_ds):
     """Test filtering with expressions where predicate pushdown occurs."""
     filtered_udf_data = parquet_ds.filter(lambda r: r["sepal.length"] > 5.0).take_all()
-    filtered_expr_ds = parquet_ds.filter(expr="sepal.length > 5.0")
+    filtered_expr_ds = parquet_ds.filter(expr=col("sepal.length") > 5.0)
     _check_valid_plan_and_result(
         filtered_expr_ds,
         "ListFiles[ListFiles] -> ReadFiles[ReadFiles]",
         filtered_udf_data,
-    )
-
-
-@pytest.mark.parametrize(
-    "source_expr,filter_expr,check",
-    [
-        # Test with PyArrow compute expressions
-        (
-            pc.greater(pc.field("sepal.length"), pc.scalar(5.0)),
-            "sepal.width > 3.0",
-            lambda r: r["sepal.length"] > 5.0 and r["sepal.width"] > 3.0,
-        ),
-        # Test with PyArrow DNF form
-        (
-            [("sepal.length", "<", 4.0)],
-            "sepal.width < 2.0",
-            lambda r: r["sepal.length"] < 4.0 and r["sepal.width"] < 2.0,
-        ),
-        (
-            [[("variety", "=", "Setosa"), ("sepal.length", ">", 5.0)]],
-            "petal.length > 1.0",
-            lambda r: (r["variety"] == "Setosa" and r["sepal.length"] > 5.0)
-            and r["petal.length"] > 1.0,
-        ),
-    ],
-)
-def test_filter_pushdown_source_and_op(
-    ray_start_regular_shared, source_expr, filter_expr, check
-):
-    """Test filtering when expressions are provided both in source and operator.
-
-    Tests both PyArrow compute expressions and DNF form filters for source.
-    """
-    ds = ray.data.read_parquet("example://iris.parquet", filter=source_expr).filter(
-        expr=filter_expr
-    )
-    result = ds.take_all()
-    assert all(check(k) for k in result)
-    _check_valid_plan_and_result(
-        ds,
-        "ListFiles[ListFiles] -> ReadFiles[ReadFiles]",
-        result,
     )
 
 
@@ -161,12 +119,13 @@ def test_chained_filter_with_expressions(parquet_ds):
         ),
         (
             lambda ds: ds.filter(expr="sepal.length > 5.0"),
-            "ListFiles[ListFiles] -> ReadFiles[ReadFiles]",
+            # CSV doesn't support predicate pushdown, so Filter remains in logical plan
+            "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> Filter[Filter(<expression>)]",
         ),
     ],
 )
 def test_filter_pushdown_csv(csv_ds, filter_fn, expected_plan):
-    """Test filtering on CSV files with and without predicate pushdown."""
+    """Test filtering on CSV files without predicate pushdown."""
     filtered_ds = filter_fn(csv_ds)
     filtered_data = filtered_ds.take_all()
     assert filtered_ds.count() == 118
@@ -201,17 +160,25 @@ def test_filter_mixed(csv_ds):
 
 
 @pytest.mark.parametrize(
-    "ds_creator",
+    "ds_creator,expected_plan",
     [
-        lambda: ray.data.read_parquet("example://iris.parquet"),
-        lambda: ray.data.read_csv("example://iris.csv"),
+        (
+            lambda: ray.data.read_parquet("example://iris.parquet"),
+            # Parquet supports predicate pushdown, so expression filters are pushed down
+            "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> Filter[Filter(<lambda>)]",
+        ),
+        (
+            lambda: ray.data.read_csv("example://iris.csv"),
+            # CSV doesn't support predicate pushdown, expression filters are merged
+            "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> Filter[Filter(<expression>)] -> Filter[Filter(<lambda>)]",
+        ),
     ],
 )
-def test_filter_mixed_expression_first(ds_creator):
+def test_filter_mixed_expression_first(ds_creator, expected_plan):
     """Test that mixed functional and expressions work."""
     ds = ds_creator()
-    ds = ds.filter(expr="sepal.length > 3.0")
-    ds = ds.filter(expr="sepal.length > 4.0")
+    ds = ds.filter(expr=col("sepal.length") > 3.0)
+    ds = ds.filter(expr=col("sepal.length") > 4.0)
     ds = ds.filter(lambda r: r["sepal.length"] < 5.0)
     filtered_expr_data = ds.take_all()
     assert ds.count() == 22
@@ -219,7 +186,7 @@ def test_filter_mixed_expression_first(ds_creator):
     assert all(record["sepal.length"] > 4.0 for record in filtered_expr_data)
     _check_valid_plan_and_result(
         ds,
-        "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> Filter[Filter(<lambda>)]",
+        expected_plan,
         filtered_expr_data,
     )
 
@@ -324,7 +291,11 @@ def test_projection_pushdown(ray_start_regular_shared):
 
 
 def test_projection_pushdown_on_csv(ray_start_regular_shared):
-    """Tests that Proj Pushdown works for Native File-Reader codepath"""
+    """Tests that CSV doesn't support projection pushdown.
+
+    CSV doesn't support native projection pushdown, so the Project operator
+    remains in the logical plan. Fusion will merge it with ReadFiles at runtime.
+    """
     path = "example://iris.csv"
     ds = ray.data.read_csv(path)
     cols = ["sepal.length", "petal.width"]
@@ -334,12 +305,10 @@ def test_projection_pushdown_on_csv(ray_start_regular_shared):
     optimized_logical_plan = LogicalOptimizer().optimize(ds._plan._logical_plan)
     new_op = optimized_logical_plan.dag
 
-    assert isinstance(new_op, ReadFiles), new_op.name
-    assert not any(isinstance(op, Project) for op in new_op.post_order_iter())
+    # CSV doesn't support projection pushdown, so Project remains in logical plan
+    assert isinstance(new_op, Project), f"Expected Project, got {new_op.name}"
 
-    readfiles = new_op
-    assert readfiles.columns == cols
-
+    # Verify the data is correct (fusion will handle the projection at runtime)
     target = ray.data.read_csv(path).to_pandas()[cols]
     df = ds.to_pandas()
     pd.testing.assert_frame_equal(
@@ -727,9 +696,9 @@ def test_pushdown_rename_filter_rename_filter(ray_start_regular_shared):
     ds = (
         ray.data.read_parquet(path)
         .rename_columns({"sepal.length": "a"})
-        .filter(expr="a > 2.0")
+        .filter(expr=col("a") > 2.0)
         .rename_columns({"a": "b"})
-        .filter(expr="b < 5.0")
+        .filter(expr=col("b") < 5.0)
     )
 
     ds.take_all()
@@ -1089,27 +1058,27 @@ def test_map_batches_to_map_rows_transforms(ray_start_regular_shared):
             ["sepal.length"],
         ),
         # TODO: Re-add these parameters after deprecating cols, cols_rename in Project.
-        # # select_columns -> with_column
-        # (
-        #     lambda ds: ds.select_columns(["sepal.length", "sepal.width"]),
-        #     lambda ds: ds.with_column("length_plus_one", col("sepal.length") + 1),
-        #     ["sepal.length", "sepal.width", "length_plus_one"],
-        #     ["petal.length", "petal.width", "variety"],
-        # ),
-        # # rename_columns -> with_column
-        # (
-        #     lambda ds: ds.rename_columns({"sepal.length": "renamed_length"}),
-        #     lambda ds: ds.with_column("length_doubled", col("renamed_length") * 2),
-        #     [
-        #         "renamed_length",
-        #         "length_doubled",
-        #         "sepal.width",
-        #         "petal.length",
-        #         "petal.width",
-        #         "variety",
-        #     ],
-        #     ["sepal.length"],
-        # ),
+        # select_columns -> with_column
+        (
+            lambda ds: ds.select_columns(["sepal.length", "sepal.width"]),
+            lambda ds: ds.with_column("length_plus_one", col("sepal.length") + 1),
+            ["sepal.length", "sepal.width", "length_plus_one"],
+            ["petal.length", "petal.width", "variety"],
+        ),
+        # rename_columns -> with_column
+        (
+            lambda ds: ds.rename_columns({"sepal.length": "renamed_length"}),
+            lambda ds: ds.with_column("length_doubled", col("renamed_length") * 2),
+            [
+                "renamed_length",
+                "length_doubled",
+                "sepal.width",
+                "petal.length",
+                "petal.width",
+                "variety",
+            ],
+            ["sepal.length"],
+        ),
     ],
 )
 def test_projection_pushdown_exprs_and_cols_combinations(

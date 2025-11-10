@@ -1,6 +1,6 @@
 import copy
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
 
@@ -19,6 +19,7 @@ from ray.data._internal.logical.interfaces import (
     LogicalOperator,
     SourceOperator,
     LogicalOperatorSupportsProjectionPushdown,
+    LogicalOperatorSupportsPredicatePushdown,
 )
 from ray.data._internal.logical.operators.map_operator import AbstractMap
 from ray.data.block import BlockAccessor, Schema
@@ -26,7 +27,6 @@ from ray.data.block import BlockAccessor, Schema
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    import pyarrow.dataset as pd
     from ray.data.expressions import Expr
     from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 
@@ -79,14 +79,18 @@ def _rename_columns_in_expr(expr: "Expr", column_mapping: Dict[str, str]) -> "Ex
         return expr
 
 
-class ReadFiles(LogicalOperatorSupportsProjectionPushdown, SourceOperator, AbstractMap):
+class ReadFiles(
+    LogicalOperatorSupportsProjectionPushdown,
+    LogicalOperatorSupportsPredicatePushdown,
+    SourceOperator,
+    AbstractMap,
+):
     def __init__(
         self,
         input_dependency: LogicalOperator,
         *,
         reader: FileReader,
         filesystem,
-        predicate_expr: Optional[Union["Expr", "pd.Expression"]] = None,
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
         ray_remote_args: Optional[Dict[str, Any]] = None,
@@ -104,7 +108,7 @@ class ReadFiles(LogicalOperatorSupportsProjectionPushdown, SourceOperator, Abstr
         # TODO assert that projected columns include filtered ones as this
         #      isn't working correctly
         # See https://github.com/apache/arrow/issues/47493
-        self.predicate_expr = predicate_expr
+        self.predicate_expr: Optional["Expr"] = None
 
         if columns is not None:
             if not isinstance(columns, list):
@@ -120,7 +124,7 @@ class ReadFiles(LogicalOperatorSupportsProjectionPushdown, SourceOperator, Abstr
         self.columns_rename = columns_rename
 
     def supports_projection_pushdown(self) -> bool:
-        return True
+        return self.reader.supports_projection_pushdown()
 
     def get_current_projection(self) -> Optional[List[str]]:
         return self.columns
@@ -139,62 +143,24 @@ class ReadFiles(LogicalOperatorSupportsProjectionPushdown, SourceOperator, Abstr
 
         return clone
 
-    def pushdown_predicate(
-        self, predicate_expr: Union["Expr", "pd.Expression"]
-    ) -> None:
-        """Push down predicate expressions (either Ray Data or PyArrow)."""
-        from ray.data.expressions import Expr
-        import pyarrow.compute as pc
+    def supports_predicate_pushdown(self) -> bool:
+        return self.reader.supports_predicate_pushdown()
 
-        # Handle Ray Data expressions with column renaming
-        if isinstance(predicate_expr, Expr):
-            if self.columns_rename:
-                column_mapping = {
-                    new_col: old_col for old_col, new_col in self.columns_rename.items()
-                }
-                predicate_expr = _rename_columns_in_expr(predicate_expr, column_mapping)
+    def get_current_predicate(self) -> Optional["Expr"]:
+        return self.predicate_expr
 
-        # For simplicity, just combine expressions if they're the same type
-        if self.predicate_expr is not None:
-            if isinstance(self.predicate_expr, Expr) and isinstance(
-                predicate_expr, Expr
-            ):
-                # Both are Ray Data expressions - combine with AND
-                self.predicate_expr = self.predicate_expr & predicate_expr
-            elif not isinstance(self.predicate_expr, Expr) and not isinstance(
-                predicate_expr, Expr
-            ):
-                # Both are PyArrow expressions - combine with AND
-                try:
-                    self.predicate_expr = self.predicate_expr & predicate_expr
-                except Exception:
-                    # If combination fails, replace with new predicate
-                    self.predicate_expr = predicate_expr
-            else:
-                # Mixed types - convert to PyArrow and combine
-                try:
-                    # Convert both to PyArrow expressions
-                    if isinstance(self.predicate_expr, Expr):
-                        existing_pa_expr = self.predicate_expr.to_pyarrow()
-                    else:
-                        existing_pa_expr = self.predicate_expr
+    def apply_predicate(self, predicate_expr: "Expr") -> LogicalOperator:
+        clone = copy.copy(self)
+        clone.predicate_expr = (
+            predicate_expr
+            if clone.predicate_expr is None
+            else clone.predicate_expr & predicate_expr
+        )
+        return clone
 
-                    if isinstance(predicate_expr, Expr):
-                        new_pa_expr = predicate_expr.to_pyarrow()
-                    else:
-                        new_pa_expr = predicate_expr
-
-                    # Combine with AND using PyArrow
-                    self.predicate_expr = pc.and_kleene(existing_pa_expr, new_pa_expr)
-                except (ValueError, TypeError, AttributeError) as e:
-                    # If conversion or combination fails, log warning and keep new predicate
-                    logger.warning(
-                        f"Failed to combine predicates of mixed types: {e}. "
-                        "Using only the new predicate expression."
-                    )
-                    self.predicate_expr = predicate_expr
-        else:
-            self.predicate_expr = predicate_expr
+    def get_column_renames(self) -> Optional[Dict[str, str]]:
+        """Return the column renames applied by projection pushdown."""
+        return self.columns_rename
 
     def infer_schema(self) -> Optional["Schema"]:
         # This method is used by the execution plan to efficiently return metadata

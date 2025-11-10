@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Uni
 
 import numpy as np
 
-from ray.data.expressions import Expr
 import ray
 import ray.data.read_api as oss_read_api
 from ray._private.auto_init_hook import wrap_auto_init
@@ -117,9 +116,6 @@ def read_parquet(
     concurrency: Optional[int] = None,
     **arrow_parquet_args,
 ) -> Dataset:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-    from packaging.version import parse as parse_version
 
     if ray_remote_args is None:
         ray_remote_args = {}
@@ -159,15 +155,14 @@ def read_parquet(
     schema = arrow_parquet_args.pop("schema", None)
     batch_size = arrow_parquet_args.pop("batch_size", None)
 
-    filters = arrow_parquet_args.pop("filter", None)
-    predicate_expr = None
-    if filters is not None:
-        if parse_version(pa.__version__) < parse_version("10.0.0"):
-            # pyarrow < 10 uses a different API for converting filters to expressions
-            # TODO: Remove after we drop support for pyarrow < 10.0.0
-            predicate_expr = pq._filters_to_expression(filters)
-        else:
-            predicate_expr = pq.filters_to_expression(filters)
+    # Check if filter is present and show deprecation warning
+    if "filter" in arrow_parquet_args:
+        warnings.warn(
+            "The `filter` argument is deprecated and will not supported in a future release. "
+            "Use `dataset.read_parquet(...).filter(expr=expr)` instead to filter rows.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     to_batches_kwargs = arrow_parquet_args
 
@@ -203,7 +198,6 @@ def read_parquet(
         filesystem=filesystem,
         columns=columns,
         partition_filter=partition_filter,
-        predicate_expr=predicate_expr,
         ignore_missing_paths=False,
         file_extensions=file_extensions,
         shuffle=shuffle,
@@ -765,7 +759,6 @@ def read_files(
     filesystem: Optional["pyarrow.fs.FileSystem"],
     columns: Optional[List[str]],
     partition_filter: Optional[PathPartitionFilter],
-    predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]] = None,
     ignore_missing_paths: bool,
     file_extensions: Optional[List[str]],
     shuffle: Optional[Union[Literal["files"], FileShuffleConfig]],
@@ -832,7 +825,6 @@ def read_files(
         list_files_op,
         reader=reader,
         filesystem=filesystem,
-        predicate_expr=predicate_expr,
         ray_remote_args=ray_remote_args,
         concurrency=concurrency,
         columns=columns,

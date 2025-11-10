@@ -12,7 +12,6 @@ from typing import (
     Optional,
     Set,
     Tuple,
-    Union,
 )
 
 import numpy as np
@@ -244,7 +243,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self,
         file_manifest: FileManifest,
         *,
-        predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]] = None,
         columns: Optional[List[str]] = None,
         columns_rename: Optional[Dict[str, str]] = None,
         filesystem: pyarrow.fs.FileSystem,
@@ -331,7 +329,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 iter(fragments),
                 functools.partial(
                     self._read_fragments,
-                    predicate_expr=predicate_expr,
+                    predicate_expr=self._predicate_expr,
                     schema=self._schema,
                     data_columns=data_columns,
                     partition_columns=partition_columns,
@@ -348,7 +346,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         else:
             yield from self._read_fragments(
                 fragments,
-                predicate_expr=predicate_expr,
+                predicate_expr=self._predicate_expr,
                 schema=self._schema,
                 data_columns=data_columns,
                 partition_columns=partition_columns,
@@ -534,7 +532,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     def _read_fragments(
         self,
         fragments: List[pyarrow.dataset.ParquetFileFragment],
-        predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]],
+        predicate_expr: Optional["Expr"],
         schema: pyarrow.Schema,
         data_columns: Optional[List[str]] = None,
         partition_columns: Optional[List[str]] = None,
@@ -643,7 +641,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         schema: pyarrow.Schema,
         data_columns: Optional[List[str]],
         partition_columns: Optional[List[str]],
-        predicate_expr: Optional[Union["Expr", "pyarrow.dataset.Expression"]] = None,
+        predicate_expr: Optional["Expr"] = None,
         columns_rename_map: Optional[Dict[str, str]] = None,
         checkpoint_file_fragment: Optional[pa.StructScalar] = None,
         generated_id_column: Optional[str],
@@ -696,18 +694,9 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         current_row_offset: int = 0
 
         if predicate_expr is not None:
-            from ray.data.expressions import Expr
-
-            if isinstance(predicate_expr, Expr):
-                # Convert Ray Data expression to PyArrow expression
-                try:
-                    predicate_expr = predicate_expr.to_pyarrow()
-                except (ValueError, TypeError):
-                    # If conversion fails, filtering will be done in-memory
-                    predicate_expr = None
-            else:
-                # Assume it's already a PyArrow expression
-                predicate_expr = predicate_expr
+            filter_expr = predicate_expr.to_pyarrow()
+        else:
+            filter_expr = None
 
         # S3 can raise transient errors during iteration, and PyArrow doesn't expose a
         # way to retry specific batches.
@@ -719,7 +708,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 data_columns_rename_map=columns_rename_map,
                 partition_columns=partition_columns,
                 partitioning=self._partitioning,
-                filter_expr=predicate_expr,  # Use converted PyArrow expression
+                filter_expr=filter_expr,
                 batch_size=batch_size,
                 include_path=self._include_paths,
                 use_threads=True,
@@ -889,6 +878,9 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         return self._COUNT_ROWS_BATCH_SIZE
 
     def supports_predicate_pushdown(self) -> bool:
+        return True
+
+    def supports_projection_pushdown(self) -> bool:
         return True
 
 
