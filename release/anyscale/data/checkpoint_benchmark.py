@@ -57,7 +57,11 @@ def run_dataset(
     # Make read_parquet and transform fuse.
     ctx._enable_read_files_fusion_override = True
 
-    ds = ray.data.read_parquet(input_data_path)
+    READ_TASK_MEMORY = 8 * 1024 * 1024 * 1024  # 8GB
+
+    ds = ray.data.read_parquet(
+        input_data_path, ray_remote_args={"memory": READ_TASK_MEMORY}
+    )
     if not num_rows:
         num_rows = ds.count()
 
@@ -71,7 +75,7 @@ def run_dataset(
         time.sleep(transform_sleep_s)
         return batch
 
-    ds = ds.map_batches(transform, batch_size=None)
+    ds = ds.map_batches(transform, batch_size=None, memory=READ_TASK_MEMORY)
 
     class Inference:
         INFER_RESULT_DIMENSION = 16
