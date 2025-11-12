@@ -157,15 +157,6 @@ ANYSCALE_RAY_SERVE_PROXY_USE_GRPC = os.environ.get(
     and ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT
 )
 
-ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP = (
-    # If gRPC isn't turned on for the proxy, then router should always be
-    # running on a separate loop.
-    # Same loop should only be able to be turned on for gRPC.
-    not ANYSCALE_RAY_SERVE_PROXY_USE_GRPC
-    or os.environ.get("ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP", "1")
-    == "1"
-)
-
 # Feature flag for prestarting workers in placement groups.
 RAY_SERVE_PRESTART_PG_WORKERS = (
     os.environ.get("RAY_SERVE_PRESTART_PG_WORKERS", "1") == "1"

@@ -445,7 +445,6 @@ def add_grpc_address(grpc_server: gRPCGenericServer, server_address: str):  # no
 
 def get_proxy_handle(endpoint: DeploymentID, info: EndpointInfo):  # noqa: F811
     from ray.anyscale.serve._private.constants import (
-        ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP,
         ANYSCALE_RAY_SERVE_PROXY_USE_GRPC,
     )
     from ray.serve._private.constants import RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP
@@ -462,16 +461,7 @@ def get_proxy_handle(endpoint: DeploymentID, info: EndpointInfo):  # noqa: F811
     # deleted, then redeployed later. However this is not an issue since
     # we initialize all handles with the same init options.
     if not handle.is_initialized:
-        if ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP:
-            logger.warning(
-                "ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP has been "
-                "deprecated and will be removed in the ray v2.50.0. Please use "
-                "RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP instead."
-            )
-        run_router_in_separate_loop = (
-            ANYSCALE_RAY_SERVE_GRPC_RUN_PROXY_ROUTER_SEPARATE_LOOP
-            and RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP
-        )
+        run_router_in_separate_loop = RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP
         # NOTE(zcin): since the router is eagerly initialized here, the
         # proxy will receive the replica set from the controller early.
         handle._init(
