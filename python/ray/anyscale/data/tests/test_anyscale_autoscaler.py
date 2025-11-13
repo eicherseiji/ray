@@ -403,12 +403,14 @@ class TestActorPoolAutoscaling:
         )
         scaling_up_factor = 3
 
+        op_metrics = MagicMock(average_num_inputs_per_task=1)
         op = MagicMock(
             spec=PhysicalOperator,
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
             completed=MagicMock(return_value=False),
             _inputs_complete=False,
             internal_input_queue_num_blocks=MagicMock(return_value=1),
+            metrics=op_metrics,
         )
         op_state = MagicMock(
             spec=OpState, total_enqueued_input_blocks=MagicMock(return_value=10)
@@ -521,13 +523,14 @@ class TestActorPoolAutoscaling:
             max_tasks_in_flight_per_actor=max_tasks_in_flight_per_actor,
             per_actor_resource_usage=ExecutionResources(cpu=1),
         )
-
+        op_metrics = MagicMock(average_num_inputs_per_task=1)
         op = MagicMock(
             spec=PhysicalOperator,
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
             completed=MagicMock(return_value=False),
             _inputs_complete=False,
             internal_input_queue_num_blocks=MagicMock(return_value=1),
+            metrics=op_metrics,
         )
         op_state = MagicMock(
             spec=OpState, total_enqueued_input_blocks=MagicMock(return_value=100)
@@ -645,12 +648,15 @@ class TestActorPoolAutoscaling:
             per_actor_resource_usage=per_actor_resource_usage,
         )
 
+        op_metrics = MagicMock()
+        op_metrics.average_num_inputs_per_task = 1
         op = MagicMock(
             spec=PhysicalOperator,
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
             completed=MagicMock(return_value=False),
             _inputs_complete=False,
             internal_input_queue_num_blocks=MagicMock(return_value=1),
+            metrics=op_metrics,
         )
         op_state = MagicMock(
             spec=OpState, total_enqueued_input_blocks=MagicMock(return_value=10)

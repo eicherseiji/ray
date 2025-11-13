@@ -248,10 +248,11 @@ class RayTurboActorAutoscaler(DefaultActorAutoscaler):
 
         if util >= self._actor_pool_scaling_up_threshold:
             # Do not scale up, if the op has enough free slots for the existing inputs.
-            # TODO: this should be normalized with op.metrics.average_num_inputs_per_task.
+            # if no tasks have finished, assume one task requires one block
+            average_num_inputs_per_task = op.metrics.average_num_inputs_per_task or 1
             if (
                 op_state.total_enqueued_input_blocks()
-                <= actor_pool.num_free_task_slots()
+                <= actor_pool.num_free_task_slots() * average_num_inputs_per_task
             ):
                 return ActorPoolScalingRequest.no_op(
                     reason="enough free task slots to consume the existing inputs"
