@@ -4,8 +4,8 @@ import tree  # pip install dm_tree
 
 import ray
 from ray.rllib.algorithms.utils import AggregatorActor
-from ray.rllib.utils.metrics.metrics_logger import MetricsLogger
 from ray.rllib.utils.framework import try_import_torch
+from ray.rllib.utils.metrics.metrics_logger import MetricsLogger
 
 torch, _ = try_import_torch()
 

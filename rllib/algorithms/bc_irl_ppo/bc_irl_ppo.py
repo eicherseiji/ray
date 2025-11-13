@@ -1,14 +1,15 @@
-import dataclasses
-from gymnasium.spaces import Space
 import copy
+import dataclasses
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
+
+from gymnasium.spaces import Space
 
 from ray.rllib.algorithms.algorithm import Algorithm
 from ray.rllib.algorithms.algorithm_config import (
     AlgorithmConfig,
     DifferentiableAlgorithmConfig,
-    _check_rl_module_spec,
     NotProvided,
+    _check_rl_module_spec,
 )
 from ray.rllib.algorithms.marwil import MARWIL
 from ray.rllib.connectors.learner import (
@@ -17,16 +18,17 @@ from ray.rllib.connectors.learner import (
 )
 from ray.rllib.core import ALL_MODULES, DEFAULT_MODULE_ID, DEFAULT_POLICY_ID
 from ray.rllib.core.learner import Learner
+from ray.rllib.core.learner.differentiable_learner import DifferentiableLearner
 from ray.rllib.core.learner.differentiable_learner_config import (
     DifferentiableLearnerConfig,
 )
-from ray.rllib.core.learner.differentiable_learner import DifferentiableLearner
 from ray.rllib.core.learner.training_data import TrainingData
 from ray.rllib.core.rl_module.default_model_config import DefaultModelConfig
-from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
+from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 from ray.rllib.execution.rollout_ops import synchronous_parallel_sample
 from ray.rllib.policy.policy import PolicySpec
+from ray.rllib.utils.annotations import override
 from ray.rllib.utils.metrics import (
     ENV_RUNNER_RESULTS,
     ENV_RUNNER_SAMPLING_TIMER,
@@ -37,7 +39,6 @@ from ray.rllib.utils.metrics import (
     SYNCH_WORKER_WEIGHTS_TIMER,
     TIMERS,
 )
-from ray.rllib.utils.annotations import override
 from ray.rllib.utils.typing import EnvType, PolicyID, RLModuleSpecType
 
 
@@ -93,7 +94,9 @@ class BCIRLPPOConfig(DifferentiableAlgorithmConfig):
         self._reward_rl_module_spec = None
 
 
-        from ray.rllib.algorithms.bc_irl_ppo.torch.bc_irl_ppo_torch_differentiable_learner import BCIRLPPOTorchDifferentiableLearner
+        from ray.rllib.algorithms.bc_irl_ppo.torch.bc_irl_ppo_torch_differentiable_learner import (
+            BCIRLPPOTorchDifferentiableLearner,
+        )
         self.differentiable_learner_configs = [
             BCIRLPPODifferentiableLearnerConfig(
                 learner_class=BCIRLPPOTorchDifferentiableLearner,
@@ -382,10 +385,10 @@ class BCIRLPPOConfig(DifferentiableAlgorithmConfig):
         """
         # Load the default PPO module. This will be the default `RLModuleSpec`
         # for BC-IRL PPO.
+        from ray.rllib.algorithms.ppo.ppo_catalog import PPOCatalog
         from ray.rllib.algorithms.ppo.torch.default_ppo_torch_rl_module import (
             DefaultPPOTorchRLModule,
         )
-        from ray.rllib.algorithms.ppo.ppo_catalog import PPOCatalog
 
         default_rl_module_spec = RLModuleSpec(
             module_class=DefaultPPOTorchRLModule,

@@ -1,7 +1,7 @@
+from enum import Enum
+
 import gymnasium as gym
 import numpy as np
-
-from enum import Enum
 
 from ray.rllib.core.models.base import Encoder, Model
 from ray.rllib.core.models.configs import MLPEncoderConfig, MLPHeadConfig

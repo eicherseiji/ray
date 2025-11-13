@@ -13,7 +13,7 @@ from ray.rllib.algorithms.infinite_appo.utils import (
 )
 from ray.rllib.algorithms.seed.utils.seed_env_runner import SEEDEnvRunner
 from ray.rllib.algorithms.seed.utils.seed_inference import SEEDInference
-from ray.rllib.utils.annotations import override, OverrideToImplementCustomLogic
+from ray.rllib.utils.annotations import OverrideToImplementCustomLogic, override
 from ray.tune.execution.placement_groups import PlacementGroupFactory
 
 
