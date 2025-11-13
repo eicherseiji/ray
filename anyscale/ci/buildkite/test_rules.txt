@@ -47,7 +47,7 @@ python/ray/anyscale/
 @ python core-turbo linux_wheels
 ;
 
-anyscale/ci/buildkite/rayturbo.rayci.yml
+anyscale/ci/buildkite/safetensors.rayci.yml
 python/ray/anyscale/safetensors/
 @ safetensors
 ;
