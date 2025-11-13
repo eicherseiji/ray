@@ -6,23 +6,23 @@ import ray
 from ray.rllib.algorithms import Algorithm, AlgorithmConfig
 from ray.rllib.algorithms.algorithm_config import NotProvided
 from ray.rllib.algorithms.appo import APPO, APPOConfig
+from ray.rllib.algorithms.infinite_appo.infinite_appo_multi_agent_env_runner import (
+    InfiniteAPPOMultiAgentEnvRunner,
+)
 from ray.rllib.algorithms.infinite_appo.utils import (
     BatchDispatcher,
     EnvRunnerStateAggregator,
     MetricsActor,
     WeightsServerActor,
 )
-from ray.rllib.algorithms.infinite_appo.infinite_appo_multi_agent_env_runner import (
-    InfiniteAPPOMultiAgentEnvRunner,
-)
 from ray.rllib.core import ALL_MODULES
+from ray.rllib.utils.annotations import override
 from ray.rllib.utils.metrics import (
     ENV_RUNNER_RESULTS,
     LEARNER_RESULTS,
     NUM_ENV_STEPS_SAMPLED_LIFETIME,
     NUM_ENV_STEPS_TRAINED_LIFETIME,
 )
-from ray.rllib.utils.annotations import override
 from ray.tune import PlacementGroupFactory
 
 

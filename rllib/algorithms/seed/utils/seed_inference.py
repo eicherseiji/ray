@@ -1,7 +1,7 @@
 import logging
+import threading
 import time
 from collections import defaultdict
-import threading
 from typing import DefaultDict, Dict, List
 
 import numpy as np
@@ -10,9 +10,9 @@ import tree  # pip install dm_tree
 
 import ray
 from ray.rllib.core import (
-    Columns,
     COMPONENT_RL_MODULE,
     DEFAULT_MODULE_ID,
+    Columns,
 )
 from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 from ray.rllib.env import INPUT_ENV_SPACES

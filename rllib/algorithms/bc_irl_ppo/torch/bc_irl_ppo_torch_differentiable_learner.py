@@ -1,7 +1,7 @@
 import logging
-import numpy as np
+from typing import TYPE_CHECKING, Any, Dict
 
-from typing import Any, Dict, TYPE_CHECKING
+import numpy as np
 
 from ray.rllib.algorithms.bc_irl_ppo.bc_irl_ppo import BCIRLPPOConfig
 from ray.rllib.algorithms.bc_irl_ppo.bc_irl_ppo_differentiable_learner import (
@@ -11,18 +11,18 @@ from ray.rllib.algorithms.bc_irl_ppo.torch.bc_irl_ppo_torch_meta_learner import 
     REWARD_MODULE,
 )
 from ray.rllib.algorithms.ppo.ppo import (
-    LEARNER_RESULTS_KL_KEY,
     LEARNER_RESULTS_CURR_KL_COEFF_KEY,
+    LEARNER_RESULTS_KL_KEY,
     LEARNER_RESULTS_VF_EXPLAINED_VAR_KEY,
     LEARNER_RESULTS_VF_LOSS_UNCLIPPED_KEY,
 )
 from ray.rllib.core.columns import Columns
-from ray.rllib.core.learner.learner import POLICY_LOSS_KEY, VF_LOSS_KEY, ENTROPY_KEY
+from ray.rllib.core.learner.learner import ENTROPY_KEY, POLICY_LOSS_KEY, VF_LOSS_KEY
 from ray.rllib.core.learner.torch.torch_differentiable_learner import (
     TorchDifferentiableLearner,
 )
 from ray.rllib.policy.sample_batch import MultiAgentBatch
-from ray.rllib.utils.annotations import override, OverrideToImplementCustomLogic
+from ray.rllib.utils.annotations import OverrideToImplementCustomLogic, override
 from ray.rllib.utils.framework import try_import_torch
 from ray.rllib.utils.torch_utils import explained_variance
 from ray.rllib.utils.typing import ModuleID, NamedParamDict, TensorType

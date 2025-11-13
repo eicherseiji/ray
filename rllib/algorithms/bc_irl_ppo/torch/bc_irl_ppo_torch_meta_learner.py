@@ -1,5 +1,5 @@
 import contextlib
-from typing import Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List
 
 from ray.rllib.core import DEFAULT_MODULE_ID
 from ray.rllib.core.columns import Columns
@@ -7,8 +7,8 @@ from ray.rllib.core.learner.learner import POLICY_LOSS_KEY
 from ray.rllib.core.learner.torch.torch_learner import TorchLearner
 from ray.rllib.core.learner.torch.torch_meta_learner import TorchMetaLearner
 from ray.rllib.policy.sample_batch import MultiAgentBatch
+from ray.rllib.utils.annotations import OverrideToImplementCustomLogic, override
 from ray.rllib.utils.framework import try_import_torch
-from ray.rllib.utils.annotations import override, OverrideToImplementCustomLogic
 from ray.rllib.utils.typing import ModuleID, NamedParamDict, TensorType
 
 if TYPE_CHECKING:

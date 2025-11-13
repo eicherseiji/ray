@@ -7,7 +7,7 @@ import ray
 from ray.rllib.algorithms.algorithm_config import AlgorithmConfig
 from ray.rllib.policy.sample_batch import MultiAgentBatch, SampleBatch
 from ray.rllib.utils.actor_manager import FaultAwareApply
-from ray.rllib.utils.framework import try_import_torch
+from ray.rllib.utils.framework import get_device, try_import_torch
 from ray.rllib.utils.metrics.metrics_logger import MetricsLogger
 from ray.rllib.utils.metrics.ray_metrics import (
     DEFAULT_HISTOGRAM_BOUNDARIES_SHORT_EVENTS,
@@ -16,8 +16,6 @@ from ray.rllib.utils.metrics.ray_metrics import (
 from ray.rllib.utils.typing import EpisodeType
 from ray.util.annotations import DeveloperAPI
 from ray.util.metrics import Counter, Histogram
-from ray.rllib.utils.framework import get_device
-
 
 torch, _ = try_import_torch()
 

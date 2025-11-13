@@ -1,8 +1,9 @@
 import random
+
 import torch
+import tree
 
 import ray
-import tree
 from ray.rllib.algorithms.appo.torch.appo_torch_learner import APPOTorchLearner
 from ray.rllib.algorithms.appo.utils import CircularBuffer
 from ray.rllib.algorithms.infinite_appo.infinite_appo_aggregator_actor import (
@@ -11,7 +12,7 @@ from ray.rllib.algorithms.infinite_appo.infinite_appo_aggregator_actor import (
 from ray.rllib.core import COMPONENT_RL_MODULE
 from ray.rllib.core.learner.torch.torch_learner import TorchLearner
 from ray.rllib.core.learner.training_data import TrainingData
-from ray.rllib.policy.sample_batch import SampleBatch, MultiAgentBatch
+from ray.rllib.policy.sample_batch import MultiAgentBatch, SampleBatch
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.metrics import NUM_ENV_STEPS_TRAINED_LIFETIME
 

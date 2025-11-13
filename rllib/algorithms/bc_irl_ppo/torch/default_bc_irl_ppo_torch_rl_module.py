@@ -1,6 +1,6 @@
 from ray.rllib.algorithms.bc_irl_ppo.default_bc_irl_ppo_rl_module import (
-    DefaultBCIRLRewardRLModule,
     DefaultBCIRLRewardModelType,
+    DefaultBCIRLRewardRLModule,
 )
 from ray.rllib.core.columns import Columns
 from ray.rllib.core.models.base import ENCODER_OUT
