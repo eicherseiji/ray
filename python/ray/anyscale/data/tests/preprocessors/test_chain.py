@@ -1,14 +1,28 @@
 import pandas as pd
 import pytest
 from unittest.mock import patch
+import numpy as np
 
 import ray
 from ray.data.preprocessors import (
+    Categorizer,
     Chain,
+    Concatenator,
+    CountVectorizer,
+    FeatureHasher,
+    HashingVectorizer,
     LabelEncoder,
+    MaxAbsScaler,
+    MinMaxScaler,
+    Normalizer,
+    OneHotEncoder,
     OrdinalEncoder,
+    PowerTransformer,
+    RobustScaler,
     SimpleImputer,
     StandardScaler,
+    Tokenizer,
+    TorchVisionPreprocessor,
 )
 from ray.anyscale.data.preprocessors.dag import _build_aggregation_dag
 
@@ -235,6 +249,181 @@ def test_dag_complex_dependencies():
     assert "A_scaled" in out_df.columns
     assert "B_encoded" in out_df.columns
     assert not out_df["A"].isna().any(), "No NaN values should remain"
+
+
+@pytest.mark.parametrize(
+    "preprocessor_name,preprocessor_factory,input_data,expected_columns",
+    [
+        # Scalers
+        (
+            "StandardScaler",
+            lambda: StandardScaler(["A"], output_columns=["A_scaled"]),
+            {"A": [1.0, 2.0, 3.0, 4.0]},
+            ["A_scaled"],
+        ),
+        (
+            "MinMaxScaler",
+            lambda: MinMaxScaler(["A"], output_columns=["A_scaled"]),
+            {"A": [1.0, 2.0, 3.0, 4.0]},
+            ["A_scaled"],
+        ),
+        (
+            "MaxAbsScaler",
+            lambda: MaxAbsScaler(["A"], output_columns=["A_scaled"]),
+            {"A": [1.0, 2.0, 3.0, 4.0]},
+            ["A_scaled"],
+        ),
+        (
+            "RobustScaler",
+            lambda: RobustScaler(["A"], output_columns=["A_scaled"]),
+            {"A": [1.0, 2.0, 3.0, 4.0]},
+            ["A_scaled"],
+        ),
+        # Encoders
+        (
+            "LabelEncoder",
+            lambda: LabelEncoder("B", output_column="B_encoded"),
+            {"B": ["cat", "dog", "cat", "bird"]},
+            ["B_encoded"],
+        ),
+        (
+            "OrdinalEncoder",
+            lambda: OrdinalEncoder(["B"], output_columns=["B_encoded"]),
+            {"B": ["cat", "dog", "cat", "bird"]},
+            ["B_encoded"],
+        ),
+        (
+            "OneHotEncoder",
+            lambda: OneHotEncoder(["B"], output_columns=["B_encoded"]),
+            {"B": ["cat", "dog", "cat", "bird"]},
+            ["B_encoded"],
+        ),
+        (
+            "Categorizer",
+            lambda: Categorizer(["B"], output_columns=["B_cat"]),
+            {"B": ["cat", "dog", "cat", "bird"]},
+            ["B_cat"],
+        ),
+        # Imputer
+        (
+            "SimpleImputer",
+            lambda: SimpleImputer(["A"], output_columns=["A_imputed"]),
+            {"A": [1.0, None, 3.0, None]},
+            ["A_imputed"],
+        ),
+        # Transformers
+        (
+            "Normalizer",
+            lambda: Normalizer(["A", "C"], output_columns=["A_norm", "C_norm"]),
+            {"A": [1.0, 2.0, 3.0, 4.0], "C": [5.0, 6.0, 7.0, 8.0]},
+            ["A_norm", "C_norm"],
+        ),
+        (
+            "PowerTransformer",
+            lambda: PowerTransformer(["A"], power=0.5, output_columns=["A_power"]),
+            {"A": [1.0, 2.0, 3.0, 4.0]},
+            ["A_power"],
+        ),
+        # Concatenator - uses output_column_name instead of output_columns
+        (
+            "Concatenator",
+            lambda: Concatenator(["A", "C"], output_column_name="AC_concat"),
+            {"A": [1.0, 2.0, 3.0, 4.0], "C": [5.0, 6.0, 7.0, 8.0]},
+            ["AC_concat"],
+        ),
+        # Text preprocessors
+        (
+            "Tokenizer",
+            lambda: Tokenizer(["text"], output_columns=["text_tokens"]),
+            {"text": ["hello world", "foo bar", "test case", "example data"]},
+            ["text_tokens"],
+        ),
+        (
+            "HashingVectorizer",
+            lambda: HashingVectorizer(
+                ["text"], num_features=8, output_columns=["text_vec"]
+            ),
+            {"text": ["hello world", "foo bar", "test case", "example data"]},
+            ["text_vec"],
+        ),
+        (
+            "CountVectorizer",
+            lambda: CountVectorizer(["text"], output_columns=["text_counts"]),
+            {"text": ["hello world", "foo bar", "test case", "example data"]},
+            ["text_counts"],
+        ),
+        # FeatureHasher - uses output_column instead of output_columns
+        (
+            "FeatureHasher",
+            lambda: FeatureHasher(
+                ["token1", "token2"], num_features=8, output_column="hashed"
+            ),
+            {"token1": [1, 2, 3, 4], "token2": [5, 6, 7, 8]},
+            ["hashed"],
+        ),
+        # TorchVisionPreprocessor - uses _columns and _output_columns
+        (
+            "TorchVisionPreprocessor",
+            lambda: TorchVisionPreprocessor(
+                ["image"], transform=lambda x: x, output_columns=["image_transformed"]
+            ),
+            {
+                "image": [
+                    np.array([[[1, 2, 3]]]),
+                    np.array([[[4, 5, 6]]]),
+                    np.array([[[7, 8, 9]]]),
+                    np.array([[[10, 11, 12]]]),
+                ]
+            },
+            ["image_transformed"],
+        ),
+    ],
+)
+def test_preprocessor_in_chain(
+    preprocessor_name, preprocessor_factory, input_data, expected_columns
+):
+    """Test that each preprocessor works correctly in a turbo Chain.
+
+    This test verifies that all preprocessors have correct get_input_columns() and
+    get_output_columns() implementations, which are required for turbo_chain's
+    dependency tracking.
+    """
+    # Create dataset from input data
+    df = pd.DataFrame(input_data)
+    ds = ray.data.from_pandas(df)
+
+    # Create preprocessor
+    preprocessor = preprocessor_factory()
+
+    # Verify methods return lists
+    input_cols = preprocessor.get_input_columns()
+    output_cols = preprocessor.get_output_columns()
+    assert isinstance(
+        input_cols, list
+    ), f"{preprocessor_name}.get_input_columns() must return a list"
+    assert isinstance(
+        output_cols, list
+    ), f"{preprocessor_name}.get_output_columns() must return a list"
+
+    # Test in a Chain
+    chain = Chain(preprocessor)
+    chain.fit(ds)
+
+    # Transform
+    result = chain.transform(ds)
+    out_df = result.to_pandas()
+
+    # Verify expected columns exist in output
+    for col in expected_columns:
+        assert (
+            col in out_df.columns
+        ), f"Expected column '{col}' not found in output for {preprocessor_name}"
+
+    # Verify preprocessor has stats if it's fittable
+    if preprocessor._is_fittable:
+        assert (
+            preprocessor.has_stats()
+        ), f"{preprocessor_name} should have stats after transform"
 
 
 if __name__ == "__main__":
