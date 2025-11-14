@@ -175,6 +175,7 @@ class ListFiles(SourceOperator, LogicalOperator):
         file_extensions: List[str],
         partition_filter: PathPartitionFilter,
         shuffle_config_factory: Optional[Callable[[], Optional[FileShuffleConfig]]],
+        source_paths: Union[str, List[str]],
     ):
         assert filesystem is not None
 
@@ -190,6 +191,9 @@ class ListFiles(SourceOperator, LogicalOperator):
         self.file_extensions = file_extensions
         self.partition_filter = partition_filter
         self.shuffle_config_factory = shuffle_config_factory
+
+        # Need this attribute for lineage tracking
+        self._source_paths = source_paths
 
     def output_data(self) -> Optional[List["RefBundle"]]:
         """The output data of this operator if already known, or ``None``."""

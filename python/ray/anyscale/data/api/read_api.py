@@ -773,6 +773,9 @@ def read_files(
 
     _validate_shuffle_arg(shuffle)
 
+    # Need this variable for lineage tracking
+    source_paths = paths
+
     paths, filesystem = _resolve_paths_and_filesystem(paths, filesystem)
     filesystem = RetryingPyFileSystem.wrap(
         filesystem, retryable_errors=current_ctx.retried_io_errors
@@ -819,6 +822,7 @@ def read_files(
         file_extensions=file_extensions,
         partition_filter=partition_filter,
         shuffle_config_factory=_shuffle_config_factory,
+        source_paths=source_paths,
     )
 
     read_files_op = ReadFiles(
