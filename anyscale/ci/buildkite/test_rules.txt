@@ -15,7 +15,7 @@
 #
 # These rules run before upstream ones.
 
-! gotools core-turbo ml-turbo data-turbo core-turbo safetensors lineage
+! gotools core-turbo ml-turbo data-turbo core-turbo safetensors lineage anyscaleruntime
 
 anyscale/ci/buildkite/test_rules.txt
 @ tools
@@ -45,6 +45,11 @@ python/ray/anyscale/data/
 anyscale/ci/buildkite/lineage.rayci.yml
 python/ray/anyscale/lineage/
 @ lineage
+;
+
+anyscale/ci/buildkite/anyscaleruntime.rayci.yml
+anyscaleruntime/
+@ anyscaleruntime
 ;
 
 anyscale/ci/buildkite/core.rayci.yml
