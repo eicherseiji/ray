@@ -1,17 +1,19 @@
 import argparse
-import os
-import time
-import numpy
-import random
 import math
+import os
+import random
+import time
 from typing import Optional
-from ray.data.datasource import WriteResult
+
+import numpy
 from benchmark import Benchmark, BenchmarkMetric
+from pyarrow.fs import FileSelector, FileSystem, FileType
+
 import ray
-from ray.data import DataContext
 from ray.anyscale.data.checkpoint import CheckpointBackend, CheckpointConfig
-from pyarrow.fs import FileSelector, FileType, FileSystem
+from ray.data import DataContext
 from ray.data._internal.datasource.parquet_datasink import ParquetDatasink
+from ray.data.datasource import WriteResult
 
 
 def _parse_checkpoint_config(args: argparse.Namespace) -> Optional[CheckpointConfig]:

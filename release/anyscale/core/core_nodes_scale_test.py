@@ -1,10 +1,10 @@
-import ray
-import math
-import time
-import random
 import argparse
-import ray._private.test_utils as test_utils
+import math
+import random
+import time
 
+import ray
+import ray._private.test_utils as test_utils
 
 NUM_SAMPLING_TASKS = 100000
 NUM_SAMPLES_PER_TASK = 1000000

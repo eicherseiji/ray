@@ -1,24 +1,23 @@
+import logging
 import os
+import tempfile
 import time
 from pathlib import Path
-import tempfile
 from typing import Dict, List, Tuple
 
 import click
 import torch
+from elastic_util import NeuralNetwork, terminate_node
+from filelock import FileLock
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision.transforms import ToTensor
-import logging
-from filelock import FileLock
 
 import ray
 import ray.train as train
-from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 from ray.tune.utils import date_str
-
-from elastic_util import terminate_node, NeuralNetwork
+from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 logger = logging.getLogger(__name__)
 

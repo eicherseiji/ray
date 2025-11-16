@@ -3,7 +3,6 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
-
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
     ListFiles,
@@ -11,24 +10,21 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
 from ray.anyscale.data._internal.readers import FileReader
 from ray.anyscale.data._internal.readers.supports_metadata import SupportsSchema
 from ray.data._internal.compute import TaskPoolStrategy
-from ray.data._internal.datasource.parquet_datasource import (
-    _combine_projection,
-    _combine_rename_map,
-)
 from ray.data._internal.logical.interfaces import (
     LogicalOperator,
-    SourceOperator,
-    LogicalOperatorSupportsProjectionPushdown,
     LogicalOperatorSupportsPredicatePushdown,
+    LogicalOperatorSupportsProjectionPushdown,
+    SourceOperator,
 )
 from ray.data._internal.logical.operators.map_operator import AbstractMap
 from ray.data.block import BlockAccessor, Schema
+from ray.data.datasource.datasource import _DatasourceProjectionPushdownMixin
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from ray.data.expressions import Expr
     from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
+    from ray.data.expressions import Expr
 
 
 def _rename_columns_in_expr(expr: "Expr", column_mapping: Dict[str, str]) -> "Expr":
@@ -38,8 +34,8 @@ def _rename_columns_in_expr(expr: "Expr", column_mapping: Dict[str, str]) -> "Ex
         BinaryExpr,
         ColumnExpr,
         LiteralExpr,
-        UnaryExpr,
         UDFExpr,
+        UnaryExpr,
     )
 
     if isinstance(expr, ColumnExpr):
@@ -123,23 +119,49 @@ class ReadFiles(
         self.columns = columns
         self.columns_rename = columns_rename
 
-    def supports_projection_pushdown(self) -> bool:
-        return self.reader.supports_projection_pushdown()
+        self._inferred_schema = self.infer_schema()
 
-    def get_current_projection(self) -> Optional[List[str]]:
-        return self.columns
+    def supports_projection_pushdown(self) -> bool:
+        return (
+            self.reader.supports_projection_pushdown()
+            # We need the schema for projection pushdown so we know what the on-disk
+            # columns are.
+            and self._inferred_schema is not None
+        )
+
+    def get_projection_map(self) -> Optional[Dict[str, str]]:
+        assert self._inferred_schema is not None, (
+            "We can't return a projection map if we don't know what the on-disk "
+            "columns are."
+        )
+
+        on_disk_columns = self._inferred_schema.names
+        if self.columns is None:
+            columns = on_disk_columns
+        else:
+            columns = self.columns
+
+        column_renames = {}
+        if self.columns_rename is not None:
+            column_renames = self.columns_rename
+
+        return {column: column_renames.get(column, column) for column in columns}
 
     def apply_projection(
         self,
-        columns: Optional[List[str]],
-        column_rename_map: Optional[Dict[str, str]],
+        projection_map: Optional[Dict[str, str]],
     ) -> LogicalOperator:
         clone = copy.copy(self)
 
-        clone.columns = _combine_projection(self.columns, columns)
-        clone.columns_rename = _combine_rename_map(
-            self.columns_rename, column_rename_map
+        current_projection_map = self.get_projection_map()
+        combined_projection_map = (
+            _DatasourceProjectionPushdownMixin._combine_projection_map(
+                current_projection_map, projection_map
+            )
         )
+
+        clone.columns = list(combined_projection_map)
+        clone.columns_rename = combined_projection_map
 
         return clone
 
@@ -175,7 +197,13 @@ class ReadFiles(
                 file_extensions=self.input_dependency.file_extensions,
                 partition_filter=self.input_dependency.partition_filter,
             )
-            first_file_manifest = next(gen)
+
+            try:
+                first_file_manifest = next(gen)
+            except StopIteration:
+                # This can happen if the specified directories are empty.
+                return None
+
             if first_file_manifest and len(first_file_manifest) > 0:
                 first_file_manifest = FileManifest(
                     BlockAccessor.for_block(first_file_manifest.as_block()).slice(0, 1)
