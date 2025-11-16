@@ -32,6 +32,7 @@ void RayConfig::initialize(const std::string &config_list) {
 #define RAY_CONFIG(type, name, default_value) \
   name##_ = ReadEnv<type>("RAY_" #name, #type, default_value);
 
+#include "ray/anyscale/common/ray_turbo_config_def.h"
 #include "ray/common/ray_config_def.h"
 #undef RAY_CONFIG
 
@@ -54,6 +55,7 @@ void RayConfig::initialize(const std::string &config_list) {
     for (const auto &pair : config_map.items()) {
       // We use a big chain of if else statements because C++ doesn't allow
       // switch statements on strings.
+#include "ray/anyscale/common/ray_turbo_config_def.h"
 #include "ray/common/ray_config_def.h"
       // "ray/common/ray_internal_flag_def.h" is intentionally not included,
       // because it contains Ray internal settings.

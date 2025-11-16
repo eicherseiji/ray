@@ -860,6 +860,14 @@ class Quantile(AggregateFnV2[List[Any], List[Any]]):
         return ls
 
     def finalize(self, accumulator: List[Any]) -> Optional[Any]:
+        def unwrap(v):
+            try:
+                return v.as_py() if hasattr(v, "as_py") else v
+            except Exception:
+                return v
+
+        accumulator = [unwrap(v) for v in accumulator]
+
         if self._ignore_nulls:
             accumulator = [v for v in accumulator if not is_null(v)]
         else:

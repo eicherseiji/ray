@@ -1,0 +1,46 @@
+group: runtime data tests
+depends_on:
+  - forge
+  - ray-core-build
+  - ray-dashboard-build
+steps:
+  - label: ":database: data: runtime arrow 9 tests"
+    instance_type: large
+    commands:
+      - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/data/... data
+        --parallelism-per-worker 3
+        --build-name data9build-py3.10 --python-version 3.10
+        --test-env RAY_DATA_USE_STREAMING_EXECUTOR=1
+    depends_on: data9build-multipy
+    job_env: forge
+    tags:
+      - data
+      - data-turbo
+
+  - label: ":database: data: runtime arrow 19 (latest) tests"
+    instance_type: large
+    commands:
+      - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/data/... data
+        --parallelism-per-worker 3
+        --build-name datalbuild-py3.10 --python-version 3.10
+        --test-env RAY_DATA_USE_STREAMING_EXECUTOR=1
+    depends_on: datalbuild-multipy
+    job_env: forge
+    tags:
+      - data
+      - data-turbo
+
+  - label: ":database: data: runtime arrow nightly tests"
+    soft_fail: true
+    instance_type: large
+    commands:
+      - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/data/... data
+        --parallelism-per-worker 3
+        --build-name datanbuild-py3.10 --python-version 3.10
+        --test-env RAY_DATA_USE_STREAMING_EXECUTOR=1
+    depends_on: datanbuild-multipy
+    job_env: forge
+    tags:
+      - data
+      - data-turbo
+      - skip-on-premerge

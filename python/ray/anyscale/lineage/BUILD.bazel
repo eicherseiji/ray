@@ -1,0 +1,50 @@
+load("@rules_python//python:defs.bzl", "py_library")
+load("//bazel:python.bzl", "py_test_module_list")
+
+# Library target for lineage package
+# The source code is implicitly included via //:ray_lib dependency
+py_library(
+    name = "lineage",
+    srcs = glob([
+        "*.py",
+        "common/**/*.py",
+        "ray/**/*.py",
+        "mlflow/**/*.py",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//:ray_lib",
+    ],
+)
+
+# Test fixtures and shared test utilities
+py_library(
+    name = "conftest",
+    srcs = ["tests/conftest.py"],
+    deps = [
+        ":lineage",
+        "//:ray_lib",
+    ],
+)
+
+# Main test suite - automatically discovers test_*.py files
+py_test_module_list(
+    size = "medium",
+    files = glob(
+        [
+            "tests/test_*.py",
+            "tests/*/test_*.py",
+            "tests/*/*/test_*.py",
+        ],
+    ),
+    tags = [
+        "exclusive",
+        "lineage",
+        "team:lineage",
+    ],
+    deps = [
+        ":conftest",
+        ":lineage",
+        "//:ray_lib",
+    ],
+)
