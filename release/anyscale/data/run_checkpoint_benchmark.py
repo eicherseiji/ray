@@ -9,6 +9,7 @@ from checkpoint_benchmark import (
     clean_up_output_files,
     run_checkpoints_benchmark,
 )
+
 from ray.anyscale.data.checkpoint import CheckpointConfig
 
 if __name__ != "__main__":

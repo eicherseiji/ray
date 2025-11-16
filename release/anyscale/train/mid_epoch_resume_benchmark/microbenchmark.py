@@ -2,17 +2,17 @@ import argparse
 import collections
 import json
 import os
-import time
 import tempfile
+import time
 import uuid
 
+import ray.data
+import ray.train
 from ray._private.test_utils import safe_write_to_results_json
 from ray.anyscale.data.checkpoint.data_iterator_checkpointer import RowIDBasedStateDict
-import ray.data
-from ray.data.datasource import PathPartitionFilter, PartitionStyle
-import ray.train
-from ray.train.collective import barrier as ray_train_barrier
+from ray.data.datasource import PartitionStyle, PathPartitionFilter
 from ray.train import DatasetCheckpointConfig
+from ray.train.collective import barrier as ray_train_barrier
 from ray.train.torch import TorchTrainer
 
 

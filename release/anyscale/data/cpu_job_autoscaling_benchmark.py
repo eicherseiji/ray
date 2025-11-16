@@ -1,10 +1,10 @@
 from typing import Dict
 
 import numpy as np
-import ray
+from benchmark import Benchmark
 from torchvision import transforms
 
-from benchmark import Benchmark
+import ray
 
 DATA_URI = "s3://anonymous@ray-example-data/static-videos"
 NUM_FILES = 91  # 50GiB / 562.4 MiB/file ~= 91 files

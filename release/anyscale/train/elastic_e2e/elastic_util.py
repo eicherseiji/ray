@@ -1,7 +1,9 @@
-import ray
-import requests
 import subprocess
+
+import requests
 from torch import nn
+
+import ray
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 
