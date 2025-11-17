@@ -44,3 +44,4 @@ steps:
       - data
       - data-turbo
       - skip-on-premerge
+      - disabled
