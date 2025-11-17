@@ -855,6 +855,7 @@ def compute_unique_value_indices(
             )
 
     def get_pd_value_counts_per_column(col: pd.Series) -> Dict:
+
         # special handling for lists
         if _is_series_composed_of_lists(col):
             if encode_lists:

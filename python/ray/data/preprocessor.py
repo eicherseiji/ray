@@ -440,6 +440,7 @@ class Preprocessor(abc.ABC):
         return pickle.loads(base64.b64decode(serialized))
 
 
+@DeveloperAPI
 class SerializablePreprocessorBase(Preprocessor, abc.ABC):
     """Abstract base class for serializable preprocessors.
 
@@ -481,6 +482,7 @@ class SerializablePreprocessorBase(Preprocessor, abc.ABC):
     - Handle version migration and backwards compatibility in ``_set_serializable_fields()`` if needed
     """
 
+    @DeveloperAPI
     class SerializationFormat(Enum):
         CLOUDPICKLE = "cloudpickle"
         PICKLE = "pickle"  # legacy
@@ -622,15 +624,13 @@ class SerializablePreprocessorBase(Preprocessor, abc.ABC):
         - **CloudPickle** (default):
         - **Pickle** (legacy): Backward compatibility for existing serialized data
 
-        Args:
-            output_format: The serialization format to use
-
         Returns:
             Serialized preprocessor data (bytes for CloudPickle, str for legacy Pickle)
 
         Raises:
             ValueError: If the serialization format is invalid or unsupported
         """
+
         # Prepare data for CloudPickle format
         data = {
             "type": self.get_preprocessor_class_id(),
@@ -691,6 +691,7 @@ class SerializablePreprocessorBase(Preprocessor, abc.ABC):
             ValueError: If the serialized data is corrupted or format is unrecognized
             UnknownPreprocessorError: If the preprocessor type is not registered
         """
+
         try:
             # Use factory to deserialize all formats (auto-detects format)
             handler = SerializationHandlerFactory.get_handler(data=serialized)
