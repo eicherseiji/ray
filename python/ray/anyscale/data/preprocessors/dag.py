@@ -5,9 +5,9 @@ from ray.data.preprocessor import Preprocessor
 from ray.data.aggregate import AggregateFnV2
 
 
-class _AggregationNode:
+class _DAGNode:
     """
-    Represents a node in the stat aggregation DAG, wrapping a preprocessor and its associated aggregation.
+    Base class for nodes in the stat aggregation DAG.
 
     Each node tracks column-level dependencies:
     - A node depends on another if it reads from any columns produced by that node.
@@ -15,9 +15,35 @@ class _AggregationNode:
 
     Args:
         preprocessor: The preprocessor associated with this node.
+    """
+
+    def __init__(self, preprocessor: Preprocessor):
+        self.preprocessor: Preprocessor = preprocessor
+        self.dependencies: Set["_DAGNode"] = set()
+        self.dependents: Set["_DAGNode"] = set()
+        self.completed: bool = False
+        self.read_cols: Set[str] = set(preprocessor.get_input_columns())
+        self.write_cols: Set[str] = set(preprocessor.get_output_columns())
+
+    def is_ready(self):
+        """Returns True if all dependent nodes have completed."""
+        return all(dep.completed for dep in self.dependencies)
+
+    @property
+    def is_placeholder(self) -> bool:
+        """Returns True if this is a placeholder node."""
+        return isinstance(self, _PlaceholderNode)
+
+
+class _AggregationNode(_DAGNode):
+    """
+    Node representing an actual aggregation operation.
+
+    Args:
+        preprocessor: The preprocessor associated with this node.
         agg_fn: The aggregation function (AggregateFnV2) to compute stats.
-        post_process_fn: Optional function applied to the aggregation result.
-        post_key_fn: Optional function to generate output key for post-processed stats.
+        post_process_fn: Function applied to the aggregation result.
+        post_key_fn: Function to generate output key for post-processed stats.
         column: The column to aggregate.
     """
 
@@ -29,25 +55,33 @@ class _AggregationNode:
         post_key_fn: Callable[[str], str],
         column: str,
     ):
-        self.preprocessor: Preprocessor = preprocessor
+        super().__init__(preprocessor)
         self.agg_fn: AggregateFnV2 = agg_fn
         self.post_process_fn: Callable = post_process_fn
         self.post_key_fn: Callable[[str], str] = post_key_fn
         self.column: str = column
-        self.dependencies: Set[_AggregationNode] = set()
-        self.dependents: Set[_AggregationNode] = set()
-        self.completed: bool = False
-        self.read_cols: Set[str] = set(preprocessor.get_input_columns())
-        self.write_cols: Set[str] = set(preprocessor.get_output_columns())
 
-    def is_ready(self):
-        """Returns True if all dependent nodes have completed."""
-        return all(dep.completed for dep in self.dependencies)
+
+class _PlaceholderNode(_DAGNode):
+    """
+    Placeholder node for non-fittable preprocessors.
+
+    These nodes have no aggregation to run but participate in dependency
+    tracking to ensure correct execution order of transforms.
+
+    Args:
+        preprocessor: The preprocessor associated with this node.
+    """
+
+    def __init__(self, preprocessor: Preprocessor):
+        super().__init__(preprocessor)
+        # Placeholder nodes are immediately completed since they have no aggregation
+        self.completed = True
 
 
 def _build_aggregation_dag(
     preprocessors: Sequence[Preprocessor],
-) -> List[_AggregationNode]:
+) -> List[_DAGNode]:
     """
     Constructs a directed acyclic graph (DAG) of aggregation nodes from a list of preprocessors.
 
@@ -60,11 +94,20 @@ def _build_aggregation_dag(
     Returns:
         A list of aggregation nodes with their dependency relationships set.
     """
-    all_nodes: List[_AggregationNode] = []
+    all_nodes: List[_DAGNode] = []
     pre_to_nodes = defaultdict(list)
 
     for p in preprocessors:
         # Phase 1: Create nodes
+        # Non-fittable preprocessors don't have aggregations, so create placeholder nodes
+        if not p._is_fittable:
+            placeholder_node = _PlaceholderNode(preprocessor=p)
+            pre_to_nodes[p].append(placeholder_node)
+            all_nodes.append(placeholder_node)
+            continue
+
+        # Fittable preprocessors: create nodes for their aggregations
+        has_aggregations = False
         for agg_spec in p.stat_computation_plan:  # type: AggregateStatSpec
             node = _AggregationNode(
                 preprocessor=p,
@@ -75,6 +118,18 @@ def _build_aggregation_dag(
             )
             pre_to_nodes[p].append(node)
             all_nodes.append(node)
+            has_aggregations = True
+
+        # Fittable preprocessors must have aggregations
+        # Exception: Chain preprocessors delegate to their contained preprocessors
+        from ray.anyscale.data.preprocessors.turbo_chain import Chain
+
+        if not has_aggregations and not isinstance(p, Chain):
+            raise ValueError(
+                f"Preprocessor {p.__class__.__name__} is marked as fittable "
+                f"(_is_fittable=True) but has no aggregations in stat_computation_plan. "
+                f"Either add aggregations or set _is_fittable=False."
+            )
     # Phase 2: Add edges based on read/write overlap
     for i, current_p in enumerate(preprocessors):
         for j in range(i):

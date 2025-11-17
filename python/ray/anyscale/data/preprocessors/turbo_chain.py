@@ -36,6 +36,10 @@ class Chain(_OriginalChain, TurboPreprocessor):
         :return: The transformed Ray Dataset.
         """
 
+        if any(
+            p.stat_computation_plan.has_custom_stat_fn() for p in self.preprocessors
+        ):
+            return self._fallback_to_serial_execution(ds, **kwargs)
         if all(p.has_stats() for p in self.preprocessors if p._is_fittable):
             # Lazy aggregation computes stats for all preprocessors in one _transform() call.
             # If all fittable preprocessor have stats, lazy aggregation has completed.
@@ -49,37 +53,48 @@ class Chain(_OriginalChain, TurboPreprocessor):
             )
 
         transformed_preprocessors = set()
-        aggregation_nodes = _build_aggregation_dag(self.preprocessors)
-        pending_nodes = set(aggregation_nodes)
+        all_nodes = _build_aggregation_dag(self.preprocessors)
+        pending_nodes = set(all_nodes)
 
         while pending_nodes:
             ready = [n for n in pending_nodes if n.is_ready()]
             if not ready:
                 raise RuntimeError("Circular dependency detected in aggregation DAG.")
 
-            aggregates = [n.agg_fn for n in ready]
-            stats = ds.aggregate(*aggregates)
-            preprocessors = {n.preprocessor for n in ready}
-            logger.info(
-                f"Running {len(aggregates)} aggregations for {len(preprocessors)} preprocessors: {preprocessors}"
-            )
+            # Separate placeholder nodes (non-fittable preprocessors) from real aggregation nodes
+            placeholder_nodes = [n for n in ready if n.is_placeholder]
+            ready_aggregation_nodes = [n for n in ready if not n.is_placeholder]
 
-            for node in ready:
-                p = node.preprocessor
-                stat_key = node.agg_fn.name
-                post_key = (
-                    node.post_key_fn(node.column)
-                    if node.post_key_fn is not None
-                    else stat_key
-                )
-                p.stats_[post_key] = node.post_process_fn(stats[stat_key])
-                node.completed = True
+            # Remove placeholder nodes from pending (they're already marked completed in __init__)
+            for node in placeholder_nodes:
                 pending_nodes.remove(node)
 
+            # Run aggregations for fittable preprocessors
+            if ready_aggregation_nodes:
+                aggregates = [n.agg_fn for n in ready_aggregation_nodes]
+                stats = ds.aggregate(*aggregates)
+                preprocessors = {n.preprocessor for n in ready_aggregation_nodes}
+                logger.info(
+                    f"Running {len(aggregates)} aggregations for {len(preprocessors)} preprocessors: {preprocessors}"
+                )
+
+                for node in ready_aggregation_nodes:
+                    p = node.preprocessor
+                    stat_key = node.agg_fn.name
+                    post_key = (
+                        node.post_key_fn(node.column)
+                        if node.post_key_fn is not None
+                        else stat_key
+                    )
+                    p.stats_[post_key] = node.post_process_fn(stats[stat_key])
+                    node.completed = True
+                    pending_nodes.remove(node)
+
+            # Transform any preprocessor whose all nodes are complete (fittable or non-fittable)
             for node in ready:
                 p = node.preprocessor
                 if p not in transformed_preprocessors and all(
-                    n.completed for n in aggregation_nodes if n.preprocessor == p
+                    n.completed for n in all_nodes if n.preprocessor == p
                 ):
                     ds = p.transform(ds, **kwargs)
                     transformed_preprocessors.add(p)
@@ -87,4 +102,21 @@ class Chain(_OriginalChain, TurboPreprocessor):
         for preprocessor in self.preprocessors:
             if preprocessor not in transformed_preprocessors:
                 ds = preprocessor.transform(ds, **kwargs)
+        return ds
+
+    def _fallback_to_serial_execution(self, ds: "Dataset", **kwargs) -> "Dataset":
+        """
+        If any preprocessor has custom stats function which might potentially contain
+        iter_batches based stats computation, fallback to serial execution.
+        """
+        logger.warning(
+            "Falling back to serial execution because one or more preprocessors use "
+            "custom stat functions (e.g., add_callable_stat). This prevents parallel "
+            "deferred aggregation. Consider rewriting stats computation using "
+            "AggregateV2-based aggregators (e.g., add_aggregator) to benefit from "
+            "parallel execution and improved performance."
+        )
+        for preprocessor in self.preprocessors:
+            preprocessor.is_chain = False
+            ds = preprocessor._fit_execute(ds).transform(ds, **kwargs)
         return ds

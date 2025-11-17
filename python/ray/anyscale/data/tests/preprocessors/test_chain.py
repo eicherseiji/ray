@@ -215,20 +215,31 @@ def test_dag_complex_dependencies():
     Creates a chain where:
     1. Imputer fills missing values in column A
     2. Scaler normalizes the imputed A
-    3. Encoder encodes a separate column B
-    4. All outputs are used
+    3. Concatenator combines scaled A and original C into features
+    4. Encoder encodes a separate column B
+    5. All outputs are used
+
+    This tests Concatenator's get_input_columns/get_output_columns implementations
+    since it uses output_column_name instead of output_columns. Concatenator depends
+    on Scaler's output, ensuring non-fittable preprocessors work correctly in the DAG.
     """
     col_a = [1, None, 3, None, 5]
     col_b = ["cat", "dog", "cat", "bird", "dog"]
-    in_df = pd.DataFrame.from_dict({"A": col_a, "B": col_b})
+    col_c = [10, 20, 30, 40, 50]
+    in_df = pd.DataFrame.from_dict({"A": col_a, "B": col_b, "C": col_c})
     ds = ray.data.from_pandas(in_df)
 
     # Complex chain with dependencies
-    imputer = SimpleImputer(["A"], output_columns=["A"])
-    scaler = StandardScaler(["A"], output_columns=["A_scaled"])
+    # Imputer fills missing values in A
+    imputer = SimpleImputer(["A"], output_columns=["A_imputed"])
+    # Scaler normalizes the imputed A
+    scaler = StandardScaler(["A_imputed"], output_columns=["A_scaled"])
+    # Concatenator combines A_scaled and C (depends on Scaler's output)
+    concatenator = Concatenator(["A_scaled", "C"], output_column_name="features")
+    # Encoder encodes B (independent branch)
     encoder = OrdinalEncoder(["B"], output_columns=["B_encoded"])
 
-    chain = Chain(imputer, scaler, encoder)
+    chain = Chain(imputer, scaler, concatenator, encoder)
     chain.fit(ds)
 
     # Verify stats are computed lazily
@@ -245,10 +256,28 @@ def test_dag_complex_dependencies():
     assert encoder.has_stats(), "Encoder should have stats after transform"
 
     # Verify outputs
-    assert "A" in out_df.columns
-    assert "A_scaled" in out_df.columns
-    assert "B_encoded" in out_df.columns
-    assert not out_df["A"].isna().any(), "No NaN values should remain"
+    assert "A_imputed" in out_df.columns, "Imputed A should exist"
+    assert "features" in out_df.columns, "Concatenated features column should exist"
+    assert "B_encoded" in out_df.columns, "Encoded B should exist"
+    # Note: A_scaled is dropped by Concatenator after being used as input
+    assert (
+        "A_scaled" not in out_df.columns
+    ), "A_scaled should be dropped by Concatenator"
+    # Note: C is also dropped by Concatenator after being used as input
+    assert "C" not in out_df.columns, "C should be dropped by Concatenator"
+
+    # Verify the concatenated column has the right shape
+    # Each row in features should be a 2-element array (from A_scaled and C)
+    assert all(
+        isinstance(row, np.ndarray) and len(row) == 2 for row in out_df["features"]
+    ), "Features should be 2-element arrays (from A_scaled + C)"
+
+    # Verify the values make sense (scaled values should have mean ~0)
+    features_array = np.array(list(out_df["features"]))
+    scaled_a_values = features_array[:, 0]  # First element of each array is A_scaled
+    assert (
+        abs(np.mean(scaled_a_values)) < 0.1
+    ), "Scaled A values should have mean close to 0"
 
 
 @pytest.mark.parametrize(
@@ -424,6 +453,104 @@ def test_preprocessor_in_chain(
         assert (
             preprocessor.has_stats()
         ), f"{preprocessor_name} should have stats after transform"
+
+
+def test_fallback_to_serial_execution_with_custom_stats():
+    """Test fallback to serial execution when preprocessor has custom stat functions.
+
+    The original (non-turbo) OrdinalEncoder uses add_callable_stat() which triggers
+    the fallback path since it has iter_batches type of stat evaluation. This test
+    verifies that the chain correctly falls back to serial execution by creating a
+    dependency chain where one preprocessor reads the output of the previous one.
+
+    The key insight: In DAG-based execution, dependencies are tracked by column names,
+    but serial execution processes preprocessors in order. By having the scaler depend
+    on the encoder's output, we ensure serial execution is truly happening.
+
+    Note: We import the original encoder before patching to test the fallback behavior.
+    """
+    col_a = [1.0, 2.0, 3.0, 4.0, 5.0]
+    col_b = ["cat", "dog", "cat", "bird", "dog"]
+    in_df = pd.DataFrame.from_dict({"A": col_a, "B": col_b})
+    ds = ray.data.from_pandas(in_df)
+
+    # Import the original (non-turbo) OrdinalEncoder which uses custom stat functions.
+    # This import must be inside the function to ensure we get the unpatched version
+    # before any patching occurs, as required for testing fallback behavior.
+    from ray.data.preprocessors.encoder import OrdinalEncoder as OriginalOrdinalEncoder
+
+    # Create a dependency chain:
+    # 1. Encoder transforms B -> B_encoded
+    # 2. Scaler transforms B_encoded -> B_scaled (depends on encoder's output!)
+    # This dependency can only work in serial execution, verifying the fallback works
+    encoder = OriginalOrdinalEncoder(["B"], output_columns=["B_encoded"])
+    scaler = StandardScaler(["B_encoded"], output_columns=["B_scaled"])
+
+    # Create chain with preprocessor that has custom stats
+    chain = Chain(encoder, scaler)
+
+    # Mock the fallback method to verify it's called
+    fallback_called = []
+    original_fallback = chain._fallback_to_serial_execution
+
+    def mock_fallback(ds, **kwargs):
+        fallback_called.append(True)
+        return original_fallback(ds, **kwargs)
+
+    chain._fallback_to_serial_execution = mock_fallback
+
+    # Fit the encoder to populate its stat_computation_plan with custom stats
+    # Note: The original encoder computes stats during _fit_execute (not lazy)
+    chain.fit(ds)
+
+    # After fit, encoder should have custom stat functions
+    assert (
+        encoder.stat_computation_plan.has_custom_stat_fn()
+    ), "Original OrdinalEncoder should have custom stat functions after fit"
+
+    # The original encoder computes stats during fit (not lazy like turbo version)
+    # So encoder already has stats, but scaler doesn't yet
+    assert encoder.has_stats(), "Original encoder computes stats during fit"
+    assert (
+        not scaler.has_stats()
+    ), "Scaler should not have stats before transform in turbo mode"
+
+    # Reset encoder stats to test the fallback during transform
+    encoder.stats_ = {}
+
+    result = chain.transform(ds)
+
+    # Verify fallback was called due to custom stat functions
+    assert (
+        len(fallback_called) == 1
+    ), "Fallback to serial execution should have been called due to custom stat functions"
+
+    # Verify stats were computed during fallback
+    assert encoder.has_stats(), "Encoder should have stats after transform"
+    assert scaler.has_stats(), "Scaler should have stats after transform"
+
+    # Verify output is correct - this is the critical test!
+    # If serial execution didn't happen, scaler would fail because B_encoded wouldn't exist
+    out_df = result.to_pandas()
+    assert "B_encoded" in out_df.columns, "Encoded column should exist"
+    assert (
+        "B_scaled" in out_df.columns
+    ), "Scaled column should exist (proves serial execution)"
+    assert "A" in out_df.columns, "Original column A should still exist"
+
+    # Verify encoding worked correctly (cat=0, dog=1, bird=2 or similar mapping)
+    assert len(out_df["B_encoded"].unique()) == 3, "Should have 3 unique encoded values"
+
+    # Verify scaling worked correctly on encoded values (mean should be close to 0)
+    assert (
+        abs(out_df["B_scaled"].mean()) < 0.1
+    ), "Scaled encoded values should have mean close to 0"
+
+    # Verify the dependency chain worked: B -> B_encoded -> B_scaled
+    # This proves serial execution happened in order
+    assert (
+        out_df["B_scaled"].notna().all()
+    ), "All scaled values should be valid (not NaN)"
 
 
 if __name__ == "__main__":
