@@ -741,35 +741,20 @@ def test_read_parquet_with_columns_selectivity(
 
 
 @pytest.mark.parametrize(
-    "test_data,generated_id_column,read_kwargs,rename_columns,expected_error_pattern,test_description",
+    "test_data,generated_id_column,rename_columns,expected_error_pattern,test_description",
     [
         # Collision with existing schema column
         (
             {"one": [1, 2, 3], GENERATED_ID_COL: ["a", "b", "c"]},
             GENERATED_ID_COL,
-            {},
             None,
             "generated_id_column='row_id' conflicts with an existing column",
             "collision with existing Parquet column",
-        ),
-        # Collision with columns list
-        (
-            {
-                "one": [1, 2, 3],
-                "two": ["a", "b", "c"],
-                GENERATED_ID_COL: ["d", "e", "f"],
-            },
-            GENERATED_ID_COL,
-            {"columns": ["one", "two", GENERATED_ID_COL]},
-            None,
-            "generated_id_column='row_id' conflicts with a column in the columns list",
-            "collision with explicit columns list",
         ),
         # Collision with renamed column (target name)
         (
             {"one": [1, 2, 3], "two": ["a", "b", "c"]},
             "renamed_col",
-            {},
             {"one": "renamed_col"},
             "generated_id_column='renamed_col' conflicts with a renamed column",
             "collision with renamed column target name",
@@ -778,7 +763,6 @@ def test_read_parquet_with_columns_selectivity(
         (
             {"one": [1, 2, 3], "two": ["a", "b", "c"]},
             "one",
-            {},
             {"one": "renamed_col"},
             "generated_id_column='one' conflicts with a column that will be renamed",
             "collision with column being renamed",
@@ -792,7 +776,6 @@ def test_parquet_generated_id_column_collisions(
     simple_parquet_file,
     test_data,
     generated_id_column,
-    read_kwargs,
     rename_columns,
     expected_error_pattern,
     test_description,
@@ -806,7 +789,7 @@ def test_parquet_generated_id_column_collisions(
     checkpoint_config_fixture(generated_id_column=generated_id_column)
 
     # Read Parquet and apply any additional operations
-    ds = ray.data.read_parquet(tmp_path, **read_kwargs)
+    ds = ray.data.read_parquet(tmp_path)
 
     # Apply rename operation if specified
     if rename_columns:

@@ -274,34 +274,11 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         if len(fragments) == 0:
             return
 
-        # Check for column name collision with generated_id_column
-        if generated_id_column:
-            # Check collision with columns_rename mapping
-            if columns_rename is not None:
-                if generated_id_column in columns_rename:
-                    raise ValueError(
-                        f"generated_id_column='{generated_id_column}' conflicts with a column "
-                        f"that will be renamed (original name)"
-                    )
-                if generated_id_column in columns_rename.values():
-                    raise ValueError(
-                        f"generated_id_column='{generated_id_column}' conflicts with a renamed "
-                        f"column (target name)"
-                    )
-
-            # Check collision with existing columns
-            field_index = fragments[0].physical_schema.get_field_index(
-                generated_id_column
-            )
-            if field_index >= 0:
-                if columns is not None and generated_id_column in columns:
-                    raise ValueError(
-                        f"generated_id_column='{generated_id_column}' conflicts with a column in the columns list"
-                    )
-                else:
-                    raise ValueError(
-                        f"generated_id_column='{generated_id_column}' conflicts with an existing column"
-                    )
+        self._validate_generated_id_column(
+            generated_id_column,
+            fragments=fragments,
+            columns_rename=columns_rename,
+        )
 
         # Users can pass both data columns and partition columns in the 'columns'
         # argument. To prevent PyArrow from complaining about missing columns, we
@@ -353,6 +330,44 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 columns_rename=columns_rename,
                 generated_id_column=generated_id_column,
                 path_to_checkpoint=path_to_checkpoint,
+            )
+
+    def _validate_generated_id_column(
+        self,
+        generated_id_column: Optional[str],
+        *,
+        fragments,
+        columns_rename: Optional[Dict[str, str]],
+    ):
+        if generated_id_column is None:
+            return
+
+        if columns_rename is not None:
+            # Check if `generated_id_column` is actually being renamed.
+            new_name = columns_rename.get(generated_id_column, generated_id_column)
+            if new_name != generated_id_column:
+                raise ValueError(
+                    f"generated_id_column='{generated_id_column}' conflicts with a "
+                    "column that will be renamed (original name)"
+                )
+
+            # Check if another column is being renamed to `generated_id_column`
+            for original_name, new_name in columns_rename.items():
+                if (
+                    new_name == generated_id_column
+                    and original_name != generated_id_column
+                ):
+                    raise ValueError(
+                        f"generated_id_column='{generated_id_column}' conflicts with a "
+                        "renamed column (target name)"
+                    )
+
+        # Check collision with existing columns
+        field_index = fragments[0].physical_schema.get_field_index(generated_id_column)
+        if field_index >= 0:
+            raise ValueError(
+                f"generated_id_column='{generated_id_column}' conflicts with an "
+                "existing column"
             )
 
     @property
