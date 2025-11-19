@@ -7,6 +7,6 @@ steps:
     commands:
       - bash ./anyscale/ci/upload-anyscale-ragbot-data.sh
     depends_on: docbuild
-    job_env: docbuild-py3.12
+    job_env: docbuild-py3.10
     tags:
       - skip-on-premerge
