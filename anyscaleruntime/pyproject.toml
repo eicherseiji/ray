@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anyscaleruntime"
+dynamic = ["version"]
+description = "Anyscale Runtime for faster, cheaper and more resilient AI, powered by Ray"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Anyscale Inc.", email = "support@anyscale.com"}
+]
+dependencies = [
+    "ray>=2.52.0"
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "anyscaleruntime.__version__"}
+
+[project.entry-points."mlflow.tracking_store"]
+"anyscale-mlflow-tracking-store-file" = "ray.anyscale.lineage.mlflow.store.tracking:AnyscaleFileStore"
+"anyscale-mlflow-tracking-store-rest" = "ray.anyscale.lineage.mlflow.store.tracking:AnyscaleRestStore"
+
+[project.entry-points."mlflow.artifact_repository"]
+"anyscale-mlflow-artifact-repo" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleArtifactRepository"
+"anyscale-mlflow-artifact-repo-azure-blob" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleAzureBlobArtifactRepository"
+"anyscale-mlflow-artifact-repo-cloud" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleCloudArtifactRepository"
+"anyscale-mlflow-artifact-repo-databricks" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleDatabricksArtifactRepository"
+"anyscale-mlflow-artifact-repo-databricks-models" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleDatabricksModelsArtifactRepository"
+"anyscale-mlflow-artifact-repo-ftp" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleFTPArtifactRepository"
+"anyscale-mlflow-artifact-repo-gcs" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleGCSArtifactRepository"
+"anyscale-mlflow-artifact-repo-http" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleHTTPArtifactRepository"
+"anyscale-mlflow-artifact-repo-local" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleLocalArtifactRepository"
+"anyscale-mlflow-artifact-repo-mlflow-artifacts" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleMLflowArtifactsRepository"
+"anyscale-mlflow-artifact-repo-models" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleModelsArtifactRepository"
+"anyscale-mlflow-artifact-repo-optimized-s3" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleOptimizedS3ArtifactRepository"
+"anyscale-mlflow-artifact-repo-runs" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleRunsArtifactRepository"
+"anyscale-mlflow-artifact-repo-s3" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleS3ArtifactRepository"
+"anyscale-mlflow-artifact-repo-uc-volume" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleUCVolumeArtifactRepository"
+"anyscale-mlflow-artifact-repo-unity-catalog-models" = "ray.anyscale.lineage.mlflow.store.artifact:AnyscaleUnityCatalogModelsArtifactRepository"
+
+[project.entry-points."mlflow.run_context_provider"]
+"unused" = "ray.anyscale.lineage.mlflow.run_context_provider:AnyscaleRunContextProvider"

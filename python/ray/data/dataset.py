@@ -159,6 +159,7 @@ a torch.device object, or an integer (e.g. 0 for 'cuda:0').
 """
 
 BT_API_GROUP = "Basic Transformations"
+J_API_GROUP = "Joining Operation APIs"
 SSR_API_GROUP = "Sorting, Shuffling and Repartitioning"
 SMJ_API_GROUP = "Splitting, Merging, Joining datasets"
 GGA_API_GROUP = "Grouped and Global aggregations"
