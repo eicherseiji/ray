@@ -16,7 +16,7 @@ class SimpleImputer(_OriginalSimpleImputer, TurboPreprocessor):
     def _fit(self, ds):
         if self.strategy == "mean":
             self.stat_computation_plan.add_aggregator(
-                aggregator_fn=Mean, columns=self.columns
+                aggregator_fn=lambda col: Mean(on=col), columns=self.columns
             )
         elif self.strategy == "most_frequent":
 
@@ -26,9 +26,10 @@ class SimpleImputer(_OriginalSimpleImputer, TurboPreprocessor):
                 return stats["values"][np.argmax(stats["counts"])]
 
             self.stat_computation_plan.add_aggregator(
-                aggregator_fn=ValueCounter,
+                aggregator_fn=lambda col: ValueCounter(
+                    on=col, alias_name=f"most_frequent({col})"
+                ),
                 post_process_fn=build_counters,
-                post_key_fn=lambda column: f"most_frequent({column})",
                 columns=self.columns,
             )
         elif self.strategy == "constant":

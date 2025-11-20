@@ -32,10 +32,11 @@ class OrdinalEncoder(_OriginalOrdinalEncoder, TurboPreprocessor):
     def _fit(self, ds):
         self.stat_computation_plan.add_aggregator(
             aggregator_fn=lambda col: UniqueVectorized(
-                on=col, encode_lists=self.encode_lists
+                on=col,
+                encode_lists=self.encode_lists,
+                alias_name=f"unique_values({col})",
             ),
             post_process_fn=unique_post_fn(),
-            post_key_fn=lambda col: f"unique_values({col})",
             columns=self.columns,
         )
         return self
@@ -76,13 +77,17 @@ class OneHotEncoder(_OriginalOneHotEncoder, TurboPreprocessor):
         self.stat_computation_plan.add_aggregator(
             aggregator_fn=lambda col: (
                 TopKUniqueVectorized(
-                    on=col, k=self.max_categories[col], encode_lists=False
+                    on=col,
+                    k=self.max_categories[col],
+                    encode_lists=False,
+                    alias_name=f"unique_values({col})",
                 )
                 if col in self.max_categories
-                else UniqueVectorized(on=col, encode_lists=False)
+                else UniqueVectorized(
+                    on=col, encode_lists=False, alias_name=f"unique_values({col})"
+                )
             ),
             post_process_fn=unique_post_fn(),
-            post_key_fn=lambda col: f"unique_values({col})",
             columns=self.columns,
         )
         return self
@@ -103,13 +108,17 @@ class MultiHotEncoder(_OriginalMultiHotEncoder, TurboPreprocessor):
         self.stat_computation_plan.add_aggregator(
             aggregator_fn=lambda col: (
                 TopKUniqueVectorized(
-                    on=col, k=self.max_categories[col], encode_lists=True
+                    on=col,
+                    k=self.max_categories[col],
+                    encode_lists=True,
+                    alias_name=f"unique_values({col})",
                 )
                 if col in self.max_categories
-                else UniqueVectorized(on=col, encode_lists=True)
+                else UniqueVectorized(
+                    on=col, encode_lists=True, alias_name=f"unique_values({col})"
+                )
             ),
             post_process_fn=unique_post_fn(),
-            post_key_fn=lambda col: f"unique_values({col})",
             columns=self.columns,
         )
         return self
@@ -119,9 +128,10 @@ class MultiHotEncoder(_OriginalMultiHotEncoder, TurboPreprocessor):
 class LabelEncoder(_OriginalLabelEncoder, TurboPreprocessor):
     def _fit(self, ds):
         self.stat_computation_plan.add_aggregator(
-            aggregator_fn=UniqueVectorized,
+            aggregator_fn=lambda col: UniqueVectorized(
+                on=col, alias_name=f"unique_values({col})"
+            ),
             post_process_fn=unique_post_fn(),
-            post_key_fn=lambda col: f"unique_values({col})",
             columns=[self.label_column],
         )
         return self
@@ -141,12 +151,11 @@ class Categorizer(_OriginalCategorizer, TurboPreprocessor):
             return pd.CategoricalDtype(unique_indices.keys())
 
         self.stat_computation_plan.add_aggregator(
-            aggregator_fn=UniqueVectorized,
+            aggregator_fn=lambda col: UniqueVectorized(on=col, alias_name=col),
             post_process_fn=make_post_processor(
                 base_fn=unique_post_fn(drop_na_values=True),
                 callbacks=[callback],
             ),
-            post_key_fn=lambda col: col,
             columns=columns_to_get,
         )
         return self

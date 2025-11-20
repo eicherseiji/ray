@@ -81,12 +81,8 @@ class Chain(_OriginalChain, TurboPreprocessor):
                 for node in ready_aggregation_nodes:
                     p = node.preprocessor
                     stat_key = node.agg_fn.name
-                    post_key = (
-                        node.post_key_fn(node.column)
-                        if node.post_key_fn is not None
-                        else stat_key
-                    )
-                    p.stats_[post_key] = node.post_process_fn(stats[stat_key])
+                    # Use aggregator's name as key, apply post-processing to value
+                    p.stats_[stat_key] = node.post_process_fn(stats[stat_key])
                     node.completed = True
                     pending_nodes.remove(node)
 

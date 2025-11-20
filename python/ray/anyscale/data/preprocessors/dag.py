@@ -43,7 +43,6 @@ class _AggregationNode(_DAGNode):
         preprocessor: The preprocessor associated with this node.
         agg_fn: The aggregation function (AggregateFnV2) to compute stats.
         post_process_fn: Function applied to the aggregation result.
-        post_key_fn: Function to generate output key for post-processed stats.
         column: The column to aggregate.
     """
 
@@ -52,13 +51,11 @@ class _AggregationNode(_DAGNode):
         preprocessor: Preprocessor,
         agg_fn: AggregateFnV2,
         post_process_fn: Callable,
-        post_key_fn: Callable[[str], str],
         column: str,
     ):
         super().__init__(preprocessor)
         self.agg_fn: AggregateFnV2 = agg_fn
         self.post_process_fn: Callable = post_process_fn
-        self.post_key_fn: Callable[[str], str] = post_key_fn
         self.column: str = column
 
 
@@ -113,7 +110,6 @@ def _build_aggregation_dag(
                 preprocessor=p,
                 agg_fn=agg_spec.stat_fn,
                 post_process_fn=agg_spec.post_process_fn,
-                post_key_fn=agg_spec.post_key_fn,
                 column=agg_spec.column,
             )
             pre_to_nodes[p].append(node)
