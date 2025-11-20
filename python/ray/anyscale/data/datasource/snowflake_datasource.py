@@ -38,15 +38,21 @@ class SnowflakeDatasource(Datasource):
     def estimate_inmemory_data_size(self) -> Optional[int]:
         return None
 
-    def get_read_tasks(self, parallelism: int) -> List[ReadTask]:
+    def get_read_tasks(
+        self, parallelism: int, per_task_row_limit: Optional[int] = None
+    ) -> List[ReadTask]:
         cached = self._cached_tasks.get(parallelism)
         if cached is not None:
             return cached
-        result = self._get_read_tasks(parallelism)
+        result = self._get_read_tasks(
+            parallelism, per_task_row_limit=per_task_row_limit
+        )
         self._cached_tasks[parallelism] = result
         return result
 
-    def _get_read_tasks(self, parallelism: int) -> List[ReadTask]:
+    def _get_read_tasks(
+        self, parallelism: int, per_task_row_limit: Optional[int] = None
+    ) -> List[ReadTask]:
         if self.result_batches is None:
             from snowflake.connector import connect
 
@@ -79,7 +85,14 @@ class SnowflakeDatasource(Datasource):
             num_rows = sum(b.rowcount for b in result_batches_split)
             size_bytes = estimated_size_bytes_per_row * num_rows
             metadata = BlockMetadata(num_rows, size_bytes, None, None)
-            tasks.append(ReadTask(read_fn, metadata, schema=schema))
+            tasks.append(
+                ReadTask(
+                    read_fn,
+                    metadata,
+                    schema=schema,
+                    per_task_row_limit=per_task_row_limit,
+                )
+            )
 
         return tasks
 
