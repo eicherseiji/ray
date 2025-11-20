@@ -861,7 +861,8 @@ def test_repartition_fusion_build_output(ray_start_regular_shared):
         "InputDataBuffer[Input] -> "
         "TaskPoolMapOperator[ReadRange] -> "
         "TaskPoolMapOperator[Map(<lambda>)->MapBatches(<lambda>)] -> "
-        "TaskPoolMapOperator[StreamingRepartition]" == plan.dag.dag_str
+        f"TaskPoolMapOperator[StreamingRepartition[num_rows_per_block={target_num_rows_per_block}]]"
+        == plan.dag.dag_str
     )
 
     fns = plan.dag.get_map_transformer().get_transform_fns()
