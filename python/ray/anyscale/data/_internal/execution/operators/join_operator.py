@@ -234,7 +234,8 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
         )
 
 
-class JoinOperatorWithPolars(JoinOperator):
+class AnyscaleJoinOperator(JoinOperator):
+    # This operator uses Polars for joins.
     def __init__(
         self,
         data_context: DataContext,

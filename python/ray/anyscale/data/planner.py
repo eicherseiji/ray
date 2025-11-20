@@ -71,7 +71,7 @@ def plan_join_op(
 
     if data_context.use_polars_join:
         from ray.anyscale.data._internal.execution.operators.join_operator import (
-            JoinOperatorWithPolars,
+            AnyscaleJoinOperator,
         )
 
         # Validate GPU configuration if GPU joins are enabled
@@ -82,7 +82,7 @@ def plan_join_op(
             if hasattr(data_context, "validate_polars_gpu_config"):
                 data_context.validate_polars_gpu_config()
 
-        return JoinOperatorWithPolars(
+        return AnyscaleJoinOperator(
             data_context=data_context,
             left_input_op=physical_children[0],
             right_input_op=physical_children[1],
