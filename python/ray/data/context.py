@@ -250,6 +250,10 @@ DEFAULT_ENABLE_DYNAMIC_OUTPUT_QUEUE_SIZE_BACKPRESSURE: bool = env_bool(
     "RAY_DATA_ENABLE_DYNAMIC_OUTPUT_QUEUE_SIZE_BACKPRESSURE", False
 )
 
+DEFAULT_DOWNSTREAM_CAPACITY_OUTPUTS_RATIO: int = env_float(
+    "RAY_DATA_DOWNSTREAM_CAPACITY_OUTPUTS_RATIO", 25.0
+)
+
 
 @DeveloperAPI
 @dataclass
@@ -472,6 +476,10 @@ class DataContext:
             later. If `None`, this type of backpressure is disabled.
         downstream_capacity_backpressure_max_queued_bundles: Maximum number of queued
             bundles before applying backpressure. If `None`, no limit is applied.
+        downstream_capacity_outputs_ratio: Ratio for downstream capacity outputs
+            backpressure control. A lower ratio means fewer outputs will be taken
+            causing less build up in operator inqueues. If `None`, this type of
+            backpressure is disabled.
         enable_dynamic_output_queue_size_backpressure: Whether to cap the concurrency
         of an operator based on it's and downstream's queue size.
         enforce_schemas: Whether to enforce schema consistency across dataset operations.
@@ -612,6 +620,7 @@ class DataContext:
 
     downstream_capacity_backpressure_ratio: float = None
     downstream_capacity_backpressure_max_queued_bundles: int = None
+    downstream_capacity_outputs_ratio: float = DEFAULT_DOWNSTREAM_CAPACITY_OUTPUTS_RATIO
 
     enable_dynamic_output_queue_size_backpressure: bool = (
         DEFAULT_ENABLE_DYNAMIC_OUTPUT_QUEUE_SIZE_BACKPRESSURE

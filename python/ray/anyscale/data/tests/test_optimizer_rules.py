@@ -615,6 +615,9 @@ def test_pushdown_rename_filter(ray_start_regular_shared):
     assert converted_expr.equals(expected_expr)
 
 
+@pytest.mark.skip(
+    reason="Re-enable once https://anyscale1.atlassian.net/browse/DATA-1665 is fixed."
+)
 def test_maprows_repartition_fusion(ray_start_regular_shared):
     """StreamingRepartition after MapRows should be removed and fused into MapRows."""
 
@@ -636,6 +639,9 @@ def test_maprows_repartition_fusion(ray_start_regular_shared):
     assert sum(block_rows) == 50
 
 
+@pytest.mark.skip(
+    reason="Re-enable once https://anyscale1.atlassian.net/browse/DATA-1665 is fixed."
+)
 def test_flatmap_repartition_fusion(ray_start_regular_shared):
     """StreamingRepartition after FlatMap should be removed and fused into FlatMap."""
 
@@ -843,6 +849,9 @@ def test_repartition_build_output(ray_start_regular_shared):
     assert match_ds_result(ds, list(range(20)))
 
 
+@pytest.mark.skip(
+    reason="Re-enable once https://anyscale1.atlassian.net/browse/DATA-1665 is fixed."
+)
 def test_repartition_fusion_build_output(ray_start_regular_shared):
     """Test repartition fusion with target_num_rows_per_block"""
     target_num_rows_per_block = 20
