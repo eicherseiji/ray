@@ -197,6 +197,7 @@ from ray.tune.result import TRAINING_ITERATION
 from ray.tune.trainable import Trainable
 from ray.util import log_once
 from ray.util.metrics import Counter, Histogram
+from ray.util.placement_group import get_current_placement_group
 from ray.util.timer import _Timer
 
 if TYPE_CHECKING:
@@ -983,7 +984,8 @@ class Algorithm(Checkpointable, Trainable):
                 inference_only=False,
             )
             self.learner_group = self.config.build_learner_group(
-                rl_module_spec=module_spec
+                rl_module_spec=module_spec,
+                placement_group=get_current_placement_group(),
             )
 
             # Check if there are modules to load from the `module_spec`.
