@@ -9,6 +9,7 @@ import numpy as np
 
 import ray
 import ray.data.read_api as oss_read_api
+from ray.data._internal.util import merge_resources_to_ray_remote_args
 from ray._private.auto_init_hook import wrap_auto_init
 from ray._private.ray_constants import env_bool
 from ray._private.utils import INT32_MAX
@@ -106,6 +107,9 @@ def read_parquet(
     *,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
     columns: Optional[List[str]] = None,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Optional[Dict[str, Any]] = None,
     tensor_column_schema: Optional[Dict[str, Tuple[np.dtype, Tuple[int, ...]]]] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
@@ -203,6 +207,9 @@ def read_parquet(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
         file_chunker=file_chunker,
     )
 
@@ -220,6 +227,9 @@ def read_audio(
     file_extensions: Optional[List[str]] = None,
     shuffle: Union[Literal["files"], None] = None,
     concurrency: Optional[int] = None,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Optional[Dict[str, Any]] = None,
 ):
     """Creates a :class:`~ray.data.Dataset` from audio files.
@@ -263,6 +273,11 @@ def read_audio(
             to control number of tasks to run concurrently. This doesn't change the
             total number of tasks run or the total number of output blocks. By default,
             concurrency is dynamically decided based on the available resources.
+        num_cpus: The number of CPUs to reserve for each parallel read worker.
+        num_gpus: The number of GPUs to reserve for each parallel read worker. For
+            example, specify `num_gpus=1` to request 1 GPU for each parallel read
+            worker.
+        memory: The heap memory in bytes to reserve for each parallel read worker.
         ray_remote_args: kwargs passed to :meth:`~ray.remote` in the read tasks.
 
     Returns:
@@ -285,6 +300,9 @@ def read_audio(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
     )
 
 
@@ -301,6 +319,9 @@ def read_videos(
     file_extensions: Optional[List[str]] = None,
     shuffle: Union[Literal["files"], None] = None,
     concurrency: Optional[int] = None,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Optional[Dict[str, Any]] = None,
 ):
     """Creates a :class:`~ray.data.Dataset` from video files.
@@ -346,6 +367,11 @@ def read_videos(
             to control number of tasks to run concurrently. This doesn't change the
             total number of tasks run or the total number of output blocks. By default,
             concurrency is dynamically decided based on the available resources.
+        num_cpus: The number of CPUs to reserve for each parallel read worker.
+        num_gpus: The number of GPUs to reserve for each parallel read worker. For
+            example, specify `num_gpus=1` to request 1 GPU for each parallel read
+            worker.
+        memory: The heap memory in bytes to reserve for each parallel read worker.
         ray_remote_args: kwargs passed to :meth:`~ray.remote` in the read tasks.
 
     Returns:
@@ -367,6 +393,9 @@ def read_videos(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
     )
 
 
@@ -376,6 +405,9 @@ def read_snowflake(
     connection_parameters: Dict[str, Any],
     *,
     parallelism: int = -1,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Dict[str, Any] = None,
     concurrency: Optional[int] = None,
     override_num_blocks: Optional[int] = None,
@@ -403,6 +435,11 @@ def read_snowflake(
         connection_parameters: Keyword arguments to pass to
             ``snowflake.connector.connect``. To view supported parameters, read
             https://docs.snowflake.com/developer-guide/python-connector/python-connector-api#functions.
+        num_cpus: The number of CPUs to reserve for each parallel read worker.
+        num_gpus: The number of GPUs to reserve for each parallel read worker. For
+            example, specify `num_gpus=1` to request 1 GPU for each parallel read
+            worker.
+        memory: The heap memory in bytes to reserve for each parallel read worker.
 
     Returns:
         A ``Dataset`` containing the data from the Snowflake data set.
@@ -411,6 +448,9 @@ def read_snowflake(
         SnowflakeDatasource(sql, connection_parameters),
         parallelism=parallelism,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
         concurrency=concurrency,
         override_num_blocks=override_num_blocks,
     )
@@ -465,6 +505,9 @@ def read_avro(
     paths: Union[str, List[str]],
     *,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Optional[Dict[str, Any]] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
@@ -491,6 +534,9 @@ def read_avro(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
     )
 
 
@@ -500,6 +546,9 @@ def read_json(
     *,
     lines: bool = False,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Optional[Dict[str, Any]] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
@@ -561,6 +610,9 @@ def read_json(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
         file_chunker=file_chunker,
     )
 
@@ -606,6 +658,9 @@ def read_binary_files(
     *,
     include_paths: bool = False,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Dict[str, Any] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
@@ -633,6 +688,9 @@ def read_binary_files(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
     )
 
 
@@ -641,6 +699,9 @@ def read_images(
     paths: Union[str, List[str]],
     *,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Dict[str, Any] = None,
     arrow_open_file_args: Optional[Dict[str, Any]] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
@@ -671,6 +732,9 @@ def read_images(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
     )
 
 
@@ -681,6 +745,9 @@ def read_text(
     encoding: str = "utf-8",
     drop_empty_lines: bool = True,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Optional[Dict[str, Any]] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
@@ -711,6 +778,9 @@ def read_text(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
     )
 
 
@@ -719,6 +789,9 @@ def read_csv(
     paths: Union[str, List[str]],
     *,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Dict[str, Any] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
@@ -747,6 +820,9 @@ def read_csv(
         shuffle=shuffle,
         concurrency=concurrency,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
     )
 
 
@@ -762,12 +838,22 @@ def read_files(
     ignore_missing_paths: bool,
     file_extensions: Optional[List[str]],
     shuffle: Optional[Union[Literal["files"], FileShuffleConfig]],
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     concurrency: Optional[int],
     ray_remote_args: Optional[Dict[str, Any]],
     file_chunker: Optional[FileChunker] = None,
 ) -> Dataset:
     if ray_remote_args is None:
         ray_remote_args = {}
+
+    ray_remote_args = merge_resources_to_ray_remote_args(
+        num_cpus,
+        num_gpus,
+        memory,
+        ray_remote_args,
+    )
 
     current_ctx = DataContext.get_current().copy()
 
@@ -849,6 +935,9 @@ def read_delta(
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
     columns: Optional[List[str]] = None,
     parallelism: int = -1,
+    num_cpus: Optional[float] = None,
+    num_gpus: Optional[float] = None,
+    memory: Optional[float] = None,
     ray_remote_args: Dict[str, Any] = None,
     meta_provider: Optional[FileMetadataProvider] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
@@ -882,6 +971,11 @@ def read_delta(
         columns: A list of column names to read. Only the specified columns are
             read during the file scan.
         parallelism: This argument is deprecated. Use ``override_num_blocks`` argument.
+        num_cpus: The number of CPUs to reserve for each parallel read worker.
+        num_gpus: The number of GPUs to reserve for each parallel read worker. For
+            example, specify `num_gpus=1` to request 1 GPU for each parallel read
+            worker.
+        memory: The heap memory in bytes to reserve for each parallel read worker.
         ray_remote_args: kwargs passed to :meth:`~ray.remote` in the read tasks.
         meta_provider: A :ref:`file metadata provider <metadata_provider>`. Custom
             metadata providers may be able to resolve file metadata more quickly and/or
@@ -944,6 +1038,9 @@ def read_delta(
         columns=columns,
         parallelism=parallelism,
         ray_remote_args=ray_remote_args,
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        memory=memory,
         meta_provider=meta_provider,
         partition_filter=partition_filter,
         partitioning=partitioning,
