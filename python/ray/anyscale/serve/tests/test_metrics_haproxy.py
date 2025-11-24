@@ -17,8 +17,8 @@ Key differences from the default Serve proxy:
 import http
 import json
 import sys
-from typing import Dict, List, Optional
-
+from typing import Dict, Optional
+from ray.serve.tests.test_metrics import get_metric_dictionaries
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -160,51 +160,6 @@ def check_sum_metric_eq(
     return True
 
 
-def get_metric_dictionaries(name: str, timeout: float = 20) -> List[Dict]:
-    """Gets a list of metric's tags from metrics' text output.
-
-    Return:
-        Example::
-
-            [
-                {
-                    'Component': 'core_worker',
-                    'JobId': '01000000',
-                    ...
-                    'method': 'GET',
-                    'route': '/hello'
-                },
-                {
-                    'Component': 'core_worker',
-                    ...
-                    'method': 'GET',
-                    'route': '/hello/'
-                }
-            ]
-    """
-
-    def metric_available() -> bool:
-        metrics = httpx.get("http://127.0.0.1:9999", timeout=10).text
-        assert name in metrics
-        return True
-
-    wait_for_condition(metric_available, retry_interval_ms=1000, timeout=timeout)
-
-    metrics = httpx.get("http://127.0.0.1:9999").text
-    serve_metrics = [line for line in metrics.splitlines() if "ray_serve_" in line]
-    print("metrics", "\n".join(serve_metrics))
-
-    metric_dicts = []
-    for line in metrics.split("\n"):
-        if name + "{" in line:
-            dict_body_start, dict_body_end = line.find("{") + 1, line.rfind("}")
-            metric_dict_str = f"dict({line[dict_body_start:dict_body_end]})"
-            metric_dicts.append(eval(metric_dict_str))
-
-    print(metric_dicts)
-    return metric_dicts
-
-
 def test_serve_metrics_for_successful_connection(metrics_start_shutdown):
     @serve.deployment(name="metrics")
     async def f(request):
@@ -230,21 +185,21 @@ def test_serve_metrics_for_successful_connection(metrics_start_shutdown):
         # Any updates to here should be reflected there too.
         expected_metrics = [
             # counter
-            "serve_num_router_requests",
-            "serve_num_http_requests",
-            "serve_deployment_queued_queries",
-            "serve_deployment_request_counter",
-            "serve_deployment_replica_starts",
+            "ray_serve_num_router_requests",
+            "ray_serve_num_http_requests",
+            "ray_serve_deployment_queued_queries",
+            "ray_serve_deployment_request_counter",
+            "ray_serve_deployment_replica_starts",
             # histogram
-            "serve_deployment_processing_latency_ms_bucket",
-            "serve_deployment_processing_latency_ms_count",
-            "serve_deployment_processing_latency_ms_sum",
-            "serve_deployment_processing_latency_ms",
+            "ray_serve_deployment_processing_latency_ms_bucket",
+            "ray_serve_deployment_processing_latency_ms_count",
+            "ray_serve_deployment_processing_latency_ms_sum",
+            "ray_serve_deployment_processing_latency_ms",
             # gauge
-            "serve_replica_processing_queries",
-            "serve_deployment_replica_healthy",
+            "ray_serve_replica_processing_queries",
+            "ray_serve_deployment_replica_healthy",
             # handle
-            "serve_handle_request_counter",
+            "ray_serve_handle_request_counter",
         ]
 
         for metric in expected_metrics:
@@ -276,12 +231,12 @@ def test_http_replica_gauge_metrics(metrics_start_shutdown):
     _ = handle.remote()
 
     processing_requests = get_metric_dictionaries(
-        "serve_replica_processing_queries", timeout=5
+        "ray_serve_replica_processing_queries", timeout=5
     )
     assert len(processing_requests) == 1
     assert processing_requests[0]["deployment"] == "A"
     assert processing_requests[0]["application"] == "app1"
-    print("serve_replica_processing_queries exists.")
+    print("ray_serve_replica_processing_queries exists.")
 
     def ensure_request_processing():
         resp = httpx.get("http://127.0.0.1:9999").text
@@ -289,7 +244,7 @@ def test_http_replica_gauge_metrics(metrics_start_shutdown):
         for metrics in resp:
             if "# HELP" in metrics or "# TYPE" in metrics:
                 continue
-            if "serve_replica_processing_queries" in metrics:
+            if "ray_serve_replica_processing_queries" in metrics:
                 assert "1.0" in metrics
         return True
 
@@ -304,10 +259,10 @@ def test_proxy_metrics_not_found(metrics_start_shutdown):
     # https://docs.ray.io/en/latest/serve/monitoring.html#metrics
     # Any updates here should be reflected there too.
     expected_metrics = [
-        "serve_num_http_requests",
-        "serve_num_http_error_requests",
-        "serve_num_deployment_http_error_requests",
-        "serve_http_request_latency_ms",
+        "ray_serve_num_http_requests",
+        "ray_serve_num_http_error_requests_total",
+        "ray_serve_num_deployment_http_error_requests",
+        "ray_serve_http_request_latency_ms",
     ]
 
     app = FastAPI()
@@ -363,13 +318,13 @@ def test_proxy_metrics_not_found(metrics_start_shutdown):
             if "/-/healthz" in metrics:
                 continue
             if (
-                "serve_num_http_error_requests_total" in metrics
+                "ray_serve_num_http_error_requests_total" in metrics
                 and 'route="/A"' in metrics
             ):
                 # Accumulate error counts from route "/A"
                 http_error_count += int(float(metrics.split(" ")[-1]))
             elif (
-                "serve_num_deployment_http_error_requests_total" in metrics
+                "ray_serve_num_deployment_http_error_requests_total" in metrics
                 and 'route="/A"' in metrics
                 and 'error_code="404"' in metrics
             ):
@@ -402,10 +357,10 @@ def test_proxy_metrics_internal_error(metrics_start_shutdown):
     # https://docs.ray.io/en/latest/serve/monitoring.html#metrics
     # Any updates here should be reflected there too.
     expected_metrics = [
-        "serve_num_http_requests",
-        "serve_num_http_error_requests",
-        "serve_num_deployment_http_error_requests",
-        "serve_http_request_latency_ms",
+        "ray_serve_num_http_requests",
+        "ray_serve_num_http_error_requests_total",
+        "ray_serve_num_deployment_http_error_requests",
+        "ray_serve_http_request_latency_ms",
     ]
 
     def verify_metrics(_expected_metrics, do_assert=False):
@@ -453,13 +408,13 @@ def test_proxy_metrics_internal_error(metrics_start_shutdown):
         for metrics in resp:
             if "# HELP" in metrics or "# TYPE" in metrics:
                 continue
-            if "serve_num_http_error_requests" in metrics:
+            if "ray_serve_num_http_error_requests_total" in metrics:
                 # route "/" should have error count 2 (HTTP 500)
                 if do_assert:
                     assert "2.0" in metrics
                 if "2.0" not in metrics:
                     return False
-            elif "serve_num_deployment_http_error_requests" in metrics:
+            elif "ray_serve_num_deployment_http_error_requests" in metrics:
                 # deployment A should have error count 2 (HTTP 500)
                 if do_assert:
                     assert 'deployment="A"' in metrics and "2.0" in metrics
@@ -484,10 +439,10 @@ def test_proxy_metrics_fields_not_found(metrics_start_shutdown):
     # https://docs.ray.io/en/latest/serve/monitoring.html#metrics
     # Any updates here should be reflected there too.
     expected_metrics = [
-        "serve_num_http_requests",
-        "serve_num_http_error_requests",
-        "serve_num_deployment_http_error_requests",
-        "serve_http_request_latency_ms",
+        "ray_serve_num_http_requests",
+        "ray_serve_num_http_error_requests_total",
+        "ray_serve_num_deployment_http_error_requests",
+        "ray_serve_http_request_latency_ms",
     ]
 
     app = FastAPI()
@@ -543,13 +498,13 @@ def test_proxy_metrics_fields_not_found(metrics_start_shutdown):
             if "/-/healthz" in metrics:
                 continue
             if (
-                "serve_num_http_error_requests_total" in metrics
+                "ray_serve_num_http_error_requests_total" in metrics
                 and 'route="/test"' in metrics
             ):
                 # Accumulate error counts from route "/test"
                 http_error_count += int(float(metrics.split(" ")[-1]))
             elif (
-                "serve_num_deployment_http_error_requests_total" in metrics
+                "ray_serve_num_deployment_http_error_requests_total" in metrics
                 and 'route="/test"' in metrics
                 and 'error_code="404"' in metrics
             ):
@@ -602,7 +557,7 @@ def test_proxy_timeout_metrics(metrics_start_shutdown):
     assert r.status_code == 408
     ray.get(signal.send.remote(clear=True))
 
-    num_errors = get_metric_dictionaries("serve_num_http_error_requests")
+    num_errors = get_metric_dictionaries("ray_serve_num_http_error_requests_total")
     assert len(num_errors) == 1
     assert num_errors[0]["route"] == "/status_code_timeout"
     assert num_errors[0]["error_code"] == "408"
@@ -640,7 +595,7 @@ def test_proxy_disconnect_http_metrics(metrics_start_shutdown):
     conn.close()  # Forcefully close the connection
     ray.get(signal.send.remote(clear=True))
 
-    num_errors = get_metric_dictionaries("serve_num_http_error_requests")
+    num_errors = get_metric_dictionaries("ray_serve_num_http_error_requests_total")
     assert len(num_errors) == 1
     assert num_errors[0]["route"] == "/disconnect"
     assert num_errors[0]["error_code"] == "499"
@@ -666,16 +621,16 @@ def test_proxy_metrics_fields_internal_error(metrics_start_shutdown):
     print("Sent requests to correct URL.")
 
     num_deployment_errors = get_metric_dictionaries(
-        "serve_num_deployment_http_error_requests"
+        "ray_serve_num_deployment_http_error_requests_total"
     )
     assert len(num_deployment_errors) == 1
     assert num_deployment_errors[0]["deployment"] == "f"
     assert num_deployment_errors[0]["error_code"] == "500"
     assert num_deployment_errors[0]["method"] == "GET"
     assert num_deployment_errors[0]["application"] == "app"
-    print("serve_num_deployment_http_error_requests working as expected.")
+    print("ray_serve_num_deployment_http_error_requests working as expected.")
 
-    latency_metrics = get_metric_dictionaries("serve_http_request_latency_ms_sum")
+    latency_metrics = get_metric_dictionaries("ray_serve_http_request_latency_ms_sum")
     # Filter out health check metrics - HAProxy generates health checks to /-/healthz
     latency_metrics = [m for m in latency_metrics if m["route"] != "/-/healthz"]
     assert len(latency_metrics) == 1
@@ -683,7 +638,7 @@ def test_proxy_metrics_fields_internal_error(metrics_start_shutdown):
     assert latency_metrics[0]["route"] == "/real_route"
     assert latency_metrics[0]["application"] == "app"
     assert latency_metrics[0]["status_code"] == "500"
-    print("serve_http_request_latency_ms working as expected.")
+    print("ray_serve_http_request_latency_ms working as expected.")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Flaky on Windows")
@@ -781,16 +736,18 @@ def test_replica_metrics_fields(metrics_start_shutdown):
     url_f = get_application_url("HTTP", "app1")
     url_g = get_application_url("HTTP", "app2")
 
-    assert "hello" == httpx.get(url_f).text
-    assert "world" == httpx.get(url_g).text
+    assert "hello" == httpx.post(url_f).text
+    assert "world" == httpx.post(url_g).text
 
     wait_for_condition(
-        lambda: len(get_metric_dictionaries("serve_deployment_request_counter_total"))
+        lambda: len(
+            get_metric_dictionaries("ray_serve_deployment_request_counter_total")
+        )
         == 2,
         timeout=40,
     )
 
-    metrics = get_metric_dictionaries("serve_deployment_request_counter_total")
+    metrics = get_metric_dictionaries("ray_serve_deployment_request_counter_total")
     assert len(metrics) == 2
     expected_output = {
         ("/f", "f", "app1"),
@@ -805,7 +762,7 @@ def test_replica_metrics_fields(metrics_start_shutdown):
         for metric in metrics
     } == expected_output
 
-    start_metrics = get_metric_dictionaries("serve_deployment_replica_starts_total")
+    start_metrics = get_metric_dictionaries("ray_serve_deployment_replica_starts_total")
     assert len(start_metrics) == 2
     expected_output = {("f", "app1"), ("g", "app2")}
     assert {
@@ -816,14 +773,14 @@ def test_replica_metrics_fields(metrics_start_shutdown):
     # Latency metrics
     wait_for_condition(
         lambda: len(
-            get_metric_dictionaries("serve_deployment_processing_latency_ms_count")
+            get_metric_dictionaries("ray_serve_deployment_processing_latency_ms_count")
         )
         == 2,
         timeout=40,
     )
     for metric_name in [
-        "serve_deployment_processing_latency_ms_count",
-        "serve_deployment_processing_latency_ms_sum",
+        "ray_serve_deployment_processing_latency_ms_count",
+        "ray_serve_deployment_processing_latency_ms_sum",
     ]:
         latency_metrics = get_metric_dictionaries(metric_name)
         print(f"checking metric {metric_name}, {latency_metrics}")
@@ -835,9 +792,10 @@ def test_replica_metrics_fields(metrics_start_shutdown):
         } == expected_output
 
     wait_for_condition(
-        lambda: len(get_metric_dictionaries("serve_replica_processing_queries")) == 2
+        lambda: len(get_metric_dictionaries("ray_serve_replica_processing_queries"))
+        == 2
     )
-    processing_queries = get_metric_dictionaries("serve_replica_processing_queries")
+    processing_queries = get_metric_dictionaries("ray_serve_replica_processing_queries")
     expected_output = {("f", "app1"), ("g", "app2")}
     assert {
         (processing_query["deployment"], processing_query["application"])
@@ -852,11 +810,11 @@ def test_replica_metrics_fields(metrics_start_shutdown):
     url_h = get_application_url("HTTP", "app3")
     assert 500 == httpx.get(url_h).status_code
     wait_for_condition(
-        lambda: len(get_metric_dictionaries("serve_deployment_error_counter_total"))
+        lambda: len(get_metric_dictionaries("ray_serve_deployment_error_counter_total"))
         == 1,
         timeout=40,
     )
-    err_requests = get_metric_dictionaries("serve_deployment_error_counter_total")
+    err_requests = get_metric_dictionaries("ray_serve_deployment_error_counter_total")
     assert len(err_requests) == 1
     expected_output = ("/h", "h", "app3")
     assert (
@@ -866,9 +824,10 @@ def test_replica_metrics_fields(metrics_start_shutdown):
     ) == expected_output
 
     wait_for_condition(
-        lambda: len(get_metric_dictionaries("serve_deployment_replica_healthy")) == 3,
+        lambda: len(get_metric_dictionaries("ray_serve_deployment_replica_healthy"))
+        == 3,
     )
-    health_metrics = get_metric_dictionaries("serve_deployment_replica_healthy")
+    health_metrics = get_metric_dictionaries("ray_serve_deployment_replica_healthy")
     expected_output = {
         ("f", "app1"),
         ("g", "app2"),
@@ -900,11 +859,11 @@ def test_multiplexed_metrics(metrics_start_shutdown):
     # Trigger model eviction.
     handle.remote("model3")
     expected_metrics = [
-        "serve_multiplexed_model_load_latency_ms",
-        "serve_multiplexed_model_unload_latency_ms",
-        "serve_num_multiplexed_models",
-        "serve_multiplexed_models_load_counter",
-        "serve_multiplexed_models_unload_counter",
+        "ray_serve_multiplexed_model_load_latency_ms",
+        "ray_serve_multiplexed_model_unload_latency_ms",
+        "ray_serve_num_multiplexed_models",
+        "ray_serve_multiplexed_models_load_counter",
+        "ray_serve_multiplexed_models_unload_counter",
     ]
 
     def verify_metrics():
@@ -940,7 +899,7 @@ def test_long_poll_host_sends_counted(serve_instance):
     wait_for_condition(
         check_metric_float_eq,
         timeout=15,
-        metric="serve_long_poll_host_transmission_counter",
+        metric="ray_serve_long_poll_host_transmission_counter",
         expected=1,
         expected_tags={"namespace_or_state": "key_1"},
     )
@@ -957,14 +916,14 @@ def test_long_poll_host_sends_counted(serve_instance):
     wait_for_condition(
         check_metric_float_eq,
         timeout=15,
-        metric="serve_long_poll_host_transmission_counter",
+        metric="ray_serve_long_poll_host_transmission_counter",
         expected=1,
         expected_tags={"namespace_or_state": "key_2"},
     )
     wait_for_condition(
         check_metric_float_eq,
         timeout=15,
-        metric="serve_long_poll_host_transmission_counter",
+        metric="ray_serve_long_poll_host_transmission_counter",
         expected=2,
         expected_tags={"namespace_or_state": "key_1"},
     )
@@ -975,7 +934,7 @@ def test_long_poll_host_sends_counted(serve_instance):
     wait_for_condition(
         check_metric_float_eq,
         timeout=15,
-        metric="serve_long_poll_host_transmission_counter",
+        metric="ray_serve_long_poll_host_transmission_counter",
         expected=1,
         expected_tags={"namespace_or_state": "TIMEOUT"},
     )
