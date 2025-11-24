@@ -111,14 +111,18 @@ class TestProjectionPushdownTopoSort:
     def _create_project_chain(self, input_op, expressions_list: List[Dict[str, str]]):
         """Create a chain of Project operators from expression descriptions."""
         current_op = input_op
+        # Track all columns seen so far (start with 'id' from input)
+        all_columns = {"id"}
 
         for expr_dict in expressions_list:
-            exprs = {
-                name: self._parse_expression(desc) for name, desc in expr_dict.items()
-            }
-            current_op = Project(
-                current_op, cols=None, cols_rename=None, exprs=exprs, ray_remote_args={}
-            )
+            # Include all previously seen columns to preserve them
+            exprs = [col(name) for name in sorted(all_columns)] + [
+                self._parse_expression(desc).alias(name)
+                for name, desc in expr_dict.items()
+            ]
+            current_op = Project(current_op, exprs=exprs, ray_remote_args={})
+            # Add new column names to tracking set
+            all_columns.update(expr_dict.keys())
 
         return current_op
 
@@ -129,7 +133,11 @@ class TestProjectionPushdownTopoSort:
 
         while isinstance(current, Project):
             if current.exprs:
-                levels.append(set(current.exprs.keys()))
+                # Extract names from list of expressions
+                expr_names = {
+                    expr.name for expr in current.exprs if expr.name is not None
+                }
+                levels.append(expr_names)
             current = current.input_dependency
 
         return list(reversed(levels))  # Return bottom-up order
@@ -603,7 +611,7 @@ class TestProjectionPushdownTopoSort:
         assert self._count_project_operators(optimized_plan) == 1
         assert (
             self._describe_plan_structure(optimized_plan)
-            == "Project(3 exprs) -> FromItems"  # Changed from multiple operators
+            == "Project(4 exprs) -> FromItems"  # 4 exprs: id + 3 new columns
         )
 
         # Verify execution correctness
@@ -665,11 +673,11 @@ class TestProjectionPushdownTopoSort:
         )  # Changed from 3 to 1
         assert (
             self._describe_plan_structure(optimized_independent)
-            == "Project(3 exprs) -> FromItems"
+            == "Project(4 exprs) -> FromItems"  # 4 exprs: id + 3 new columns
         )
         assert (
             self._describe_plan_structure(optimized_chained)
-            == "Project(3 exprs) -> FromItems"  # Changed from multiple operators
+            == "Project(4 exprs) -> FromItems"  # 4 exprs: id + 3 new columns
         )
 
 

@@ -1,5 +1,5 @@
 import abc
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Iterable
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -29,23 +29,24 @@ class FileReader(
     def __init__(self):
         """Initialize the datasource and its mixins."""
         _DatasourcePredicatePushdownMixin.__init__(self)
+        _DatasourceProjectionPushdownMixin.__init__(self)
 
     @abc.abstractmethod
     def read_files(
         self,
         file_manifest: FileManifest,
         *,
-        columns: Optional[List[str]],
-        columns_rename: Optional[Dict[str, str]],
         filesystem: "pyarrow.fs.FileSystem",
     ) -> Iterable[DataBatch]:
         """Read batches of data from the given file paths.
 
+        The reader should use its stored projection and predicate state
+        (from apply_projection/apply_predicate calls) to determine what
+        columns to read and how to filter the data.
+
         Args:
             file_manifest: A manifest containing the paths and on-disk sizes of the
                 files.
-            columns: The columns that will be read. If None, all columns will be read.
-            columns_rename: Mapping to rename columns.
             filesystem: The filesystem to read from.
 
         Returns:

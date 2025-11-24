@@ -38,8 +38,13 @@ class NativeFileReader(FileReader):
         partitioning: Optional[Partitioning] = None,
         open_args: Optional[Dict[str, Any]] = None,
     ):
+        super().__init__()
+
         if open_args is None:
             open_args = {}
+
+        # Initialize projection map for mixin (None = all columns, no renames)
+        self._projection_map: Optional[Dict[str, str]] = None
 
         self._include_paths = include_paths
         self._partitioning = partitioning
@@ -63,10 +68,12 @@ class NativeFileReader(FileReader):
         self,
         file_manifest: FileManifest,
         *,
-        columns: Optional[List[str]] = None,
-        columns_rename: Optional[Dict[str, str]] = None,
         filesystem: "pyarrow.fs.FileSystem",
     ) -> Iterable[DataBatch]:
+        # Get columns and column renames from stored projection state (OSS pattern)
+        columns = self._get_data_columns()
+        columns_rename = self.get_column_renames()
+
         paths = file_manifest.paths
         file_chunk_metadatas = file_manifest.file_chunk_metadatas
         num_threads = self._NUM_THREADS_PER_TASK

@@ -3,6 +3,7 @@ import logging
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -14,6 +15,9 @@ from typing import (
     Tuple,
 )
 
+if TYPE_CHECKING:
+    from ray.data.expressions import Expr
+
 import numpy as np
 import pyarrow
 import pyarrow as pa
@@ -21,7 +25,6 @@ import pyarrow.dataset
 from packaging.version import parse as parse_version
 
 from ray._private.arrow_utils import get_pyarrow_version
-from ray.data.expressions import Expr
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
@@ -36,6 +39,7 @@ from ray.data._internal.datasource.parquet_datasource import (
     get_parquet_dataset,
     _read_batches_from,
     _get_partition_columns_schema,
+    _split_predicate_by_columns,
 )
 from ray.data._internal.util import (
     call_with_retry,
@@ -207,6 +211,9 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         """
         super().__init__()
 
+        # Initialize projection map for mixin (None = all columns, no renames)
+        self._projection_map: Optional[Dict[str, str]] = None
+
         # Override default `batch_readahead` value to reduce amount of data prefetched
         # by Pyarrow's Parquet reader
         if get_pyarrow_version() >= _MIN_PYARROW_VERSION_TO_BATCHES_READAHEAD:
@@ -239,20 +246,100 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         self._retried_io_errors = ctx.retried_io_errors
         self._sampled_batch_size = None
 
+        # Track partition columns (like OSS ParquetDatasource does)
+        # Will be set during first read when we have fragments
+        self._partition_columns: List[str] = []
+
+        # Store partition predicate separately for partition pruning
+        # This is set in apply_predicate() after splitting the predicate
+        self._partition_predicate: Optional["Expr"] = None
+
+    def _split_and_store_predicate(self):
+        """Split the stored predicate into data and partition predicates.
+
+        This method should be called after partition columns are discovered.
+        It splits the predicate and stores both parts separately.
+        """
+        if (
+            self._predicate_expr is not None
+            and self._partition_predicate is None
+            and self._partition_columns
+        ):
+            split_result = _split_predicate_by_columns(
+                self._predicate_expr, set(self._partition_columns)
+            )
+
+            self._predicate_expr = split_result.data_predicate
+            self._partition_predicate = split_result.partition_predicate
+
+    def apply_predicate(self, predicate_expr: "Expr") -> "ParquetReader":
+        """Apply a predicate, splitting it into data and partition predicates.
+
+        This override splits the predicate early (when partition columns are known)
+        and stores the partition predicate separately for later fragment pruning.
+
+        Note: We can only split if partition columns are already known. If not,
+        we store the full predicate and split it later in read_files().
+        """
+        # Use parent mixin to combine predicates
+        clone = super().apply_predicate(predicate_expr)
+
+        # Split predicate if partition columns are known
+        if clone._partition_columns and clone._partitioning:
+            clone._split_and_store_predicate()
+
+        return clone
+
+    def _ensure_partition_columns_initialized(
+        self, fragments: List[pyarrow.dataset.ParquetFileFragment]
+    ) -> None:
+        """Initialize _partition_columns if not already set (lazy initialization).
+
+        This is needed because we don't have fragments at __init__ time,
+        only during read_files().
+        """
+        if self._partition_columns or not self._partitioning or not fragments:
+            return
+
+        # Initialize partition columns from first fragment (like OSS does at init time)
+        parse = PathPartitionParser(self._partitioning)
+        parsed_partitions = parse(fragments[0].path)
+        if parsed_partitions:
+            self._partition_columns = list(parsed_partitions.keys())
+
+            # If we have a stored predicate that hasn't been split yet, split it now
+            self._split_and_store_predicate()
+
+    def _get_data_columns(self) -> Optional[List[str]]:
+        """Extract data columns from projection map, excluding partition columns.
+
+        Delegates to OSS ParquetDatasource implementation.
+        """
+        # Import OSS implementation
+        from ray.data._internal.datasource.parquet_datasource import ParquetDatasource
+
+        # Use OSS logic - it handles partition column filtering
+        return ParquetDatasource._get_data_columns(self)
+
+    def _get_partition_columns(self) -> Optional[List[str]]:
+        """Extract partition columns from projection map.
+
+        Delegates to OSS ParquetDatasource implementation.
+        """
+        # Import OSS implementation
+        from ray.data._internal.datasource.parquet_datasource import ParquetDatasource
+
+        # Use OSS logic - identical implementation
+        return ParquetDatasource._get_partition_columns(self)
+
     def read_files(
         self,
         file_manifest: FileManifest,
         *,
-        columns: Optional[List[str]] = None,
-        columns_rename: Optional[Dict[str, str]] = None,
         filesystem: pyarrow.fs.FileSystem,
     ) -> Iterable[DataBatch]:
-        if columns and columns_rename:
-            assert set(columns_rename.keys()).issubset(columns), (
-                f"All column rename keys must be a subset of the columns list. "
-                f"Invalid keys: {set(columns_rename.keys()) - set(columns)}"
-            )
-
+        # Get column renames from stored projection state (OSS pattern)
+        columns_rename = self.get_column_renames()
         generated_id_column = self._generated_id_column
 
         paths = list(file_manifest.paths)
@@ -274,31 +361,39 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         if len(fragments) == 0:
             return
 
+        # Initialize partition columns if needed (lazy init since we need fragments)
+        self._ensure_partition_columns_initialized(fragments)
+
         self._validate_generated_id_column(
             generated_id_column,
             fragments=fragments,
             columns_rename=columns_rename,
         )
 
-        # Users can pass both data columns and partition columns in the 'columns'
-        # argument. To prevent PyArrow from complaining about missing columns, we
-        # separate the partition columns from the data columns. When we read the
-        # fragments, we pass the data columns to PyArrow and add the partition
-        # columns manually.
-        data_columns = None
-        partition_columns = None
-        if columns is not None:
-            data_columns = [
-                column
-                for column in columns
-                if column in fragments[0].physical_schema.names
-            ]
-            if self._partitioning is not None:
-                parse = PathPartitionParser(self._partitioning)
-                partitions = parse(fragments[0].path)
-                partition_columns = [
-                    column for column in columns if column in partitions
-                ]
+        # Apply partition pruning if we have a partition predicate
+        if self._partition_predicate is not None and self._partitioning:
+            from ray.data.datasource.partitioning import PathPartitionParser
+
+            parser = PathPartitionParser(self._partitioning)
+            pruned_fragments = []
+
+            for fragment in fragments:
+                # Evaluate partition predicate on this fragment's path
+                if parser.evaluate_predicate_on_partition(
+                    fragment.path, self._partition_predicate
+                ):
+                    pruned_fragments.append(fragment)
+
+            fragments = pruned_fragments
+
+        # Use OSS methods to get data and partition columns from projection state
+        data_columns = self._get_data_columns()
+        partition_columns = self._get_partition_columns()
+
+        # When partition_columns is None (no projection), resolve to actual partition column names
+        # This is needed for _read_batches_from to add partition columns to the data
+        if partition_columns is None and self._partition_columns:
+            partition_columns = self._partition_columns
 
         num_threads = self._get_num_threads(fragments)
         if num_threads > 0:
@@ -306,7 +401,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 iter(fragments),
                 functools.partial(
                     self._read_fragments,
-                    predicate_expr=self._predicate_expr,
                     schema=self._schema,
                     data_columns=data_columns,
                     partition_columns=partition_columns,
@@ -323,7 +417,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         else:
             yield from self._read_fragments(
                 fragments,
-                predicate_expr=self._predicate_expr,
                 schema=self._schema,
                 data_columns=data_columns,
                 partition_columns=partition_columns,
@@ -547,7 +640,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     def _read_fragments(
         self,
         fragments: List[pyarrow.dataset.ParquetFileFragment],
-        predicate_expr: Optional["Expr"],
         schema: pyarrow.Schema,
         data_columns: Optional[List[str]] = None,
         partition_columns: Optional[List[str]] = None,
@@ -565,7 +657,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 schema=schema,
                 data_columns=data_columns,
                 partition_columns=partition_columns,
-                predicate_expr=predicate_expr,
                 columns_rename_map=columns_rename,
                 generated_id_column=generated_id_column,
                 checkpoint_file_fragment=checkpoint_file_fragment,
@@ -656,7 +747,6 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         schema: pyarrow.Schema,
         data_columns: Optional[List[str]],
         partition_columns: Optional[List[str]],
-        predicate_expr: Optional["Expr"] = None,
         columns_rename_map: Optional[Dict[str, str]] = None,
         checkpoint_file_fragment: Optional[pa.StructScalar] = None,
         generated_id_column: Optional[str],
@@ -695,11 +785,16 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             batch_size = self._sampled_batch_size
         else:
             # Get column indices for projected columns
-            target_column_indices = (
-                [fragment.physical_schema.get_field_index(col) for col in data_columns]
-                if data_columns is not None
-                else list(range(len(fragment.physical_schema)))
-            )
+            # Note: Filter out columns not in physical schema (e.g., partition columns)
+            if data_columns is not None:
+                target_column_indices = []
+                for col in data_columns:
+                    idx = fragment.physical_schema.get_field_index(col)
+                    # Only include if column exists in physical schema (not a partition column)
+                    if idx >= 0:
+                        target_column_indices.append(idx)
+            else:
+                target_column_indices = list(range(len(fragment.physical_schema)))
 
             # Estimate batch size from first row group stats
             # TODO replace w/ PDS estimation
@@ -708,11 +803,12 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
         # Track the current row offset for the row IDs
         current_row_offset: int = 0
 
-        if predicate_expr is not None:
-            filter_expr = predicate_expr.to_pyarrow()
-        else:
-            filter_expr = None
-
+        # Extract data predicate for PyArrow pushdown
+        # At this point, _predicate_expr contains only the data predicate
+        # (partition predicate was already split out in apply_predicate or _ensure_partition_columns_initialized)
+        filter_expr = None
+        if self._predicate_expr is not None:
+            filter_expr = self._predicate_expr.to_pyarrow()
         # S3 can raise transient errors during iteration, and PyArrow doesn't expose a
         # way to retry specific batches.
         for table in iterate_with_retry(
@@ -727,7 +823,7 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                 batch_size=batch_size,
                 include_path=self._include_paths,
                 use_threads=True,
-                to_batches_kwargs=self._to_batches_kwargs,
+                to_batches_kwargs=self._to_batches_kwargs.copy(),
             ),
             "ParquetReader read batches",
             match=self._retried_io_errors,

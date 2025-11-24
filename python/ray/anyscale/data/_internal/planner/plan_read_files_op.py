@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Iterable, List, Optional
+from typing import Iterable, List
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
@@ -32,21 +32,23 @@ def plan_read_files_op(
     #
     # NOTE: Avoid capturing operators in closures!
     #
-    columns: Optional[List[str]] = op.columns
-    columns_rename_map: Optional[Dict[str, str]] = op.columns_rename
-
     fs = op.filesystem
     reader = op.reader
-    reader._predicate_expr = op.predicate_expr
+
+    # Apply pushdowns to reader using OSS pattern (instead of direct assignment)
+    if op.predicate_expr is not None:
+        reader = reader.apply_predicate(op.predicate_expr)
+
+    if op.columns is not None or op.columns_rename is not None:
+        projection_map = op.get_projection_map()
+        reader = reader.apply_projection(projection_map)
 
     def read_files(blocks: Iterable[Block], ctx: TaskContext) -> Iterable[DataBatch]:
         for block in blocks:
             file_manifest = FileManifest(block)
-            # For some readers, we need to filter the rows in-memory.
+            # Reader now has state from apply_projection/apply_predicate
             yield from reader.read_files(
                 file_manifest,
-                columns=columns,
-                columns_rename=columns_rename_map,
                 filesystem=fs,
             )
 

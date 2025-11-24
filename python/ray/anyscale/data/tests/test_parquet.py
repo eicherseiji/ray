@@ -24,7 +24,7 @@ from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_FILE_FRAGMENTS_TYPE,
     CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
 )
-
+from ray._private.arrow_utils import get_pyarrow_version
 from packaging.version import parse as parse_version
 import ray
 from ray.data.tests.conftest import *  # noqa
@@ -325,19 +325,28 @@ def test_read_parquet_produces_target_size_blocks(
     ), actual_block_sizes
 
 
+@pytest.mark.skipif(
+    get_pyarrow_version() < parse_version("14.0.0"),
+    reason="Partition predicate evaluation requires pyarrow >= 14.0.0",
+)
 @pytest.mark.parametrize(
     "filter_expr, expected_row_count, expect_error, expected_error_message",
     [
-        # Valid filter expression
+        # Valid filter expression on data columns
         ("column03 == 0 and column04 == 0", 1, False, None),
-        # Invalid filter expression (referencing partition columns which are in schema)
+        # Partition-only filters now work with file-level pruning:
+        # 1. The predicate is split to identify partition-only predicates
+        # 2. Partition predicates are used for file-level pruning (like OSS)
+        # 3. No filter is sent to PyArrow (correct - partition columns don't exist in files)
+        # 4. Only matching partition files are read
+        # Note: Hive partition columns are strings, so use string literals in the filter
         (
-            "column01 == 0 and column02 == 0",
+            "column01 == '0' and column02 == '0'",
+            10,  # Only rows from matching partition (column01=0/column02=0/)
+            False,
             None,
-            True,
-            "RuntimeError: Filter expression: '((column01 == 0) and (column02 == 0))' failed on parquet file: '<parquet_file>' with columns: {'column03', 'column04'}",  # noqa: E501
         ),
-        # Invalid filter expression (referencing non-partition column)
+        # Invalid filter expression (referencing non-existent column)
         (
             "non_existing_column == 0",
             None,
@@ -354,8 +363,14 @@ def test_read_parquet_filter_expr_partition_columns(
     expect_error,
     expected_error_message,
 ):
-    """Verify handling of valid and invalid filter expressions on partitioned
-    columns.
+    """Verify handling of filter expressions on partitioned datasets.
+
+    Tests that:
+    - Data column filters work correctly with PyArrow pushdown
+    - Partition column filters work correctly with file-level pruning
+    - Invalid column filters raise appropriate errors
+
+    Note: Hive partition columns are strings, so filters must use string literals.
     """
 
     num_partitions = 10
@@ -529,8 +544,6 @@ def test_read_parquet_batching(ray_start_regular_shared, tmp_path, test_case):
     tables = list(
         reader.read_files(
             file_manifest,
-            columns=None,
-            columns_rename=None,
             filesystem=pa.fs.LocalFileSystem(),
         )
     )
@@ -1190,10 +1203,14 @@ def test_chunked_reading_with_column_selection(
         [None] * len(chunks),
     )
 
+    # Apply projection if columns are specified (OSS pattern)
+    if columns is not None:
+        projection_map = {col: col for col in columns}
+        reader = reader.apply_projection(projection_map)
+
     tables = list(
         reader.read_files(
             file_manifest,
-            columns=columns,
             filesystem=pa.fs.LocalFileSystem(),
         )
     )
