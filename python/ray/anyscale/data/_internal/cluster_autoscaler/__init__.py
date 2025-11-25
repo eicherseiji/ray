@@ -1,10 +1,10 @@
 from .legacy_rayturbo_cluster_autoscaler import LegacyRayTurboClusterAutoscaler
-from .productivity_calculator import (
-    NormalizedThroughputCalculator,
+from .bottleneck_detector import (
+    BottleneckDetector,
+    NormalizedThroughputBottleneckDetector,
 )
 from .rate_based_cluster_autoscaler import (
     NodeType,
-    ProductivityCalculator,
     RateBasedClusterAutoscaler,
 )
 from .supports_cluster_autoscaling import (
@@ -16,8 +16,8 @@ __all__ = [
     "NodeType",
     "LegacyRayTurboClusterAutoscaler",
     "RateBasedClusterAutoscaler",
-    "ProductivityCalculator",
-    "NormalizedThroughputCalculator",
+    "BottleneckDetector",
+    "NormalizedThroughputBottleneckDetector",
     "SupportsClusterAutoscaling",
     "ClusterAutoscalingMetrics",
 ]

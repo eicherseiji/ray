@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, List, Optional, Dict
 
 import numpy as np
 from numpy.typing import NDArray
+from ray.util.metrics import Gauge
 
 from .supports_cluster_autoscaling import SupportsClusterAutoscaling
 from ray.data._internal.execution.interfaces import ExecutionResources
@@ -13,29 +14,27 @@ if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
 
 
-class ProductivityCalculator(abc.ABC):
-    """Base class for determining how "productive" an operator is."""
+class BottleneckDetector(abc.ABC):
+    """Base class for detecting the bottleneck operator in a pipeline."""
 
     @abc.abstractmethod
-    def get_productivities(
+    def get_bottleneck(
         self, ops: List[SupportsClusterAutoscaling]
-    ) -> Dict[SupportsClusterAutoscaling, Optional[float]]:
-        """Calculate the productivities of the given operators.
+    ) -> Optional[SupportsClusterAutoscaling]:
+        """Identify the bottleneck operator in the pipeline.
 
-        Productivity can be computed in different ways. The only requirement is
-        that the bottleneck operator is the one with the lowest productivity.
+        The bottleneck operator is the one that limits overall pipeline throughput.
 
         Args:
-            ops: The operators to calculate the productivities of.
+            ops: The operators to analyze.
 
         Returns:
-            A dictionary mapping operators to their productivities, or `None` if
-            productivity isn't defined for that operator.
+            The bottleneck operator, or `None` if no bottleneck can be identified.
         """
         ...
 
 
-class NormalizedThroughputCalculator(ProductivityCalculator):
+class NormalizedThroughputBottleneckDetector(BottleneckDetector):
     """Calculate the productivity of an operator using a normalized throughput score.
 
     Each operator launches tasks that produce outputs at a steady rate and consume
@@ -55,12 +54,18 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
       (averages dominate, quantization effects are negligible).
     """
 
-    def __init__(self, resource_manager: "ResourceManager"):
+    def __init__(self, resource_manager: "ResourceManager", requester_id: str):
         self._resource_manager = resource_manager
+        self._requester_id = requester_id
+        self._productivity_gauge = Gauge(
+            "data_productivity",
+            "Productivity per operator",
+            tag_keys=("requester", "operator"),
+        )
 
-    def get_productivities(
+    def get_bottleneck(
         self, ops: List[SupportsClusterAutoscaling]
-    ) -> Dict[SupportsClusterAutoscaling, Optional[float]]:
+    ) -> Optional[SupportsClusterAutoscaling]:
         assert all(isinstance(op, SupportsClusterAutoscaling) for op in ops)
 
         # Calculate the throughput-balanced processor resource allocation assuming a
@@ -75,7 +80,26 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
             f"Must return producitivites for all specified operators, but the "
             f"following operators are missing: {set(ops) - set(productivities)}."
         )
-        return productivities
+
+        # Filter out operators with undefined productivity.
+        defined_productivities = {
+            op: productivity
+            for op, productivity in productivities.items()
+            if productivity is not None
+        }
+
+        # Emit Prometheus metrics for all operators with defined productivity.
+        for op, score in defined_productivities.items():
+            self._productivity_gauge.set(
+                score,
+                tags={"requester": self._requester_id, "operator": repr(op)},
+            )
+
+        # Return the bottleneck operator (the one with lowest productivity).
+        if not defined_productivities:
+            return None
+
+        return min(defined_productivities, key=defined_productivities.get)
 
     def _compute_max_normalized_output_rate(
         self, op: SupportsClusterAutoscaling, allocation: Optional[ExecutionResources]

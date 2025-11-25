@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import List, Optional
 from unittest.mock import MagicMock
 
 import logging
@@ -9,11 +9,11 @@ from ray.anyscale.air._internal.autoscaling_coordinator import (
     FakeAutoscalingCoordinator,
 )
 from ray.anyscale.data._internal.cluster_autoscaler import (
+    BottleneckDetector,
     ClusterAutoscalingMetrics,
     LegacyRayTurboClusterAutoscaler,
     NodeType,
-    NormalizedThroughputCalculator,
-    ProductivityCalculator,
+    NormalizedThroughputBottleneckDetector,
     RateBasedClusterAutoscaler,
     SupportsClusterAutoscaling,
 )
@@ -28,16 +28,16 @@ from ray.data._internal.execution.resource_manager import ResourceManager
 from ray.data.tests.conftest import propagate_logs  # noqa
 
 
-class StubProductivityCalculator(ProductivityCalculator):
+class StubBottleneckDetector(BottleneckDetector):
     """A stub implementation for testing."""
 
-    def __init__(self, productivities: Dict[SupportsClusterAutoscaling, float]):
-        self._productivities = productivities
+    def __init__(self, bottleneck: Optional[SupportsClusterAutoscaling] = None):
+        self._bottleneck = bottleneck
 
-    def get_productivities(
+    def get_bottleneck(
         self, ops: List[SupportsClusterAutoscaling]
-    ) -> Dict[SupportsClusterAutoscaling, Optional[float]]:
-        return {op: self._productivities.get(op) for op in ops}
+    ) -> Optional[SupportsClusterAutoscaling]:
+        return self._bottleneck
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,7 @@ def test_autoscaler_doubles_nodes_for_bottleneck_op():
     autoscaler = RateBasedClusterAutoscaler(
         ops=[cpu_op, gpu_op],
         execution_id="test",
-        productivity_calculator=StubProductivityCalculator({cpu_op: 1, gpu_op: 0}),
+        bottleneck_detector=StubBottleneckDetector(bottleneck=gpu_op),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
         get_node_counts=lambda: {cpu_node_type: 1, gpu_node_type: 1},
         min_gap_between_autoscaling_requests_s=0,
@@ -122,7 +122,7 @@ def test_autoscaler_logs_warning_if_no_valid_node_types(
     autoscaler = RateBasedClusterAutoscaler(
         ops=[gpu_op],
         execution_id="test",
-        productivity_calculator=StubProductivityCalculator({gpu_op: 0}),
+        bottleneck_detector=StubBottleneckDetector(gpu_op),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
         get_node_counts=lambda: {cpu_node_type: 1},
         min_gap_between_autoscaling_requests_s=0,
@@ -149,7 +149,7 @@ def test_autoscaler_requests_resources_if_no_scalable_ops():
     autoscaler = RateBasedClusterAutoscaler(
         ops=[],
         execution_id="test",
-        productivity_calculator=StubProductivityCalculator({}),
+        bottleneck_detector=StubBottleneckDetector(bottleneck=None),
         autoscaling_coordinator=FakeAutoscalingCoordinator(
             get_time=lambda: time, remaining=[{"CPU": 1}]
         ),
@@ -182,27 +182,31 @@ class StubResourceManager:
         return self.global_limits
 
 
-class TestNormalizedThroughputCalculator:
-    def test_get_productivities_completed_operator(self):
+class TestNormalizedThroughputBottleneckDetector:
+    def test_get_bottleneck_completed_operator(self):
         op = StubClusterAutoscalingOperator(_completed=True)
-        calculator = NormalizedThroughputCalculator(StubResourceManager())
+        detector = NormalizedThroughputBottleneckDetector(
+            StubResourceManager(), "test-requester"
+        )
 
-        productivities = calculator.get_productivities([op])
+        bottleneck = detector.get_bottleneck([op])
 
-        assert productivities == {op: None}
+        assert bottleneck is None
 
-    def test_get_productivities_inf_global_limits(self):
+    def test_get_bottleneck_inf_global_limits(self):
         op = StubClusterAutoscalingOperator()
         resource_manager = StubResourceManager(
             global_limits=ExecutionResources.for_limits()
         )
-        calculator = NormalizedThroughputCalculator(resource_manager)
+        detector = NormalizedThroughputBottleneckDetector(
+            resource_manager, "test-requester"
+        )
 
-        productivities = calculator.get_productivities([op])
+        bottleneck = detector.get_bottleneck([op])
 
-        assert productivities == {op: None}
+        assert bottleneck is None
 
-    def test_get_productivities_zero_global_limits(self):
+    def test_get_bottleneck_zero_global_limits(self):
         op = StubClusterAutoscalingOperator(
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
@@ -210,13 +214,15 @@ class TestNormalizedThroughputCalculator:
             ),
         )
         resource_manager = StubResourceManager(global_limits=ExecutionResources.zero())
-        calculator = NormalizedThroughputCalculator(resource_manager)
+        detector = NormalizedThroughputBottleneckDetector(
+            resource_manager, "test-requester"
+        )
 
-        productivities = calculator.get_productivities([op])
+        bottleneck = detector.get_bottleneck([op])
 
-        assert productivities == {op: None}
+        assert bottleneck is None
 
-    def test_get_productivities_single_operator(self):
+    def test_get_bottleneck_single_operator(self):
         op = StubClusterAutoscalingOperator(
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
@@ -224,15 +230,17 @@ class TestNormalizedThroughputCalculator:
             ),
         )
         resource_manager = StubResourceManager(global_limits=ExecutionResources(cpu=2))
-        calculator = NormalizedThroughputCalculator(resource_manager)
+        detector = NormalizedThroughputBottleneckDetector(
+            resource_manager, "test-requester"
+        )
 
-        productivities = calculator.get_productivities([op])
+        bottleneck = detector.get_bottleneck([op])
 
-        # The operator uses 1 CPU per task, and the global limits are 2 CPUs. So, the
-        # operator can launch 2 tasks producing a total of 2 outputs per second.
-        assert productivities == {op: 2}
+        # With a single operator, that operator is the bottleneck.
+        assert bottleneck == op
 
-    def test_get_productivities_with_downstream_operator(self):
+    def test_get_bottleneck_identifies_slower_operator(self):
+        # op2 is fast (produces 12 blocks/s per task)
         op2 = StubClusterAutoscalingOperator(
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
@@ -241,24 +249,23 @@ class TestNormalizedThroughputCalculator:
                 num_output_blocks_per_task_s=12,
             ),
         )
+        # op1 is slower (produces 2 blocks/s per task, which become 6 sink outputs/s)
         op1 = StubClusterAutoscalingOperator(
             output_dependencies=[op2],
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
-                num_output_blocks_per_task_s=4,
+                num_output_blocks_per_task_s=2,
             ),
         )
         resource_manager = StubResourceManager(global_limits=ExecutionResources(cpu=2))
-        calculator = NormalizedThroughputCalculator(resource_manager)
+        detector = NormalizedThroughputBottleneckDetector(
+            resource_manager, "test-requester"
+        )
 
-        productivities = calculator.get_productivities([op1, op2])
+        bottleneck = detector.get_bottleneck([op1, op2])
 
-        # Each op1 output is worth 6 / 2 = 3 op2 outputs. So, op1 produces 4 * 3 = 12
-        # op2 outputs per second. op2 produces 12 outputs per second. Since there are
-        # 2 CPUs available, if op1 launches 1 tasks and op2 launches 1 task, each
-        # operator can produce 12 outputs per second and the pipeline will be optimally
-        # balanced.
-        assert productivities == {op1: 12, op2: 12}, productivities
+        # op1 is the bottleneck because it's slower
+        assert bottleneck == op1
 
 
 def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):

@@ -5,9 +5,9 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set
 
 import ray
-from .productivity_calculator import (
-    NormalizedThroughputCalculator,
-    ProductivityCalculator,
+from .bottleneck_detector import (
+    NormalizedThroughputBottleneckDetector,
+    BottleneckDetector,
 )
 from .supports_cluster_autoscaling import SupportsClusterAutoscaling
 from ray._private.ray_constants import env_float, env_integer
@@ -26,7 +26,6 @@ from ray.data._internal.execution.operators.base_physical_operator import (
 from ray.data._internal.execution.operators.hash_shuffle import (
     HashShufflingOperatorBase,
 )
-from ray.util.metrics import Gauge
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
@@ -88,8 +87,8 @@ def _get_node_types_and_counts() -> Dict[NodeType, int]:
 class RateBasedClusterAutoscaler(ClusterAutoscaler):
     """Autoscaler that only scales up the bottleneck operator.
 
-    This autoscaler calculates a productivity score for each operator using the provided
-    `ProductivityCalculator`. It then doubles the count of all node types that can
+    This autoscaler identifies the bottleneck operator using the provided
+    `BottleneckDetector`. It then doubles the count of all node types that can
     schedule the bottleneck operator.
 
     This autoscaler only scales up the cluster. It relies on idle termination to scale
@@ -111,7 +110,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         self,
         ops: List[SupportsClusterAutoscaling],
         execution_id: str,
-        productivity_calculator: ProductivityCalculator,
+        bottleneck_detector: BottleneckDetector,
         *,
         autoscaling_coordinator: Optional["AutoscalingCoordinator"] = None,
         get_node_counts: Callable[[], Dict[NodeType, int]] = _get_node_types_and_counts,
@@ -125,8 +124,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             ops: The operators to autoscale.
             execution_id: The execution ID of the dataset. This is used to identify the
                 dataset when requesting resources.
-            productivity_calculator: The calculator to compute the productivity of the
-                operators.
+            bottleneck_detector: The detector to identify the bottleneck operator.
             autoscaling_coordinator: The `AutoscalingCoordinator` to request resources
                 from. This is exposed as a seam for testing. If not provided, this uses
                 the default coordinator.
@@ -145,7 +143,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         self._ops = ops
         self._execution_id = execution_id
-        self._productivity_calculator = productivity_calculator
+        self._bottleneck_detector = bottleneck_detector
         self._autoscaling_coordinator = autoscaling_coordinator
         self._get_node_counts = get_node_counts
         self._cluster_scaling_up_factor = cluster_scaling_up_factor
@@ -156,12 +154,6 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         self._last_request_time = 0
         self._requester_id = f"data-{execution_id}"
-
-        self._productivity_gauge: Gauge = Gauge(
-            "data_productivity",
-            "Productivity per operator",
-            tag_keys=("requester", "operator"),
-        )
 
         # Send an empty request to register ourselves as soon as possible,
         # so the first `get_total_resources` call can get the allocated resources.
@@ -182,11 +174,14 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         `__init__` file small.
         """
         scalable_ops = [op for op in topology if cls._is_eligible_for_scaling(op)]
-        productivity_calculator = NormalizedThroughputCalculator(resource_manager)
+        requester_id = f"data-{execution_id}"
+        bottleneck_detector = NormalizedThroughputBottleneckDetector(
+            resource_manager, requester_id
+        )
         return RateBasedClusterAutoscaler(
             scalable_ops,
             execution_id=execution_id,
-            productivity_calculator=productivity_calculator,
+            bottleneck_detector=bottleneck_detector,
         )
 
     @classmethod
@@ -205,43 +200,26 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         )
 
     def try_trigger_scaling(self):
-        # Calculate the productivity of each operator. We run this even if the
-        # autoscaling interval hasn't elapsed, because the values are useful for
-        # debugging and monitoring.
-        productivities: Dict[
-            SupportsClusterAutoscaling, float
-        ] = self._productivity_calculator.get_productivities(self._ops)
-        # Filter out undefined productivities.
-        productivities = {
-            op: productivity
-            for op, productivity in productivities.items()
-            if productivity is not None
-        }
-
-        # Update Prometheus metrics.
-        for op, score in productivities.items():
-            self._productivity_gauge.set(
-                score,
-                tags={"requester": self._requester_id, "operator": repr(op)},
-            )
-
         # Limit the frequency of autoscaling requests.
         now = time.time()
         if now - self._last_request_time < self._min_gap_between_autoscaling_requests:
             return
 
-        # Log metrics. We don't log these every call because they can be spammy.
-        logger.debug(f"Operator productivities: {productivities}")
+        # Identify the bottleneck operator.
+        bottleneck_op = self._bottleneck_detector.get_bottleneck(self._ops)
 
-        # Still send an empty request if we couldn't compute any scores. This is
+        # Log the bottleneck.
+        if bottleneck_op:
+            logger.debug(f"Bottleneck operator: {bottleneck_op}")
+
+        # Still send an empty request if we couldn't identify a bottleneck. This is
         # necessary to renew our registration with the autoscaling coordinator and
         # ensure we request the remaining resources for operators that don't support
         # autoscaling.
-        if not productivities:
+        if not bottleneck_op:
             self._send_resource_request([])
             return []
 
-        bottleneck_op = min(productivities, key=productivities.get)
         needed_node_types = self._find_needed_node_types(bottleneck_op)
         requested_resources = self._scale_up_cluster(needed_node_types)
         return requested_resources
