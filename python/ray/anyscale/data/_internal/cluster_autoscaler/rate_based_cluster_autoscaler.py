@@ -182,10 +182,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         `__init__` file small.
         """
         scalable_ops = [op for op in topology if cls._is_eligible_for_scaling(op)]
-        productivity_calculator = NormalizedThroughputCalculator(
-            scalable_ops,
-            resource_manager,
-        )
+        productivity_calculator = NormalizedThroughputCalculator(resource_manager)
         return RateBasedClusterAutoscaler(
             scalable_ops,
             execution_id=execution_id,
@@ -211,10 +208,14 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         # Calculate the productivity of each operator. We run this even if the
         # autoscaling interval hasn't elapsed, because the values are useful for
         # debugging and monitoring.
-        productivities: Dict[SupportsClusterAutoscaling, float] = {
-            op: score
-            for op in self._ops
-            if (score := self._productivity_calculator.get_productivity(op)) is not None
+        productivities: Dict[
+            SupportsClusterAutoscaling, float
+        ] = self._productivity_calculator.get_productivities(self._ops)
+        # Filter out undefined productivities.
+        productivities = {
+            op: productivity
+            for op, productivity in productivities.items()
+            if productivity is not None
         }
 
         # Update Prometheus metrics.

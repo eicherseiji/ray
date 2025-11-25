@@ -31,11 +31,13 @@ from ray.data.tests.conftest import propagate_logs  # noqa
 class StubProductivityCalculator(ProductivityCalculator):
     """A stub implementation for testing."""
 
-    def __init__(self, productivity: Dict[SupportsClusterAutoscaling, float]):
-        self._productivity = productivity
+    def __init__(self, productivities: Dict[SupportsClusterAutoscaling, float]):
+        self._productivities = productivities
 
-    def get_productivity(self, op: SupportsClusterAutoscaling) -> Optional[float]:
-        return self._productivity.get(op)
+    def get_productivities(
+        self, ops: List[SupportsClusterAutoscaling]
+    ) -> Dict[SupportsClusterAutoscaling, Optional[float]]:
+        return {op: self._productivities.get(op) for op in ops}
 
 
 @dataclass(frozen=True)
@@ -172,48 +174,65 @@ def test_autoscaler_requests_resources_if_no_scalable_ops():
 
 @dataclass
 class StubResourceManager:
-    global_limits: Optional[ExecutionResources] = None
+    global_limits: ExecutionResources = field(
+        default_factory=ExecutionResources.for_limits
+    )
 
-    def get_global_limits(self) -> Optional[ExecutionResources]:
+    def get_global_limits(self) -> ExecutionResources:
         return self.global_limits
 
 
 class TestNormalizedThroughputCalculator:
-    def test_get_productivity_completed_operator(self):
+    def test_get_productivities_completed_operator(self):
         op = StubClusterAutoscalingOperator(_completed=True)
-        calculator = NormalizedThroughputCalculator([op], StubResourceManager())
+        calculator = NormalizedThroughputCalculator(StubResourceManager())
 
-        productivity = calculator.get_productivity(op)
+        productivities = calculator.get_productivities([op])
 
-        assert productivity is None
+        assert productivities == {op: None}
 
-    def test_get_productivity_no_global_limits(self):
+    def test_get_productivities_inf_global_limits(self):
         op = StubClusterAutoscalingOperator()
-        resource_manager = StubResourceManager()  # No global limits set
-        calculator = NormalizedThroughputCalculator([op], resource_manager)
+        resource_manager = StubResourceManager(
+            global_limits=ExecutionResources.for_limits()
+        )
+        calculator = NormalizedThroughputCalculator(resource_manager)
 
-        productivity = calculator.get_productivity(op)
+        productivities = calculator.get_productivities([op])
 
-        assert productivity is None
+        assert productivities == {op: None}
 
-    def test_get_productivity_single_operator(self):
+    def test_get_productivities_zero_global_limits(self):
         op = StubClusterAutoscalingOperator(
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
                 num_output_blocks_per_task_s=1,
             ),
         )
-        global_limits = ExecutionResources(cpu=2)
-        resource_manager = StubResourceManager(global_limits=global_limits)
-        calculator = NormalizedThroughputCalculator([op], resource_manager)
+        resource_manager = StubResourceManager(global_limits=ExecutionResources.zero())
+        calculator = NormalizedThroughputCalculator(resource_manager)
 
-        productivity = calculator.get_productivity(op)
+        productivities = calculator.get_productivities([op])
+
+        assert productivities == {op: None}
+
+    def test_get_productivities_single_operator(self):
+        op = StubClusterAutoscalingOperator(
+            _per_task_resource_allocation=ExecutionResources(cpu=1),
+            metrics=StubClusterAutoscalingMetrics(
+                num_output_blocks_per_task_s=1,
+            ),
+        )
+        resource_manager = StubResourceManager(global_limits=ExecutionResources(cpu=2))
+        calculator = NormalizedThroughputCalculator(resource_manager)
+
+        productivities = calculator.get_productivities([op])
 
         # The operator uses 1 CPU per task, and the global limits are 2 CPUs. So, the
         # operator can launch 2 tasks producing a total of 2 outputs per second.
-        assert productivity == 2
+        assert productivities == {op: 2}
 
-    def test_get_productivity_with_downstream_operator(self):
+    def test_get_productivities_with_downstream_operator(self):
         op2 = StubClusterAutoscalingOperator(
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
@@ -230,20 +249,16 @@ class TestNormalizedThroughputCalculator:
             ),
         )
         resource_manager = StubResourceManager(global_limits=ExecutionResources(cpu=2))
-        calculator = NormalizedThroughputCalculator([op1, op2], resource_manager)
+        calculator = NormalizedThroughputCalculator(resource_manager)
 
-        productivity1 = calculator.get_productivity(op1)
-        productivity2 = calculator.get_productivity(op2)
+        productivities = calculator.get_productivities([op1, op2])
 
         # Each op1 output is worth 6 / 2 = 3 op2 outputs. So, op1 produces 4 * 3 = 12
         # op2 outputs per second. op2 produces 12 outputs per second. Since there are
         # 2 CPUs available, if op1 launches 1 tasks and op2 launches 1 task, each
         # operator can produce 12 outputs per second and the pipeline will be optimally
         # balanced.
-        assert productivity1 == 12 and productivity2 == 12, (
-            productivity1,
-            productivity2,
-        )
+        assert productivities == {op1: 12, op2: 12}, productivities
 
 
 def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):

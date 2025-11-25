@@ -1,6 +1,6 @@
 import abc
 import math
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Dict
 
 import numpy as np
 from numpy.typing import NDArray
@@ -17,17 +17,20 @@ class ProductivityCalculator(abc.ABC):
     """Base class for determining how "productive" an operator is."""
 
     @abc.abstractmethod
-    def get_productivity(self, op: SupportsClusterAutoscaling) -> Optional[float]:
-        """Calculate the productivity of an operator.
+    def get_productivities(
+        self, ops: List[SupportsClusterAutoscaling]
+    ) -> Dict[SupportsClusterAutoscaling, Optional[float]]:
+        """Calculate the productivities of the given operators.
 
         Productivity can be computed in different ways. The only requirement is
         that the bottleneck operator is the one with the lowest productivity.
 
         Args:
-            op: The operator to calculate the productivity of.
+            ops: The operators to calculate the productivities of.
 
         Returns:
-            The productivity of the operator, or `None` if productivity isn't defined.
+            A dictionary mapping operators to their productivities, or `None` if
+            productivity isn't defined for that operator.
         """
         ...
 
@@ -40,7 +43,7 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
     produce different numbers of blocks, this class converts each operator's rate to
     represent "sink operator outputs per second".
 
-    This class estimates an operator’s overall throughput by first computing the optimal
+    This class estimates an operator's overall throughput by first computing the optimal
     number of tasks and then multiplying by the normalized rate per task. The
     calculation assumes a flow model and solves a simple optimization problem to
     maximize throughput.
@@ -52,33 +55,40 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
       (averages dominate, quantization effects are negligible).
     """
 
-    def __init__(
-        self, ops: List[SupportsClusterAutoscaling], resource_manager: "ResourceManager"
-    ):
-        assert all(isinstance(op, SupportsClusterAutoscaling) for op in ops)
-
-        self._ops = ops
+    def __init__(self, resource_manager: "ResourceManager"):
         self._resource_manager = resource_manager
 
-    def get_productivity(self, op: SupportsClusterAutoscaling) -> Optional[float]:
-        if op.completed():
-            return None
-
-        if op.metrics.num_output_blocks_per_task_s is None:
-            return None
-
-        global_limits = self._resource_manager.get_global_limits()
-        if global_limits is None:
-            return None
+    def get_productivities(
+        self, ops: List[SupportsClusterAutoscaling]
+    ) -> Dict[SupportsClusterAutoscaling, Optional[float]]:
+        assert all(isinstance(op, SupportsClusterAutoscaling) for op in ops)
 
         # Calculate the throughput-balanced processor resource allocation assuming a
         # simple flow model.
-        allocation = self._get_throughput_balanced_processor_allocation(op)
+        allocations = self._get_throughput_balanced_processor_allocation(ops)
+        productivities = {
+            op: self._compute_max_normalized_output_rate(op, allocation)
+            for op, allocation in allocations.items()
+        }
+
+        assert all(op in productivities for op in ops), (
+            f"Must return producitivites for all specified operators, but the "
+            f"following operators are missing: {set(ops) - set(productivities)}."
+        )
+        return productivities
+
+    def _compute_max_normalized_output_rate(
+        self, op: SupportsClusterAutoscaling, allocation: Optional[ExecutionResources]
+    ):
+        if op.completed():
+            return None
+
+        if op.metrics.num_output_blocks_per_task_s is None or allocation is None:
+            return None
 
         # Calculate the maximum output rate, assuming the operator uses all of its
         # allocation.
         max_num_tasks = self._get_max_num_concurrent_tasks(op, allocation)
-
         num_outputs_per_s = max_num_tasks * op.metrics.num_output_blocks_per_task_s
 
         # Normalize the rate to represent the number of sink operator outputs per
@@ -87,8 +97,8 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
         return num_outputs_per_s * self._get_normalization_factor(op)
 
     def _get_throughput_balanced_processor_allocation(
-        self, op: SupportsClusterAutoscaling
-    ) -> ExecutionResources:
+        self, ops: List[SupportsClusterAutoscaling]
+    ) -> Dict[SupportsClusterAutoscaling, Optional[ExecutionResources]]:
         """Calculate a throughput-balanced processor allocation for an operator.
 
         This method solves an optimization problem to find the resource allocation that
@@ -106,22 +116,26 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
             where i = 1,...,num_ops
 
         In other words, this method maximizes the throughput of the bottleneck operator,
-        subject to resource constraints. It doesn't consider backpressure.
+        subject to CPU and GPU constraints.
 
         We use this calculated allocation for productivity scoring rather than the actual
         allocation because the actual allocation might be noisy (e.g., resource usage
-        oscillating between operators).
-        """
-        # TODO(@balaji): Refactor this method to avoid repeated computation, even though
-        # it's not a bottleneck.
-        assert op.metrics.num_output_blocks_per_task_s is not None
+        oscillating between operators) and lead to poor autoscaling decisions.
 
-        valid_ops = [op for op in self._ops if op.metrics.num_output_blocks_per_task_s]
-        op_index = valid_ops.index(op)
+        Known limitation: this implementation doesn't consider backpressure. If an
+        operator is backpressured, this class can overestimate the operator's
+        productivity. This might not be an issue in practice, because if an operator
+        gets backpressured, it probably isn't the bottleneck anyway.
+        """
+        valid_ops = [op for op in ops if op.metrics.num_output_blocks_per_task_s]
+
+        if not valid_ops:
+            return {op: None for op in ops}
 
         global_limits = self._resource_manager.get_global_limits()
         assert global_limits is not None, "`get_global_limits` should never return None"
 
+        # How many normalized outputs does each operator produce per task per second?
         task_rate_per_op = np.array(
             [
                 op.metrics.num_output_blocks_per_task_s
@@ -130,9 +144,10 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
             ]
         )
         assert np.isfinite(task_rate_per_op).all() and np.all(task_rate_per_op > 0), (
-            op,
             task_rate_per_op,
         )
+
+        # How many CPUs and GPUs does each operator need per task?
         task_num_cpus_per_op = np.array(
             [op.per_task_resource_allocation().cpu for op in valid_ops]
         )
@@ -140,40 +155,37 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
             [op.per_task_resource_allocation().gpu for op in valid_ops]
         )
 
-        # These represent the number of CPUs and GPUs (respectively) to produce
-        # one block per second across the pipeline.
+        # How many CPUs and GPUs does the pipeline need to produce one block per second
+        # across the pipeline?
         num_cpus_per_unit_rate: float = np.sum(task_num_cpus_per_op / task_rate_per_op)
         num_gpus_per_unit_rate: float = np.sum(task_num_gpus_per_op / task_rate_per_op)
 
-        # Maximum feasible throughput based on each resource.
-        max_cpu_rate: float = (
+        # Given the number of CPUs and GPUs in the cluster, what's the max throughput
+        # assuming you only need one type of resource?
+        max_throughput_limited_by_cpu: float = (
             np.inf
             if num_cpus_per_unit_rate == 0
             else global_limits.cpu / num_cpus_per_unit_rate
         )
-        max_gpu_rate: float = (
+        max_throughput_limited_by_gpu: float = (
             np.inf
             if num_gpus_per_unit_rate == 0
             else global_limits.gpu / num_gpus_per_unit_rate
         )
 
-        # Overall max throughput (bottleneck).
-        optimal_rate: float = min(max_cpu_rate, max_gpu_rate)
+        # The bottleneck resource determines the optimal throughput.
+        optimal_rate: float = min(
+            max_throughput_limited_by_cpu, max_throughput_limited_by_gpu
+        )
 
         # If all operators don't use any logical resources, or if there aren't enough
-        # resources to run the pipeline, then split the processor resources equally.
-        # These edge cases are unlikely.
+        # resources to run the pipeline, then don't return any allocations. These edge
+        # cases are unlikely.
         if math.isinf(optimal_rate) or optimal_rate == 0:
-            global_processor_limits = global_limits.copy(
-                memory=0, object_store_memory=0
-            )
-            return global_processor_limits.scale(1 / len(valid_ops))
+            return {op: None for op in ops}
 
         optimal_num_tasks_per_op = optimal_rate / task_rate_per_op
-        assert np.isfinite(optimal_num_tasks_per_op).all(), (
-            op,
-            optimal_num_tasks_per_op,
-        )
+        assert np.isfinite(optimal_num_tasks_per_op).all(), (optimal_num_tasks_per_op,)
 
         # Calculate what percent of resources each operator would use assuming each
         # operator uses only their optimal number of tasks.
@@ -184,10 +196,17 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
             optimal_num_tasks_per_op, task_num_gpus_per_op
         )
 
-        return ExecutionResources(
-            cpu=global_limits.cpu * cpu_fraction_per_op[op_index],
-            gpu=global_limits.gpu * gpu_fraction_per_op[op_index],
-        )
+        # Allocate resources based on the fractions computed above.
+        allocations = {
+            op: ExecutionResources(
+                cpu=global_limits.cpu * cpu_fraction_per_op[op_index],
+                gpu=global_limits.gpu * gpu_fraction_per_op[op_index],
+            )
+            for op_index, op in enumerate(valid_ops)
+        }
+        allocations.update({op: None for op in ops if op not in valid_ops})
+
+        return allocations
 
     def _compute_processor_fractions(
         self,
@@ -282,6 +301,9 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
         if not op.output_dependencies:
             return 1
 
+        # NOTE: This will recompute values if you call this method with operators in the
+        # same path. The logic is much simpler this way, and the number of operators is
+        # small, so we accept the extra work instead of doing a single-pass version.
         factor = 1
         while op.output_dependencies:
             assert len(op.output_dependencies) == 1, (op, len(op.output_dependencies))
