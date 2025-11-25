@@ -3,6 +3,7 @@ import math
 from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
+from numpy.typing import NDArray
 
 from .supports_cluster_autoscaling import SupportsClusterAutoscaling
 from ray.data._internal.execution.interfaces import ExecutionResources
@@ -119,28 +120,30 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
         op_index = valid_ops.index(op)
 
         global_limits = self._resource_manager.get_global_limits()
-        rate_per_op = np.array(
+        assert global_limits is not None, "`get_global_limits` should never return None"
+
+        task_rate_per_op = np.array(
             [
                 op.metrics.num_output_blocks_per_task_s
                 * self._get_normalization_factor(op)
                 for op in valid_ops
             ]
         )
-        assert np.isfinite(rate_per_op).all() and np.all(rate_per_op > 0), (
+        assert np.isfinite(task_rate_per_op).all() and np.all(task_rate_per_op > 0), (
             op,
-            rate_per_op,
+            task_rate_per_op,
         )
-        num_cpus_per_op = np.array(
+        task_num_cpus_per_op = np.array(
             [op.per_task_resource_allocation().cpu for op in valid_ops]
         )
-        num_gpus_per_op = np.array(
+        task_num_gpus_per_op = np.array(
             [op.per_task_resource_allocation().gpu for op in valid_ops]
         )
 
         # These represent the number of CPUs and GPUs (respectively) to produce
         # one block per second across the pipeline.
-        num_cpus_per_unit_rate: float = np.sum(num_cpus_per_op / rate_per_op)
-        num_gpus_per_unit_rate: float = np.sum(num_gpus_per_op / rate_per_op)
+        num_cpus_per_unit_rate: float = np.sum(task_num_cpus_per_op / task_rate_per_op)
+        num_gpus_per_unit_rate: float = np.sum(task_num_gpus_per_op / task_rate_per_op)
 
         # Maximum feasible throughput based on each resource.
         max_cpu_rate: float = (
@@ -166,7 +169,7 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
             )
             return global_processor_limits.scale(1 / len(valid_ops))
 
-        optimal_num_tasks_per_op = optimal_rate / rate_per_op
+        optimal_num_tasks_per_op = optimal_rate / task_rate_per_op
         assert np.isfinite(optimal_num_tasks_per_op).all(), (
             op,
             optimal_num_tasks_per_op,
@@ -174,26 +177,47 @@ class NormalizedThroughputCalculator(ProductivityCalculator):
 
         # Calculate what percent of resources each operator would use assuming each
         # operator uses only their optimal number of tasks.
-        optimal_cpu_allocation_per_op = optimal_num_tasks_per_op * num_cpus_per_op
-        sum_optimal_cpu_allocations = np.sum(optimal_cpu_allocation_per_op)
-        cpu_fraction_per_op = (
-            optimal_cpu_allocation_per_op / sum_optimal_cpu_allocations
-            if sum_optimal_cpu_allocations > 0
-            else np.zeros_like(num_cpus_per_op)
+        cpu_fraction_per_op = self._compute_processor_fractions(
+            optimal_num_tasks_per_op, task_num_cpus_per_op
         )
-
-        optimal_gpu_allocation_per_op = optimal_num_tasks_per_op * num_gpus_per_op
-        sum_optimal_gpu_allocations = np.sum(optimal_gpu_allocation_per_op)
-        gpu_fraction_per_op = (
-            optimal_gpu_allocation_per_op / sum_optimal_gpu_allocations
-            if sum_optimal_gpu_allocations > 0
-            else np.zeros_like(num_gpus_per_op)
+        gpu_fraction_per_op = self._compute_processor_fractions(
+            optimal_num_tasks_per_op, task_num_gpus_per_op
         )
 
         return ExecutionResources(
             cpu=global_limits.cpu * cpu_fraction_per_op[op_index],
             gpu=global_limits.gpu * gpu_fraction_per_op[op_index],
         )
+
+    def _compute_processor_fractions(
+        self,
+        num_tasks_per_op: NDArray[np.floating],
+        task_num_processors_per_op: NDArray[np.floating],
+    ) -> NDArray[np.floating]:
+        """Calculate what fraction of processors each operator uses.
+
+        Given the number of tasks and processors per task for each operator, this
+        computes what fraction of the total processors each operator would consume.
+        The returned fractions sum to 1.0 (or all zeros if no processors are used).
+
+        Args:
+            num_tasks_per_op: Number of tasks for each operator.
+            task_num_processors_per_op: Processors (CPUs or GPUs) per task for each operator.
+
+        Returns:
+            Fraction of total processors used by each operator.
+        """
+        num_processors_per_op = num_tasks_per_op * task_num_processors_per_op
+        total_num_processors = np.sum(num_processors_per_op)
+        if total_num_processors == 0:
+            return np.zeros_like(task_num_processors_per_op)
+
+        processor_fraction_per_op = num_processors_per_op / total_num_processors
+
+        assert np.isclose(
+            np.sum(processor_fraction_per_op), 1.0
+        ), processor_fraction_per_op
+        return processor_fraction_per_op
 
     def _get_max_num_concurrent_tasks(
         self, op: SupportsClusterAutoscaling, allocation: ExecutionResources
