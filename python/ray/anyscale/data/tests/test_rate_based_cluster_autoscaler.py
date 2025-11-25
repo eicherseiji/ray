@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from unittest.mock import MagicMock
 
+import logging
 import pytest
 
 from ray.anyscale.air._internal.autoscaling_coordinator import (
@@ -24,6 +25,7 @@ from ray.data._internal.cluster_autoscaler import (
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.execution_options import ExecutionResources
 from ray.data._internal.execution.resource_manager import ResourceManager
+from ray.data.tests.conftest import propagate_logs  # noqa
 
 
 class StubProductivityCalculator(ProductivityCalculator):
@@ -100,6 +102,37 @@ def test_autoscaler_doubles_nodes_for_bottleneck_op():
         ExecutionResources(gpu=1),
         ExecutionResources(gpu=1),
     ]
+
+
+def test_autoscaler_logs_warning_if_no_valid_node_types(
+    # We need the `propagate_logs` fixture to propagate Ray Data logs to the root
+    # logger. This is necessary for the `caplog` pytest fixture to work correctly.
+    propagate_logs,  # noqa
+    caplog,
+):
+    # This test sets up a GPU operator but only provides CPU node types. The autoscaler
+    # should detect this mismatch and warn the user to add a compatible worker node
+    # type.
+    gpu_op = StubClusterAutoscalingOperator(
+        _min_scheduling_resources=ExecutionResources(gpu=1),
+    )
+    cpu_node_type = NodeType({"CPU": 1})
+    autoscaler = RateBasedClusterAutoscaler(
+        ops=[gpu_op],
+        execution_id="test",
+        productivity_calculator=StubProductivityCalculator({gpu_op: 0}),
+        autoscaling_coordinator=FakeAutoscalingCoordinator(),
+        get_node_counts=lambda: {cpu_node_type: 1},
+        min_gap_between_autoscaling_requests_s=0,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        autoscaler.try_trigger_scaling()
+
+    assert (
+        "add a worker node type that satisfies these resource requirements"
+        in caplog.text
+    )
 
 
 def test_autoscaler_requests_resources_if_no_scalable_ops():

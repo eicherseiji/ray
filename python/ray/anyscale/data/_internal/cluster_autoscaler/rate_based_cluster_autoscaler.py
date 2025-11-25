@@ -242,23 +242,44 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         bottleneck_op = min(productivities, key=productivities.get)
         needed_node_types = self._find_needed_node_types(bottleneck_op)
-        if not needed_node_types:
-            logger.warning("No existing node types can schedule %s.", bottleneck_op)
-
         requested_resources = self._scale_up_cluster(needed_node_types)
         return requested_resources
 
     def _find_needed_node_types(self, op: SupportsClusterAutoscaling) -> Set[NodeType]:
-        """Find all the node types that can schedule the given operator."""
-        node_types: Set[NodeType] = set()
+        """Find all the worker node types that can schedule the given operator."""
+        valid_worker_node_types: Set[NodeType] = set()
 
         resource_requirement = op.min_scheduling_resources().copy(object_store_memory=0)
-        node_type_counts = self._get_node_counts()
-        for node_type in node_type_counts:
-            if node_type.can_schedule(resource_requirement):
-                node_types.add(node_type)
+        worker_node_type_counts = self._get_node_counts()
+        for worker_node_type in worker_node_type_counts:
+            if worker_node_type.can_schedule(resource_requirement):
+                valid_worker_node_types.add(worker_node_type)
 
-        return node_types
+        is_head_node_only = len(worker_node_type_counts) == 0
+        if (
+            not valid_worker_node_types
+            # Don't emit a warning if the compute config doesn't contain worker nodes,
+            # because head-node-only clusters are common for small scale testing.
+            and not is_head_node_only
+        ):
+            # Convert the `ExecutionResources` object to a resource dict because that's
+            # the abstraction people use when configuring clusters, and filter out
+            # falsey values to improve readability.
+            min_scheduling_resources_dict = {
+                key: value
+                for key, value in op.min_scheduling_resources()
+                .to_resource_dict()
+                .items()
+                if value
+            }
+            logger.warning(
+                "The Ray Data autoscaler couldn't find any worker node types that "
+                f"can execute tasks for {op}. This can happen if you misconfigure your "
+                "cluster. To fix the warning, add a worker node type that satisfies "
+                f"these resource requirements: {min_scheduling_resources_dict}.",
+            )
+
+        return valid_worker_node_types
 
     def _scale_up_cluster(
         self, needed_node_types: Set[NodeType]
