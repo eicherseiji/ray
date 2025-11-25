@@ -267,6 +267,7 @@ global
     nbthread 2
     server-state-base /tmp/haproxy-serve
     server-state-file /tmp/haproxy-serve/server-state
+    hard-stop-after 120s
 defaults
     mode http
     option log-health-checks
@@ -326,7 +327,7 @@ backend api_backend
     # HTTP health check with custom path
     option httpchk GET /api/health
     http-check expect status 200
-    default-server fall 2 rise 3 inter 5s check
+    default-server fastinter 250ms downinter 250ms fall 2 rise 3 inter 5s check
     # Servers in this backend
     server api_server1 127.0.0.1:8001 check
     server api_server2 127.0.0.1:8002 check
@@ -345,7 +346,7 @@ backend web_backend
     # HTTP health check with custom path
     option httpchk GET /-/healthz
     http-check expect status 200
-    default-server fall 3 rise 2 inter 2s check
+    default-server fastinter 250ms downinter 250ms fall 3 rise 2 inter 2s check
     # Servers in this backend
     server web_server1 127.0.0.1:8003 check
 listen stats

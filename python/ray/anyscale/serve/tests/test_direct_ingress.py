@@ -2,6 +2,7 @@ import asyncio
 import grpc
 import httpx
 import json
+import os
 import pytest
 import sys
 import time
@@ -44,6 +45,7 @@ from ray.serve._private.test_utils import (
     ping_grpc_list_applications,
 )
 from ray.serve.autoscaling_policy import default_autoscaling_policy
+from ray.serve.config import ProxyLocation
 from ray.serve.context import _get_global_client
 from ray.serve.generated import serve_pb2, serve_pb2_grpc
 from ray.serve.generated.serve_pb2 import DeploymentRoute
@@ -83,6 +85,56 @@ def _skip_if_haproxy_enabled():
         pytest.skip(
             reason="ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY is set.",
         )
+
+
+@pytest.fixture(scope="module")
+def _shared_serve_instance():
+    """Module-scoped serve instance fixture."""
+    # Save original env var value
+    env_var_name = "ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S"
+    original_value = os.environ.get(env_var_name)
+
+    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+        # Setting a longer minimum draining period ensures that the client connecting
+        # to the uvicorn server closes the connection first. This prevents the socket
+        # used by the uvicorn server from entering the TIME_WAIT tcp state, which blocks
+        # the port from being immediately reused and causes failures in subsequent tests
+        # that condition on specific ports assignments.
+        os.environ[env_var_name] = "6"
+
+    ray.init(
+        num_cpus=36,
+        namespace="default_test_namespace",
+        _metrics_export_port=9999,
+        _system_config={"metrics_report_interval_ms": 1000, "task_retry_delay_ms": 50},
+    )
+    serve.start(
+        proxy_location=ProxyLocation.HeadOnly,
+        http_options={"host": "0.0.0.0"},
+        grpc_options={
+            "port": 9000,
+            "grpc_servicer_functions": TEST_GRPC_SERVICER_FUNCTIONS,
+        },
+    )
+    yield _get_global_client()
+    # Cleanup after all tests in this module complete
+    serve.shutdown()
+    ray.shutdown()
+
+    # Restore original env var value
+    if original_value is not None:
+        os.environ[env_var_name] = original_value
+    elif env_var_name in os.environ:
+        del os.environ[env_var_name]
+
+
+@pytest.fixture
+def serve_instance(_shared_serve_instance):
+    yield _shared_serve_instance
+    # Clear all state for 2.x applications and deployments.
+    _shared_serve_instance.delete_all_apps()
+    # Clear the ServeHandle cache between tests to avoid them piling up.
+    _shared_serve_instance.shutdown_cached_handles()
 
 
 @serve.deployment(name="default-deployment")
@@ -2312,6 +2364,18 @@ def test_get_serve_instance_details_json_serializable(
                                 }
                             ],
                         }
+                    },
+                    "deployment_topology": {
+                        "app_name": "default",
+                        "nodes": {
+                            "autoscaling_app": {
+                                "name": "autoscaling_app",
+                                "app_name": "default",
+                                "outbound_deployments": [],
+                                "is_ingress": True,
+                            },
+                        },
+                        "ingress_deployment": "autoscaling_app",
                     },
                 }
             },

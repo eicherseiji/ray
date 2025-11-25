@@ -78,10 +78,8 @@ ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_FILE = os.environ.get(
 )
 
 # HAProxy hard stop after timeout
-ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S = (
-    int(os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S"))
-    if os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S")
-    else None
+ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S", "120")
 )
 
 # HAProxy metrics export port
@@ -103,10 +101,8 @@ ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S = (
 )
 
 # HAProxy timeout client
-ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S = (
-    int(os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S"))
-    if os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S")
-    else None
+ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S", "3600")
 )
 
 # Number of consecutive failed server health checks that must occur
@@ -129,12 +125,12 @@ ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER = os.environ.get(
 
 # Time interval between each haproxy health check attempt when the server is in any of the transition states: UP - transitionally DOWN or DOWN - transitionally UP
 ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER = os.environ.get(
-    "ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER", None
+    "ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER", "250ms"
 )
 
 # Time interval between each haproxy health check attempt when the server is in the DOWN state
 ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER = os.environ.get(
-    "ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER", None
+    "ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER", "250ms"
 )
 
 # For now, this is used only for testing. In the suite of tests that
