@@ -120,7 +120,7 @@ def test_chained_filter_with_expressions(parquet_ds):
         (
             lambda ds: ds.filter(expr="sepal.length > 5.0"),
             # CSV doesn't support predicate pushdown, so Filter remains in logical plan
-            "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> Filter[Filter(<expression>)]",
+            "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> Filter[Filter(col('sepal.length') > 5.0)]",
         ),
     ],
 )
@@ -153,8 +153,8 @@ def test_filter_mixed(csv_ds):
         csv_ds,
         "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> "
         "Filter[Filter(<lambda>)] -> "
-        "Filter[Filter(<expression>)] -> MapRows[Map(<lambda>)] -> "
-        "Filter[Filter(<expression>)]",
+        "Filter[Filter((col('sepal.length') > 4.0) & (col('sepal.length') > 3.0))] -> MapRows[Map(<lambda>)] -> "
+        "Filter[Filter((col('sepal.length') > 1.0) & (col('sepal.length') > 2.0))]",
         filtered_expr_data,
     )
 
@@ -170,7 +170,7 @@ def test_filter_mixed(csv_ds):
         (
             lambda: ray.data.read_csv("example://iris.csv"),
             # CSV doesn't support predicate pushdown, expression filters are merged
-            "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> Filter[Filter(<expression>)] -> Filter[Filter(<lambda>)]",
+            "ListFiles[ListFiles] -> ReadFiles[ReadFiles] -> Filter[Filter((col('sepal.length') > 4.0) & (col('sepal.length') > 3.0))] -> Filter[Filter(<lambda>)]",
         ),
     ],
 )
@@ -202,7 +202,7 @@ def test_filter_mixed_expression_not_readfiles(ray_start_regular_shared):
     assert all(record["id"] > 2.0 for record in filtered_expr_data)
     _check_valid_plan_and_result(
         ds,
-        "Read[ReadRange] -> Filter[Filter(<expression>)] -> "
+        "Read[ReadRange] -> Filter[Filter((col('id') > 2.0) & (col('id') > 1.0))] -> "
         "Filter[Filter(<lambda>)]",
         filtered_expr_data,
     )
@@ -216,8 +216,8 @@ def test_read_range_union_with_filter_pushdown(ray_start_regular_shared):
     assert ds.count() == 100
     _check_valid_plan_and_result(
         ds,
-        "Read[ReadRange] -> Filter[Filter(<expression>)], "
-        "Read[ReadRange] -> Filter[Filter(<expression>)] -> Union[Union]",
+        "Read[ReadRange] -> Filter[Filter(col('id') >= 50)], "
+        "Read[ReadRange] -> Filter[Filter(col('id') >= 50)] -> Union[Union]",
         result,
     )
 

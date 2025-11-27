@@ -218,7 +218,7 @@ class ArrowBlockAccessor(ArrowBlockMixin, TableBlockAccessor):
         if pyarrow is None:
             raise ImportError("Run `pip install pyarrow` for Arrow support")
         super().__init__(table)
-        self._max_chunk_size = None
+        self._max_chunk_size: Optional[int] = None
 
     def _get_row(self, index: int) -> _OptimizedArrowRow:
         return self.ROW_TYPE(self._table, index)
@@ -253,7 +253,7 @@ class ArrowBlockAccessor(ArrowBlockMixin, TableBlockAccessor):
         row: _OptimizedArrowRow, row_idx: int, col_name: str = TENSOR_COLUMN_NAME
     ) -> np.ndarray:
 
-        element = row[col_name][0]
+        element = row[col_name][row_idx]
         arr = element.as_py()
 
         assert isinstance(arr, np.ndarray), type(arr)
