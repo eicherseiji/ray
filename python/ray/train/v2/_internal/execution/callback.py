@@ -87,6 +87,10 @@ class ControllerCallback(RayTrainCallback):
         before the control loop starts executing."""
         pass
 
+    def before_controller_abort(self):
+        """Called during `TrainController.abort` before the actor process exits."""
+        pass
+
     # TODO(matthewdeng): Revisit this callback interface for better extensibility.
     # This hook was added for the specific use case of setting a `bundle_label_selector`
     # for new worker groups (e.g., for TPU reservations). The current interface is

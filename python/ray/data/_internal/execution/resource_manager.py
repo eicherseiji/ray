@@ -54,7 +54,7 @@ class ResourceManager:
     # store memory limit for the streaming executor,
     # when `ReservationOpResourceAllocator` is enabled.
     DEFAULT_OBJECT_STORE_MEMORY_LIMIT_FRACTION = env_float(
-        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.5
+        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.75
     )
 
     # The fraction of the object store capacity that will be used as the default object
@@ -135,8 +135,8 @@ class ResourceManager:
             ):
                 logger.warning(
                     f"{WARN_PREFIX} Ray's object store is configured to use only "
-                    f"{object_store_fraction:.1%} of available memory ({object_store_memory/GiB:.1f}GiB "
-                    f"out of {total_memory/GiB:.1f}GiB total). For optimal Ray Data performance, "
+                    f"{object_store_fraction:.1%} of available memory ({object_store_memory / GiB:.1f}GiB "
+                    f"out of {total_memory / GiB:.1f}GiB total). For optimal Ray Data performance, "
                     f"we recommend setting the object store to at least 50% of available memory. "
                     f"You can do this by setting the 'object_store_memory' parameter when calling "
                     f"ray.init() or by setting the RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION environment variable."
@@ -268,6 +268,14 @@ class ResourceManager:
         """Return the resource usage of the given operator at the current time."""
         return self._op_usages[op]
 
+    def get_mem_op_internal(self, op: PhysicalOperator) -> int:
+        """Return the memory usage of the internal buffers of the given operator."""
+        return self._mem_op_internal[op]
+
+    def get_mem_op_outputs(self, op: PhysicalOperator) -> int:
+        """Return the memory usage of the outputs of the given operator."""
+        return self._mem_op_outputs[op]
+
     def get_op_usage_str(self, op: PhysicalOperator, *, verbose: bool) -> str:
         """Return a human-readable string representation of the resource usage of
         the given operator."""
@@ -284,8 +292,8 @@ class ResourceManager:
 
         if verbose:
             usage_str += (
-                f" (in={memory_string(self._mem_op_internal[op])},"
-                f"out={memory_string(self._mem_op_outputs[op])})"
+                f" (in={memory_string(self.get_mem_op_internal(op))},"
+                f"out={memory_string(self.get_mem_op_outputs(op))})"
             )
             if self._op_resource_allocator is not None:
                 allocation = self._op_resource_allocator.get_allocation(op)
