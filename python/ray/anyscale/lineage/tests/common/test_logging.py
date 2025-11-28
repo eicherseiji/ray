@@ -16,12 +16,14 @@ def preserve_logger_state():
     original_handlers = logger.handlers[:]
     original_level = logger.level
     original_propagate = logger.propagate
+    original_configured = logging_module._logging_configured
 
     yield
 
     logger.handlers = original_handlers
     logger.setLevel(original_level)
     logger.propagate = original_propagate
+    logging_module._logging_configured = original_configured
 
 
 @pytest.mark.parametrize(

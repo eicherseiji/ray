@@ -1,6 +1,9 @@
 import logging
 from typing import Optional
 
+from ray._common.formatters import JSONFormatter
+from ray.data._internal.logging import SessionFileHandler
+
 from ray.anyscale.lineage.common.constants import LOG_ENCODING, LOG_LEVEL
 
 
@@ -19,12 +22,12 @@ def configure_logging(
     """
     global _logging_configured
 
+    # Skip if already configured to avoid duplicate handlers
+    if _logging_configured:
+        return
+
     if level is None:
         level = LOG_LEVEL
-
-    # Lazy imports to avoid issues if Ray isn't initialized yet
-    from ray._common.formatters import JSONFormatter
-    from ray.data._internal.logging import SessionFileHandler
 
     logger = logging.getLogger("ray.anyscale.lineage")
     logger.setLevel(level)
