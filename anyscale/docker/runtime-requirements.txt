@@ -13,3 +13,6 @@ pycurl
 
 # Data dependencies.
 polars>=1.32.3,<2.0.0
+
+# Lineage dependencies.
+openlineage-python>=1.36.0
