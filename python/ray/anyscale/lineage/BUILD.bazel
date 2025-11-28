@@ -8,8 +8,8 @@ py_library(
     srcs = glob([
         "*.py",
         "common/**/*.py",
-        "ray/**/*.py",
-        "mlflow/**/*.py",
+        "ray_lineage/**/*.py",
+        "mlflow_lineage/**/*.py",
     ]),
     visibility = ["//visibility:public"],
     deps = [

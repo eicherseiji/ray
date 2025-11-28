@@ -1,4 +1,4 @@
-from ray.anyscale.lineage.mlflow.constants import (
+from ray.anyscale.lineage.mlflow_lineage.constants import (
     ANYSCALE_MLFLOW_ARTIFACT_REPO_PREFIX,
     ANYSCALE_MLFLOW_TRACKING_STORE_FILE_PREFIX,
     ANYSCALE_MLFLOW_TRACKING_STORE_REST_PREFIX,
