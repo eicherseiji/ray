@@ -3,6 +3,11 @@ from libcpp.vector cimport vector as c_vector
 from libcpp.pair cimport pair as c_pair
 
 cdef extern from "ray/stats/metric.h" nogil:
+    cdef cppclass CStatsConfig "ray::stats::StatsConfig":
+        @staticmethod
+        CStatsConfig& instance()
+        void AddGlobalTag(const c_string &key, const c_string &value)
+
     cdef cppclass CMetric "ray::stats::Metric":
         CMetric(const c_string &name,
                 const c_string &description,

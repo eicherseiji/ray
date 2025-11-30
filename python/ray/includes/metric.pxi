@@ -4,12 +4,30 @@ from ray.includes.metric cimport (
     CHistogram,
     CSum,
     CMetric,
+    CStatsConfig,
 )
 from libcpp.utility cimport move
 from libcpp.memory cimport unique_ptr
 from libcpp.string cimport string as c_string
 from libcpp.vector cimport vector as c_vector
 from libcpp.pair cimport pair as c_pair
+
+
+def add_global_tag(key: str, value: str):
+    """Add a global tag that will be included in all metrics.
+    
+    This is used by Ray Serve to add the ReplicaId tag to all metrics
+    recorded within a replica context.
+    
+    Args:
+        key: The tag key (e.g., "ReplicaId").
+        value: The tag value.
+    """
+    CStatsConfig.instance().AddGlobalTag(
+        key.encode("ascii"),
+        value.encode("ascii")
+    )
+
 
 cdef class Metric:
     """Cython wrapper class of C++ `ray::stats::Metric`.

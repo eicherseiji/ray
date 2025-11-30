@@ -70,6 +70,8 @@ class StatsConfig final {
   void SetIsDisableStats(bool disable_stats);
   /// Set the global tags that will be appended to all metrics in this process.
   void SetGlobalTags(const TagsType &global_tags);
+  /// Add a single global tag (used by Ray Serve to add ReplicaId after initialization).
+  void AddGlobalTag(const std::string &key, const std::string &value);
   /// Add the initializer
   void AddInitializer(std::function<void()> func) {
     initializers_.push_back(std::move(func));

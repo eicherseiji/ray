@@ -53,6 +53,10 @@ void StatsConfig::SetGlobalTags(const TagsType &global_tags) {
   global_tags_ = global_tags;
 }
 
+void StatsConfig::AddGlobalTag(const std::string &key, const std::string &value) {
+  global_tags_.emplace_back(TagKeyType::Register(key), value);
+}
+
 const TagsType &StatsConfig::GetGlobalTags() const { return global_tags_; }
 
 void StatsConfig::SetIsDisableStats(bool disable_stats) {

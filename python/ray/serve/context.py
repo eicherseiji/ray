@@ -127,6 +127,10 @@ def _set_internal_replica_context(
         world_size=world_size,
         _handle_registration_callback=handle_registration_callback,
     )
+    
+    # Add ReplicaId to global metrics tags
+    from ray._raylet import add_global_tag
+    add_global_tag("ReplicaId", replica_id.unique_id)
 
 
 def _connect(raise_if_no_controller_running: bool = True) -> ServeControllerClient:
