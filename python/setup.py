@@ -1,5 +1,4 @@
 import errno
-import io
 import logging
 import os
 import pathlib
@@ -758,20 +757,6 @@ def pip_run(build_ext):
     print("# of files copied to {}: {}".format(build_ext.build_lib, copied_files))
 
 
-_LICENSE = """
-Copyright (2023 and onwards) Anyscale, Inc.
-
-The use of any code contained within this package is subject to the
-Anyscale Terms of Service (anyscale.com/terms) or other written agreement
-between you and Anyscale.
-
-Notwithstanding any terms in any license file contained within this package,
-you may not use any code in this package except within the Anyscale Platform.
-Unless specifically described otherwise in the Anyscale Documentation, you may
-not copy, modify or remove any file contained in this package.
-"""
-
-
 if __name__ == "__main__":
     import setuptools
     import setuptools.command.build_ext
@@ -789,15 +774,24 @@ if __name__ == "__main__":
     if os.path.isdir(build_dir):
         shutil.rmtree(build_dir)
 
+    with open(
+        os.path.join(ROOT_DIR, os.path.pardir, "README.rst"), "r", encoding="utf-8"
+    ) as f:
+        long_readme = f.read()
+
+    with open(os.path.join(ROOT_DIR, "LICENSE.txt"), "r", encoding="utf-8") as f:
+        license_text = f.read().strip()
+    if "\n" in license_text:
+        # If the license text has multiple lines, add an ending endline.
+        license_text += "\n"
+
     setuptools.setup(
         name=setup_spec.name,
         version=setup_spec.version,
         author="Ray Team",
         author_email="ray-dev@googlegroups.com",
         description=(setup_spec.description),
-        long_description=io.open(
-            os.path.join(ROOT_DIR, os.path.pardir, "README.rst"), "r", encoding="utf-8"
-        ).read(),
+        long_description=long_readme,
         url="https://github.com/ray-project/ray",
         keywords=(
             "ray distributed parallel machine-learning hyperparameter-tuning"
@@ -840,5 +834,5 @@ if __name__ == "__main__":
             "": ["BUILD", "BUILD.bazel"],
         },
         zip_safe=False,
-        license=_LICENSE.lstrip(),
+        license=license_text,
     )
