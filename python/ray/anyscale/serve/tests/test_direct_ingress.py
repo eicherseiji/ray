@@ -2365,6 +2365,7 @@ def test_get_serve_instance_details_json_serializable(
                             ],
                         }
                     },
+                    "external_scaler_enabled": False,
                     "deployment_topology": {
                         "app_name": "default",
                         "nodes": {
