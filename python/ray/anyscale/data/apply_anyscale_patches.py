@@ -116,9 +116,6 @@ def _add_optimization_rules():
         get_physical_ruleset,
     )
 
-    from ._internal.logical.rules.combine_repartitions import (
-        CombineRepartitions,
-    )
     from ._internal.logical.rules.combine_downloads import (
         CombineDownloads,
     )
@@ -131,7 +128,6 @@ def _add_optimization_rules():
 
     logical_ruleset = get_logical_ruleset()
     logical_ruleset.add(PushdownCountFiles)
-    logical_ruleset.add(CombineRepartitions)
     # Re-enable once https://anyscale1.atlassian.net/browse/DATA-1665 is fixed.
     # logical_ruleset.add(FuseMapWithRepartitionRule)
     logical_ruleset.add(CombineDownloads)

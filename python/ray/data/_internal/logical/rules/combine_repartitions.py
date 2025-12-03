@@ -1,8 +1,8 @@
 from ray.data._internal.logical.interfaces import (
-    Rule,
-    Plan,
-    LogicalPlan,
     LogicalOperator,
+    LogicalPlan,
+    Plan,
+    Rule,
 )
 from ray.data._internal.logical.operators.all_to_all_operator import Repartition
 from ray.data._internal.logical.operators.map_operator import StreamingRepartition
@@ -24,10 +24,11 @@ class CombineRepartitions(Rule):
             input_op = op.input_dependencies[0]
 
             if isinstance(op, Repartition) and isinstance(input_op, Repartition):
+                shuffle = input_op._shuffle or op._shuffle
                 return Repartition(
                     input_op.input_dependencies[0],
                     num_outputs=op._num_outputs,
-                    shuffle=op._shuffle,
+                    shuffle=shuffle,
                     keys=op._keys,
                     sort=op._sort,
                 )
