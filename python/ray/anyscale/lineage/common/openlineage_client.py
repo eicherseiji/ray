@@ -14,6 +14,7 @@ from openlineage.client.event_v2 import (
 from ray.anyscale.lineage.common.logging import get_logger
 from ray.anyscale.lineage.common.utils import (
     catch_ol_client_exception,
+    get_anyscale_openlineage_config,
     get_now_utc_datetime,
 )
 
@@ -25,7 +26,7 @@ class AnyscaleOpenLineageClient:
 
     def __init__(self, ol_producer: str):
         """Initialize the OpenLineage client."""
-        self._client = OpenLineageClient.from_environment()
+        self._client = OpenLineageClient(config=get_anyscale_openlineage_config())
         self._ol_producer = ol_producer
         set_producer(self._ol_producer)
 

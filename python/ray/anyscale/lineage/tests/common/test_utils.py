@@ -369,6 +369,61 @@ def test_transform_anyscale_mnt_path_workload_types(
     assert result == f"{expected_id}:/mnt/{storage_type}/data/file.csv"
 
 
+def test_get_lineage_logs_dir(monkeypatch, tmp_path):
+    from unittest import mock
+
+    mock_node = mock.Mock()
+    mock_node.get_logs_dir_path.return_value = str(tmp_path / "logs")
+
+    monkeypatch.setattr("ray._private.worker._global_node", mock_node)
+
+    result = utils.get_lineage_logs_dir()
+
+    expected = str(tmp_path / "logs" / "lineage")
+    assert result == expected
+    assert (tmp_path / "logs" / "lineage").exists()
+
+
+def test_get_openlineage_events_log_path(monkeypatch, tmp_path):
+    from unittest import mock
+
+    mock_node = mock.Mock()
+    mock_node.get_logs_dir_path.return_value = str(tmp_path / "logs")
+
+    monkeypatch.setattr("ray._private.worker._global_node", mock_node)
+
+    result = utils.get_openlineage_events_log_path()
+
+    expected = str(tmp_path / "logs" / "lineage" / "lineage_events.jsonl")
+    assert result == expected
+
+
+def test_get_anyscale_openlineage_config(monkeypatch, tmp_path):
+    from unittest import mock
+
+    mock_node = mock.Mock()
+    mock_node.get_logs_dir_path.return_value = str(tmp_path / "logs")
+
+    monkeypatch.setattr("ray._private.worker._global_node", mock_node)
+
+    config = utils.get_anyscale_openlineage_config()
+
+    assert config["transport"]["type"] == "composite"
+    assert "first" in config["transport"]["transports"]
+    assert "second" in config["transport"]["transports"]
+
+    http_transport = config["transport"]["transports"]["first"]
+    assert http_transport["type"] == "http"
+    assert http_transport["url"] == "http://0.0.0.0:8691"
+
+    file_transport = config["transport"]["transports"]["second"]
+    assert file_transport["type"] == "file"
+    assert file_transport["log_file_path"] == str(
+        tmp_path / "logs" / "lineage" / "lineage_events.jsonl"
+    )
+    assert file_transport["append"] is True
+
+
 if __name__ == "__main__":
     import sys
 

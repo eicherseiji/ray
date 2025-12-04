@@ -64,20 +64,24 @@ class FakeDataset:
 @pytest.fixture
 def mock_ol_client():
     """Mock OpenLineage client."""
+    fake_client = FakeOpenLineageClient()
     with mock.patch(
-        "ray.anyscale.lineage.common.openlineage_client.OpenLineageClient.from_environment"
-    ) as from_env_mock:
-        fake_client = FakeOpenLineageClient()
-        from_env_mock.return_value = fake_client
+        "ray.anyscale.lineage.common.openlineage_client.OpenLineageClient",
+        return_value=fake_client,
+    ):
         yield fake_client
 
 
 @pytest.fixture
-def anyscale_client(mock_ol_client):
+def anyscale_client(mock_ol_client, tmp_path):
     """Create AnyscaleOpenLineageClient."""
-    with mock.patch("ray.anyscale.lineage.common.openlineage_client.set_producer"):
-        client = openlineage_client.AnyscaleOpenLineageClient("test-producer")
-        return client
+    mock_node = mock.Mock()
+    mock_node.get_logs_dir_path.return_value = str(tmp_path / "logs")
+
+    with mock.patch("ray._private.worker._global_node", mock_node):
+        with mock.patch("ray.anyscale.lineage.common.openlineage_client.set_producer"):
+            client = openlineage_client.AnyscaleOpenLineageClient("test-producer")
+            return client
 
 
 class TestAnyscaleOpenLineageClient:

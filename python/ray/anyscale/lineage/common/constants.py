@@ -16,3 +16,6 @@ OL_PRODUCER = f"{REPO_URL}/tree/{__version__}/lineage"
 # Logging configuration
 LOG_LEVEL = os.getenv(f"{ANYSCALE_LINEAGE_ENV_PREFIX}_LOG_LEVEL", "INFO")
 LOG_ENCODING = os.getenv(f"{ANYSCALE_LINEAGE_ENV_PREFIX}_LOG_ENCODING", "JSON")
+
+# OpenLineage events log filename
+LINEAGE_EVENTS_LOG_FILENAME = "lineage_events.jsonl"

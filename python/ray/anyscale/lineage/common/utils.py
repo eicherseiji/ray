@@ -26,6 +26,7 @@ from openlineage.client.facet_v2 import (
 )
 from openlineage.client.uuid import generate_new_uuid
 
+from ray.anyscale.lineage.common.constants import LINEAGE_EVENTS_LOG_FILENAME
 from ray.anyscale.lineage.common.exceptions import AnyscaleLineageClientError
 from ray.anyscale.lineage.common.logging import get_logger
 
@@ -448,3 +449,45 @@ def transform_anyscale_mnt_path(uri: str) -> str:
         )
 
     return uri
+
+
+def get_lineage_logs_dir() -> str:
+    """Get the lineage logs directory path.
+
+    Returns the path to <session_dir>/logs/lineage, creating it if necessary.
+    """
+    from ray._private.worker import _global_node
+
+    logs_dir = _global_node.get_logs_dir_path()
+    lineage_logs_dir = os.path.join(logs_dir, "lineage")
+    os.makedirs(lineage_logs_dir, exist_ok=True)
+    return lineage_logs_dir
+
+
+def get_openlineage_events_log_path() -> str:
+    """Get the full path for the OpenLineage events log file."""
+    return os.path.join(get_lineage_logs_dir(), LINEAGE_EVENTS_LOG_FILENAME)
+
+
+def get_anyscale_openlineage_config() -> dict:
+    """Get the OpenLineage configuration with dynamic log file path."""
+    return {
+        "transport": {
+            "type": "composite",
+            "continue_on_success": False,  # stops emission if one of the transport succeeds
+            "sort_transports": True,  # sorts the transports by priority
+            "transports": {
+                "first": {
+                    "type": "http",
+                    "url": "http://0.0.0.0:8691",  # Vector collector endpoint
+                    "endpoint": "",
+                },
+                "second": {
+                    "type": "file",
+                    "log_file_path": get_openlineage_events_log_path(),
+                    "append": True,
+                    "priority": 1,
+                },
+            },
+        }
+    }
