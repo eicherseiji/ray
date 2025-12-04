@@ -423,10 +423,6 @@ python/ray/air/util/tensor_extensions/pandas.py
 python/ray/air/util/transform_pyarrow.py
     DOC201: Function `_concatenate_extension_column` does not have a return section in docstring
 --------------------
-python/ray/anyscale/air/_internal/autoscaling_coordinator.py
-    DOC101: Method `AutoscalingCoordinator.request_resources`: Docstring contains fewer arguments than in function signature.
-    DOC103: Method `AutoscalingCoordinator.request_resources`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [priority: ResourceRequestPriority].
---------------------
 python/ray/anyscale/data/_internal/block.py
     DOC001: Function/method `_aggregate`: Potential formatting errors in docstring. Error message: Expected a colon in 'If this is ``None``, place all rows in a single group.'. (Note: DOC001 could trigger other unrelated violations under this function/method too. Please fix the docstring formatting first.)
     DOC101: Method `OptimizedTableBlockMixin._aggregate`: Docstring contains fewer arguments than in function signature.
@@ -470,10 +466,6 @@ python/ray/anyscale/data/_internal/logical/rules/predicate_pushdown.py
     DOC101: Method `PredicatePushdown._process_operator`: Docstring contains fewer arguments than in function signature.
     DOC103: Method `PredicatePushdown._process_operator`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [filter_expr_strs_to_pushdown: Optional[List[str]]].
 --------------------
-python/ray/anyscale/data/_internal/readers/file_reader.py
-    DOC101: Method `FileReader.read_files`: Docstring contains fewer arguments than in function signature.
-    DOC103: Method `FileReader.read_files`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [columns_rename: Optional[Dict[str, str]]].
---------------------
 python/ray/anyscale/data/_internal/util/cache.py
     DOC101: Function `timed_cache`: Docstring contains fewer arguments than in function signature.
     DOC103: Function `timed_cache`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [get_time_fn: Callable[[], float]].
@@ -498,10 +490,6 @@ python/ray/anyscale/data/api/read_api.py
     DOC103: Function `read_snowflake`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [concurrency: Optional[int], override_num_blocks: Optional[int], parallelism: int, ray_remote_args: Dict[str, Any]].
     DOC102: Function `read_delta`: Docstring contains more arguments than in function signature.
     DOC103: Function `read_delta`: Docstring arguments are different from function arguments. (Or could be other formatting issues: https://jsh9.github.io/pydoclint/violation_codes.html#notes-on-doc103 ). Arguments in the function signature but not in the docstring: [**arrow_parquet_args: ]. Arguments in the docstring but not in the function signature: [arrow_parquet_args: , filters: ].
---------------------
-python/ray/anyscale/data/checkpoint/interfaces.py
-    DOC001: Method `__init__` Potential formatting errors in docstring. Error message: No specification for "Args": ""
-    DOC001: Function/method `__init__`: Potential formatting errors in docstring. Error message: No specification for "Args": "" (Note: DOC001 could trigger other unrelated violations under this function/method too. Please fix the docstring formatting first.)
 --------------------
 python/ray/anyscale/data/tests/test_snowflake.py
     DOC101: Function `execute`: Docstring contains fewer arguments than in function signature.

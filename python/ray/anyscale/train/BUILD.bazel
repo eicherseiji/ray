@@ -69,3 +69,18 @@ py_test(
         "//:ray_lib",
     ],
 )
+
+py_test(
+    name = "test_config",
+    size = "small",
+    srcs = ["tests/test_config.py"],
+    env = {"RAY_TRAIN_V2_ENABLED": "1"},
+    tags = [
+        "exclusive",
+        "team:ml",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)

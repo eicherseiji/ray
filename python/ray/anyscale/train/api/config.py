@@ -56,3 +56,12 @@ class ScalingConfig(RayScalingConfig):
                 f"Invalid ScalingConfig(num_workers={self.num_workers}): "
                 f"min_workers={self.min_workers} must be <= max_workers={self.max_workers}."
             )
+        if (
+            is_elastic
+            and isinstance(self.bundle_label_selector, list)
+            and len(self.bundle_label_selector) != self.max_workers
+        ):
+            raise ValueError(
+                f"`bundle_label_selector` is a list of length {len(self.bundle_label_selector)}, "
+                f"but it must be of length `max_workers={self.max_workers}` instead."
+            )
