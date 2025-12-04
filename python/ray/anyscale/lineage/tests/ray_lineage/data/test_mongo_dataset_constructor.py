@@ -4,10 +4,10 @@
 from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import main, mongo
 from ray.anyscale.lineage.ray_lineage.data.utils import Datasinks, Datasources
 from ray.anyscale.lineage.tests.test_constants import (
-    PROD_DB_COLLECTION,
-    PROD_DB_NAME,
     TEST_DB_COLLECTION,
+    TEST_DB_COLLECTION_ALT,
     TEST_DB_NAME,
+    TEST_DB_NAME_ALT,
     TEST_MONGO_URI,
     TEST_MONGO_URI_AUTH,
 )
@@ -58,14 +58,14 @@ def test_process_mongo_datasink_builds_dataset(patch_facet_constructors, monkeyp
 
     result = mongo.process_mongo_datasink(
         uri=TEST_MONGO_URI_AUTH,
-        database=PROD_DB_NAME,
-        collection=PROD_DB_COLLECTION,
+        database=TEST_DB_NAME_ALT,
+        collection=TEST_DB_COLLECTION_ALT,
     )
 
     assert result == "mongo-output-dataset"
     assert captured_args == {
         "dataset_namespace": TEST_MONGO_URI_AUTH,
-        "dataset_name": f"{PROD_DB_NAME}.{PROD_DB_COLLECTION}",
+        "dataset_name": f"{TEST_DB_NAME_ALT}.{TEST_DB_COLLECTION_ALT}",
         "facets": {
             "dataset_type": mongo.DatasetType.FILE,
             "datasource": TEST_MONGO_URI_AUTH,

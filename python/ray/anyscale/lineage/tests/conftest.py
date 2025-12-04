@@ -36,6 +36,30 @@ def reset_utils_globals():
     _reset_utils_globals()
 
 
+@pytest.fixture(autouse=True)
+def mock_lineage_logs_dir(request, monkeypatch, tmp_path):
+    """Mock get_lineage_logs_dir to avoid Ray runtime dependency.
+
+    The get_lineage_logs_dir function tries to access Ray's _global_node
+    which is None when Ray isn't running. This fixture mocks it to return
+    a temporary directory for tests.
+
+    Tests that need to test the actual get_lineage_logs_dir function can
+    use the @pytest.mark.no_mock_lineage_logs_dir marker to skip this mock.
+    """
+    if request.node.get_closest_marker("no_mock_lineage_logs_dir"):
+        yield
+        return
+
+    lineage_logs_dir = tmp_path / "lineage_logs"
+    lineage_logs_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "ray.anyscale.lineage.common.utils.get_lineage_logs_dir",
+        lambda: str(lineage_logs_dir),
+    )
+    yield
+
+
 @pytest.fixture
 def clean_environment(monkeypatch):
     """Clean Anyscale environment variables."""

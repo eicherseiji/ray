@@ -369,6 +369,7 @@ def test_transform_anyscale_mnt_path_workload_types(
     assert result == f"{expected_id}:/mnt/{storage_type}/data/file.csv"
 
 
+@pytest.mark.no_mock_lineage_logs_dir
 def test_get_lineage_logs_dir(monkeypatch, tmp_path):
     from unittest import mock
 
@@ -384,6 +385,7 @@ def test_get_lineage_logs_dir(monkeypatch, tmp_path):
     assert (tmp_path / "logs" / "lineage").exists()
 
 
+@pytest.mark.no_mock_lineage_logs_dir
 def test_get_openlineage_events_log_path(monkeypatch, tmp_path):
     from unittest import mock
 
@@ -398,6 +400,7 @@ def test_get_openlineage_events_log_path(monkeypatch, tmp_path):
     assert result == expected
 
 
+@pytest.mark.no_mock_lineage_logs_dir
 def test_get_anyscale_openlineage_config(monkeypatch, tmp_path):
     from unittest import mock
 

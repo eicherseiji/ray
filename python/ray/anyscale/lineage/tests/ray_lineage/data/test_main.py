@@ -4,9 +4,9 @@ from ray.anyscale.lineage.common.exceptions import AnyscaleLineageRayDataError
 from ray.anyscale.lineage.ray_lineage.data import main
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_DATASET_ID,
+    TEST_MOCK_RUN_ID_STR,
     TEST_RAY_JOB_NAME_PATTERN,
     TEST_RAY_NAMESPACE_PATTERN,
-    TEST_RUN_ID_SHORT,
     TEST_UUID_PATTERN,
 )
 
@@ -22,7 +22,7 @@ class DummyClient:
         self.emitted_events = []
 
     def generate_run_id(self):
-        return TEST_RUN_ID_SHORT
+        return TEST_MOCK_RUN_ID_STR
 
     def create_job_from_args(self, **kwargs):
         return {"job": kwargs}
@@ -58,8 +58,8 @@ def sample_env(monkeypatch):
     monkeypatch.setenv("ANYSCALE_ORGANIZATION_ID", SIMPLE_ORG)
     monkeypatch.setenv("ANYSCALE_CLOUD_ID", SIMPLE_CLOUD)
     monkeypatch.setenv("ANYSCALE_PROJECT_ID", SIMPLE_PROJECT)
-    monkeypatch.setenv("ANYSCALE_WORKLOAD_TYPE", SIMPLE_JOB)
-    monkeypatch.setenv("ANYSCALE_JOB_ID", "job-id")
+    monkeypatch.setenv("ANYSCALE_WORKLOAD_TYPE", "job")
+    monkeypatch.setenv("ANYSCALE_JOB_ID", SIMPLE_JOB)
     monkeypatch.setenv("ANYSCALE_WORKLOAD_VERSION_ID", "v1")
     monkeypatch.setenv(
         "ANYSCALE_WORKLOAD_OPENLINEAGE_RUN_ID",
