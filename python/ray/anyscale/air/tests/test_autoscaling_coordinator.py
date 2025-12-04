@@ -5,11 +5,37 @@ import pytest
 import ray
 from ray.anyscale.air._internal.autoscaling_coordinator import (
     HEAD_NODE_RESOURCE_LABEL,
-    AutoscalingCoordinator,
+    DefaultAutoscalingCoordinator,
+    _AutoscalingCoordinatorActor,
     get_or_create_autoscaling_coordinator,
 )
 from ray.cluster_utils import Cluster
 from ray.tests.conftest import wait_for_condition
+
+
+def kill_autoscaling_coordinator():
+    """Kill the AutoscalingCoordinator actor.
+
+    We expose this to keep autoscaling coordinator tests isolated.
+
+    If the AutoscalingCoordinator actor doesn't exist, this function is a no-op.
+    """
+    try:
+        actor = ray.get_actor(
+            "AutoscalingCoordinator", namespace="AutoscalingCoordinator"
+        )
+    except ValueError:
+        # If the actor doesn't exist, `ray.get_actor` raises a `ValueError`.
+        return
+
+    ray.kill(actor)
+
+
+@pytest.fixture
+def teardown_autoscaling_coordinator():
+    yield
+    kill_autoscaling_coordinator()
+
 
 MOCKED_TIME = 0
 
@@ -76,7 +102,7 @@ def test_basic(cluster_nodes):
         MOCKED_TIME = 0
         req1 = [{"CPU": 3, "GPU": 1, "object_store_memory": 100}]
         req1_timeout = 2
-        as_coordinator = AutoscalingCoordinator()
+        as_coordinator = _AutoscalingCoordinatorActor()
         as_coordinator.request_resources(
             requester_id="requester1",
             resources=req1,
@@ -276,6 +302,98 @@ def test_autoscaling_coordinator_e2e(cluster, gpu_tasks_include_cpu):
     )
 
     assert ray.get([res1, res2]) == ["ok"] * 2
+
+
+def _test_consecutive_failures(
+    coordinator,
+    call_method,
+    counter_attr,
+    error_msg_prefix,
+):
+    """Test consecutive failures: increment counter, raise after max, reset on success."""
+    max_failures = coordinator.MAX_CONSECUTIVE_FAILURES
+    timeout_error = ray.exceptions.GetTimeoutError("timeout")
+
+    # Counter increments on each failure
+    with patch("ray.get", side_effect=timeout_error):
+        for attempt in range(1, max_failures):
+            call_method()
+            assert getattr(coordinator, counter_attr) == attempt
+
+    # Exception raised after max consecutive failures
+    expected_error_msg = f"{error_msg_prefix} after {max_failures} consecutive failures"
+    with patch("ray.get", side_effect=timeout_error):
+        with pytest.raises(RuntimeError, match=expected_error_msg):
+            call_method()
+
+    # Counter resets on success
+    with patch("ray.get", return_value=None):
+        call_method()
+        assert getattr(coordinator, counter_attr) == 0
+
+
+def test_get_allocated_resources_handles_timeout_error(
+    teardown_autoscaling_coordinator,
+):
+    """Test get_allocated_resources handles timeout error."""
+    coordinator = DefaultAutoscalingCoordinator()
+    coordinator._cached_allocated_resources["test"] = [{"CPU": 1}]
+
+    def call_method():
+        return coordinator.get_allocated_resources("test")
+
+    max_failures = coordinator.MAX_CONSECUTIVE_FAILURES
+    timeout_error = ray.exceptions.GetTimeoutError("timeout")
+    cached_value = [{"CPU": 1}]
+    new_value = [{"CPU": 2}]
+
+    # Counter increments on failures and returns cached value
+    with patch("ray.get", side_effect=timeout_error):
+        for attempt in range(1, max_failures):
+            result = call_method()
+            assert result == cached_value
+            assert coordinator._consecutive_failures_get_allocated_resources == attempt
+
+    # Exception raised after max consecutive failures
+    expected_error_msg = (
+        f"Failed to get allocated resources for test "
+        f"after {max_failures} consecutive failures"
+    )
+    with patch("ray.get", side_effect=timeout_error):
+        with pytest.raises(RuntimeError, match=expected_error_msg):
+            call_method()
+
+    # Counter resets on success and returns new value
+    with patch("ray.get", return_value=new_value):
+        result = call_method()
+        assert result == new_value
+        assert coordinator._consecutive_failures_get_allocated_resources == 0
+
+
+def test_cancel_request_handles_timeout_error(teardown_autoscaling_coordinator):
+    """Test cancel_request handles timeout error."""
+    coordinator = DefaultAutoscalingCoordinator()
+
+    _test_consecutive_failures(
+        coordinator=coordinator,
+        call_method=lambda: coordinator.cancel_request("test"),
+        counter_attr="_consecutive_failures_cancel_request",
+        error_msg_prefix="Failed to cancel resource request for test",
+    )
+
+
+def test_request_resources_handles_timeout_error(teardown_autoscaling_coordinator):
+    """Test request_resources handles timeout error."""
+    coordinator = DefaultAutoscalingCoordinator()
+
+    _test_consecutive_failures(
+        coordinator=coordinator,
+        call_method=lambda: coordinator.request_resources(
+            "test", [{"CPU": 1}], expire_after_s=1
+        ),
+        counter_attr="_consecutive_failures_request_resources",
+        error_msg_prefix="Failed to send resource request for test",
+    )
 
 
 if __name__ == "__main__":
