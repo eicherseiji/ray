@@ -6,7 +6,6 @@ from ray.data._internal.execution.execution_callback import ExecutionCallback
 from ray.data._internal.execution.streaming_executor import StreamingExecutor
 
 from ray.anyscale.lineage.common.exceptions import AnyscaleLineageRayDataError
-from ray.anyscale.lineage.common.logging import configure_logging
 from ray.anyscale.lineage.common.openlineage_client import AnyscaleOpenLineageClient
 from ray.anyscale.lineage.common.utils import (
     create_openlineage_job_from_args,
@@ -25,9 +24,6 @@ from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import (
 from ray.anyscale.lineage.ray_lineage.data.facet_constructor import (
     RayDataFacetConstructor,
 )
-
-# Configure logging once at module level
-configure_logging()
 
 
 class RayDataOpenLineageExecutionCallback(ExecutionCallback):
