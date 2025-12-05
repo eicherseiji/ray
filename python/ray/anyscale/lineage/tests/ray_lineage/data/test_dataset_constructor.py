@@ -8,10 +8,12 @@ from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import main
 
 
 def test_process_datasource_skips_duplicate_paths(monkeypatch):
+    """Test that duplicate remote paths are deduplicated."""
     processed_paths = []
 
     class StubDatasource:
-        _source_paths = ["/data/a", "/data/a", "/data/b"]
+        # Use remote paths (s3://) which are always tracked
+        _source_paths = ["s3://bucket/a", "s3://bucket/a", "s3://bucket/b"]
 
     monkeypatch.setattr(
         main,
@@ -37,12 +39,12 @@ def test_process_datasource_skips_duplicate_paths(monkeypatch):
 
     datasets, seen = main.process_datasource(StubDatasource(), set())
 
-    assert datasets == ["dataset:/data/a", "dataset:/data/b"]
+    assert datasets == ["dataset:s3://bucket/a", "dataset:s3://bucket/b"]
     assert processed_paths == [
-        ("/data/a", FileFormats.JSON),
-        ("/data/b", FileFormats.JSON),
+        ("s3://bucket/a", FileFormats.JSON),
+        ("s3://bucket/b", FileFormats.JSON),
     ]
-    assert seen == {"/data/a", "/data/b"}
+    assert seen == {"s3://bucket/a", "s3://bucket/b"}
 
 
 def test_construct_input_output_datasets_merges_common_facets(
@@ -203,7 +205,8 @@ def test_process_datasink_prevents_duplicate_file_paths(monkeypatch):
     processed_paths = []
 
     class StubDatasink:
-        unresolved_path = "/tmp/output.parquet"
+        # Use remote path (s3://) which is always tracked
+        unresolved_path = "s3://bucket/output.parquet"
 
     monkeypatch.setattr(
         main,

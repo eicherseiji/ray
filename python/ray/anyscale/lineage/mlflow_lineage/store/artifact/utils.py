@@ -13,10 +13,10 @@ from ray.anyscale.lineage.common.utils import (
     create_openlineage_job_from_args,
     create_openlineage_output_dataset_from_args,
     create_openlineage_run_from_args,
+    evaluate_and_transform_uri,
     get_anyscale_workload_ol_job_name,
     get_anyscale_workload_ol_job_namespace,
     get_anyscale_workload_ol_run_id,
-    transform_anyscale_mnt_path,
 )
 from ray.anyscale.lineage.mlflow_lineage.facet_constructor import (
     MLflowFacetConstructor,
@@ -108,8 +108,12 @@ def process_and_emit_ol_events_for_artifact_repo_operation(
     full_artifact_path = os.path.join(artifact_uri, artifact_path)
 
     # Transform Anyscale-specific /mnt paths
-    transformed_artifact_uri = transform_anyscale_mnt_path(artifact_uri)
-    transformed_full_artifact_path = transform_anyscale_mnt_path(full_artifact_path)
+    _, transformed_artifact_uri = evaluate_and_transform_uri(artifact_uri)
+    should_track, transformed_full_artifact_path = evaluate_and_transform_uri(
+        full_artifact_path
+    )
+    if not should_track:
+        return
 
     file_format = (
         artifact_path.split(ARTIFACT_PATH_FILE_FORMAT_SEPARATOR)[-1]

@@ -1,11 +1,13 @@
 import logging
 import os
+import tempfile
 from unittest import mock
 
 import pytest
 
 from ray._common.formatters import JSONFormatter
 from ray.anyscale.lineage.common import logging as logging_module
+from ray.anyscale.lineage.common.logging import LineageSessionFileHandler
 
 
 @pytest.fixture
@@ -85,6 +87,63 @@ def test_log_encoding_text(preserve_logger_state):
 
     importlib.reload(constants)
     importlib.reload(logging_module)
+
+
+class TestLineageSessionFileHandler:
+    """Tests for LineageSessionFileHandler class."""
+
+    def test_emit_with_ray_session(self):
+        """Handler creates file and applies formatter on first emit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lineage_logs_dir = os.path.join(tmpdir, "logs", "lineage")
+            os.makedirs(lineage_logs_dir, exist_ok=True)
+
+            with mock.patch(
+                "ray.anyscale.lineage.common.utils.get_lineage_logs_dir",
+                return_value=lineage_logs_dir,
+            ):
+                handler = LineageSessionFileHandler(filename="test.log")
+                formatter = logging.Formatter("%(message)s")
+                handler.setFormatter(formatter)
+
+                record = logging.LogRecord(
+                    name="test",
+                    level=logging.INFO,
+                    pathname="test.py",
+                    lineno=1,
+                    msg="Test message",
+                    args=(),
+                    exc_info=None,
+                )
+                handler.emit(record)
+                handler._handler.flush()
+
+                expected_path = os.path.join(lineage_logs_dir, "test.log")
+                assert handler._path == expected_path
+                assert handler._handler.formatter is formatter
+                with open(expected_path) as f:
+                    assert "Test message" in f.read()
+
+    def test_emit_without_ray_session(self):
+        """Handler gracefully handles missing Ray session."""
+        with mock.patch(
+            "ray.anyscale.lineage.common.utils.get_lineage_logs_dir",
+            side_effect=AttributeError("_global_node is None"),
+        ):
+            handler = LineageSessionFileHandler(filename="test.log")
+
+            record = logging.LogRecord(
+                name="test",
+                level=logging.INFO,
+                pathname="test.py",
+                lineno=1,
+                msg="Test message",
+                args=(),
+                exc_info=None,
+            )
+            handler.emit(record)
+
+            assert handler._handler is None
 
 
 if __name__ == "__main__":

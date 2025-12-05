@@ -22,18 +22,12 @@ def _create_anyscale_rest_store_class() -> Type[Any]:
     from ray.anyscale.lineage.mlflow_lineage.store.tracking.utils import (
         process_and_emit_ol_events_for_model_logging,
     )
-    from ray.anyscale.lineage.mlflow_lineage.utils import (
-        StoreType,
-        extract_upstream_store_uri,
-    )
 
     class AnyscaleRestStore(RestStore):
         """Anyscale implementation of MLflow REST tracking store."""
 
         def __init__(self, store_uri: str, artifact_uri: Optional[str] = None):
             self.is_plugin = True
-
-            store_uri = extract_upstream_store_uri(store_uri, StoreType.TRACKING_STORE)
 
             get_host_creds_func = partial(get_default_host_creds, store_uri)
 

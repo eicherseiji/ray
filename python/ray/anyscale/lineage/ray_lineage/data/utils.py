@@ -1,5 +1,6 @@
 from enum import Enum
-from typing import Dict, List, Type
+from functools import wraps
+from typing import Any, Callable, Dict, List, Type
 
 
 # Import all datasource classes
@@ -53,7 +54,13 @@ from ray.data._internal.datasource.webdataset_datasink import WebDatasetDatasink
 from ray.data.datasource.datasink import Datasink
 from ray.data.datasource.datasource import Datasource
 
+from ray.anyscale.lineage.common.constants import IGNORE_ERRORS
+from ray.anyscale.lineage.common.exceptions import AnyscaleLineageRayDataError
 from ray.anyscale.lineage.common.facets.dataset import FileFormats
+from ray.anyscale.lineage.common.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 class Datasources(Enum):
@@ -261,3 +268,24 @@ def build_file_formats_registry() -> Dict[str, FileFormats]:
 
 FILE_EXTENSIONS_REGISTRY = build_file_extensions_registry()
 FILE_FORMATS_REGISTRY = build_file_formats_registry()
+
+
+def catch_lineage_callback_exception(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrapper to catch and handle lineage execution callback exceptions."""
+
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            error_msg = (
+                f"Error in lineage execution callback method '{func.__name__}' "
+                f"for args '{args!s}' and kwargs '{kwargs!s}': {e!r}"
+            )
+            logger.error(error_msg)
+
+            # If IGNORE_ERRORS=True, suppress error and allow workload to continue
+            if not IGNORE_ERRORS:
+                raise AnyscaleLineageRayDataError(error_msg) from e
+
+    return wrapper

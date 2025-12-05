@@ -9,9 +9,6 @@ from ray.anyscale.lineage.mlflow_lineage.store.tracking.file_store import (
     AnyscaleFileStore,
 )
 from ray.anyscale.lineage.tests.test_constants import (
-    MLFLOW_ARTIFACT_REPO_PREFIX,
-    MLFLOW_TRACKING_STORE_FILE_PREFIX,
-    TEST_LOCAL_ARTIFACTS_PATH,
     TEST_LOCAL_MLRUNS_PATH,
     TEST_MLFLOW_MODEL_NAME,
     TEST_MLFLOW_RUN_ID,
@@ -56,54 +53,6 @@ def test_anyscale_file_store_initializes_client(monkeypatch) -> None:
     assert call_args.kwargs["mlflow_model"] == TEST_MLFLOW_MODEL_NAME
 
 
-def test_anyscale_file_store_strips_plugin_prefix(monkeypatch) -> None:
-    """Test that AnyscaleFileStore replaces the plugin prefix with 'file'."""
-    monkeypatch.setattr(
-        "mlflow.store.tracking.file_store.FileStore.__init__",
-        lambda self, root_directory=None, artifact_root_uri=None: setattr(
-            self, "root_directory", root_directory or "default-root"
-        ),
-    )
-
-    mock_client = mock.Mock()
-    monkeypatch.setattr(
-        "ray.anyscale.lineage.common.openlineage_client.AnyscaleOpenLineageClient",
-        mock.Mock(return_value=mock_client),
-    )
-
-    store = AnyscaleFileStore(
-        store_uri=f"{MLFLOW_TRACKING_STORE_FILE_PREFIX}{TEST_LOCAL_MLRUNS_PATH}"
-    )
-
-    assert store.host == f"file:{TEST_LOCAL_MLRUNS_PATH}"
-
-
-def test_anyscale_file_store_strips_artifact_repo_prefix(monkeypatch) -> None:
-    """Test that AnyscaleFileStore strips the artifact repo prefix from artifact_uri."""
-
-    def mock_init(self, root_directory=None, artifact_root_uri=None):
-        self.root_directory = root_directory or "default-root"
-        self.artifact_uri = artifact_root_uri
-
-    monkeypatch.setattr(
-        "mlflow.store.tracking.file_store.FileStore.__init__",
-        mock_init,
-    )
-
-    mock_client = mock.Mock()
-    monkeypatch.setattr(
-        "ray.anyscale.lineage.common.openlineage_client.AnyscaleOpenLineageClient",
-        mock.Mock(return_value=mock_client),
-    )
-
-    store = AnyscaleFileStore(
-        store_uri=TEST_LOCAL_MLRUNS_PATH,
-        artifact_uri=f"{MLFLOW_ARTIFACT_REPO_PREFIX}{TEST_LOCAL_ARTIFACTS_PATH}",
-    )
-
-    assert store.artifact_uri == TEST_LOCAL_ARTIFACTS_PATH
-
-
 def test_anyscale_file_store_factory_caches_class(monkeypatch) -> None:
     """Test that the factory function caches the created class."""
     monkeypatch.setattr(
@@ -134,6 +83,11 @@ def test_anyscale_file_store_record_logged_model_catches_exceptions(
     monkeypatch,
 ) -> None:
     """Test that record_logged_model catches and wraps exceptions from OpenLineage processing."""
+    from ray.anyscale.lineage.mlflow_lineage import utils as mlflow_utils
+
+    # Set IGNORE_ERRORS to False to ensure exceptions are raised
+    monkeypatch.setattr(mlflow_utils, "IGNORE_ERRORS", False)
+
     monkeypatch.setattr(
         "mlflow.store.tracking.file_store.FileStore.__init__",
         lambda self, root_directory=None, artifact_root_uri=None: setattr(

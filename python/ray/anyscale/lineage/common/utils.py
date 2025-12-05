@@ -376,79 +376,71 @@ def get_os_env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
-def transform_anyscale_mnt_path(uri: str) -> str:
-    """
-    Transform Anyscale-specific /mnt paths to include workload or cloud identifiers.
+def evaluate_and_transform_uri(uri: str) -> Tuple[bool, str]:
+    """Evaluate if a URI should be tracked, and conditionally transform it.
 
-    Transformation rules:
-    - /mnt/user_storage/* -> {anyscale_workload_id}:/mnt/user_storage/*
-    - /mnt/cluster_storage/* -> {anyscale_workload_id}:/mnt/cluster_storage/*
-    - /mnt/shared_storage/* -> {anyscale_cloud_id}:/mnt/shared_storage/*
+    For local paths, only track /mnt/cluster_storage/ and /mnt/shared_storage/ paths.
+    These local paths are transformed to include file:// prefix which causes them
+    to be treated as remote filesystem paths by OpenLineage. This is intended to include
+    Anyscale cloud and workload identifiers in the OpenLineage dataset namespaces.
 
-    This function handles URIs with schemes (e.g., file:/mnt/path, local:/mnt/path)
-    by stripping the scheme, transforming the path, and reconstructing the URI.
+    Remote paths pass through unchanged and are always tracked.
     """
+    # Handle None/empty input
     if not uri:
-        return uri
+        return (False, uri)
 
-    # Extract scheme prefix if present
-    scheme_prefix = ""
-    path = uri
+    # Parse URI and extract scheme
+    parsed = parse_uri(uri)
+    scheme = parsed["scheme"]
+    path = parsed["path"]
 
-    for scheme in ("file:", "local:"):
-        if uri.startswith(scheme):
-            scheme_prefix = scheme
-            path = uri[len(scheme) :]
-            break
+    # Only process file and local schemes
+    # Non-local schemes (s3, http, etc.) pass through unchanged
+    if scheme and scheme not in ("file", "local"):
+        return (True, uri)
 
-    # Strip leading slashes after scheme (e.g., file:/// -> /)
-    while path.startswith("//"):
-        path = path[1:]
+    # Check for remote filesystem (file://<host>/path)
+    # Remote filesystem paths pass through unchanged
+    if scheme == "file" and parsed["netloc"]:
+        return (True, uri)
 
-    # If path doesn't start with /mnt/, return original
+    # Don't track paths that don't start with /mnt/
     if not path.startswith("/mnt/"):
-        return uri
+        return (False, uri)
 
-    # Transform based on storage type
-    transformed_path = None
+    # Don't track /mnt/user_storage/ paths
+    if path.startswith("/mnt/user_storage/"):
+        return (False, uri)
 
-    # Check for user_storage or cluster_storage paths
-    if path.startswith(("/mnt/user_storage", "/mnt/cluster_storage")):
+    # Transform /mnt/cluster_storage/ paths with workload_id
+    if path.startswith("/mnt/cluster_storage/"):
         try:
             workload_id = get_anyscale_workload_id()
-            if workload_id:
-                transformed_path = f"{workload_id}:{path}"
-        except (ValueError, KeyError) as e:
-            logger.warning(
-                f"Failed to get anyscale_workload_id for path transformation: {e}. "
-                f"Returning original URI: {uri}"
+            transformed_uri = f"file://{workload_id}{path}"
+            return (True, transformed_uri)
+        except ValueError as e:
+            logger.error(
+                f"Error getting Anyscale workload ID for path transformation: {e}. "
+                f"Path will not be tracked: {uri}"
             )
-            return uri
+            return (False, uri)
 
-    # Check for shared_storage paths
-    elif path.startswith("/mnt/shared_storage"):
-        cloud_id = os.environ.get(
-            AnyscaleEnvironmentVariables.ANYSCALE_CLOUD_ID.value, ""
-        )
+    # Transform /mnt/shared_storage/ paths with cloud_id
+    if path.startswith("/mnt/shared_storage/"):
+        cloud_id = get_os_env(AnyscaleEnvironmentVariables.ANYSCALE_CLOUD_ID.value)
         if cloud_id:
-            transformed_path = f"{cloud_id}:{path}"
+            transformed_uri = f"file://{cloud_id}{path}"
+            return (True, transformed_uri)
         else:
-            logger.warning(
-                f"ANYSCALE_CLOUD_ID not found for shared_storage path transformation. "
-                f"Returning original URI: {uri}"
+            logger.error(
+                f"Anyscale cloud ID not found for path transformation. "
+                f"Path will not be tracked: {uri}"
             )
-            return uri
-    else:
-        # Other /mnt paths that don't match our patterns
-        return uri
+            return (False, uri)
 
-    # Reconstruct with scheme if it was present
-    if transformed_path:
-        return (
-            f"{scheme_prefix}{transformed_path}" if scheme_prefix else transformed_path
-        )
-
-    return uri
+    # Don't track any other paths
+    return (False, uri)
 
 
 def get_lineage_logs_dir() -> str:

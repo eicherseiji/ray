@@ -165,3 +165,30 @@ class TestResolveDatasetNamingTypeAndAttributes:
             == dataset_naming.OpenLineageDatasetNamingTypes.LOCAL_FILE_SYSTEM
         )
         assert attributes["path"] == "unknown://path"
+
+    def test_resolve_file_scheme_no_netloc_is_local(self):
+        """file: scheme without netloc is treated as local filesystem."""
+        (
+            dataset_type,
+            attributes,
+        ) = dataset_naming.resolve_dataset_naming_type_and_attributes(
+            "file:/path/to/data.csv"
+        )
+        assert (
+            dataset_type
+            == dataset_naming.OpenLineageDatasetNamingTypes.LOCAL_FILE_SYSTEM
+        )
+        assert "/path/to/data.csv" in attributes["path"]
+
+    def test_resolve_file_scheme_with_netloc_is_remote(self):
+        """file://<host>/path is treated as remote filesystem."""
+        (
+            dataset_type,
+            attributes,
+        ) = dataset_naming.resolve_dataset_naming_type_and_attributes(
+            "file://remote-host/path/to/data.csv"
+        )
+        assert (
+            dataset_type
+            == dataset_naming.OpenLineageDatasetNamingTypes.REMOTE_FILE_SYSTEM
+        )

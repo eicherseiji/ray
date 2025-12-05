@@ -1,3 +1,3 @@
-from ray.anyscale.lineage.common.constants import OL_PRODUCER
+from ray.anyscale.lineage.common.constants import OPENLINEAGE_PRODUCER
 
-RAY_DATA_OPENLINEAGE_PRODUCER = f"{OL_PRODUCER}/ray/data"
+RAY_DATA_OPENLINEAGE_PRODUCER = f"{OPENLINEAGE_PRODUCER}/ray/data"

@@ -2,6 +2,7 @@ import pytest
 
 from ray.anyscale.lineage.common.exceptions import AnyscaleLineageRayDataError
 from ray.anyscale.lineage.ray_lineage.data import main
+from ray.anyscale.lineage.ray_lineage.data import utils as ray_data_utils
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_DATASET_ID,
     TEST_MOCK_RUN_ID_STR,
@@ -171,6 +172,7 @@ def test_after_execution_completes_constructs_datasets_and_facets(monkeypatch):
 
 def test_after_execution_succeeds_raises_on_emit_failure(monkeypatch):
     sample_env(monkeypatch)
+    monkeypatch.setattr(ray_data_utils, "IGNORE_ERRORS", False)
 
     class ErrorClient(DummyClient):
         def emit_run_event(self, **kwargs):
@@ -196,15 +198,13 @@ def test_after_execution_succeeds_raises_on_emit_failure(monkeypatch):
     executor = DummyExecutor()
     callback.before_execution_starts(executor)
 
-    with pytest.raises(
-        AnyscaleLineageRayDataError,
-        match="Error emitting OpenLineage COMPLETE run event",
-    ):
+    with pytest.raises(AnyscaleLineageRayDataError):
         callback.after_execution_succeeds(executor)
 
 
 def test_after_execution_fails_raises_on_emit_failure(monkeypatch):
     sample_env(monkeypatch)
+    monkeypatch.setattr(ray_data_utils, "IGNORE_ERRORS", False)
 
     class ErrorClient(DummyClient):
         def emit_run_event(self, **kwargs):
@@ -230,7 +230,5 @@ def test_after_execution_fails_raises_on_emit_failure(monkeypatch):
     executor = DummyExecutor()
     callback.before_execution_starts(executor)
 
-    with pytest.raises(
-        AnyscaleLineageRayDataError, match="Error emitting OpenLineage FAIL run event"
-    ):
+    with pytest.raises(AnyscaleLineageRayDataError):
         callback.after_execution_fails(executor, error=RuntimeError("test error"))

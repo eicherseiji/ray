@@ -401,9 +401,9 @@ def parse_kafka_uri(uri: str, parsed: Any) -> dict[str, Any]:
 
 
 def parse_local_file_system_uri(uri: str, parsed: Any) -> dict[str, Any]:
-    """Parse Local File System URI: file/{path}, local://{path}, or absolute paths (e.g., /path/to/file)"""
+    """Parse Local File System URI: file:{path}, local://{path}, or absolute paths."""
     attributes: dict[str, Any] = {}
-    path = parsed.path.lstrip("/")
+    path = parsed.path
 
     attributes["path"] = path if path else uri
 

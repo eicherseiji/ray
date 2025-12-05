@@ -307,66 +307,67 @@ def test_wrap_class_methods_with_inherited_methods():
 
 
 @pytest.mark.parametrize(
-    "storage_type,expected_id",
+    "uri,expected_should_track,expected_uri",
     [
-        ("user_storage", TEST_JOB_ID),
-        ("cluster_storage", TEST_JOB_ID),
-        ("shared_storage", TEST_CLOUD_ID),
+        # Remote schemes pass through unchanged and are tracked
+        ("s3://bucket/path/data.parquet", True, "s3://bucket/path/data.parquet"),
+        ("gs://bucket/path/data.parquet", True, "gs://bucket/path/data.parquet"),
+        ("http://host/path", True, "http://host/path"),
+        ("https://host/path", True, "https://host/path"),
+        # Remote filesystem (file://<host>/path) passes through unchanged
+        ("file://remote-host/data/file.csv", True, "file://remote-host/data/file.csv"),
+        # Non-/mnt/ local paths are NOT tracked
+        ("/tmp/data/file.csv", False, "/tmp/data/file.csv"),
+        ("/home/user/data.csv", False, "/home/user/data.csv"),
+        # /mnt/user_storage/ and other /mnt/ paths are NOT tracked
+        ("/mnt/user_storage/data/file.csv", False, "/mnt/user_storage/data/file.csv"),
+        ("/mnt/other_storage/data/file.csv", False, "/mnt/other_storage/data/file.csv"),
+        # Empty string is not tracked
+        ("", False, ""),
     ],
 )
-def test_transform_anyscale_mnt_path_basic(
-    sample_anyscale_env, storage_type, expected_id
+def test_evaluate_and_transform_uri_basic(uri, expected_should_track, expected_uri):
+    """Test URI evaluation for remote schemes, local paths, and untracked /mnt/ paths."""
+    should_track, transformed_uri = utils.evaluate_and_transform_uri(uri)
+    assert should_track == expected_should_track
+    assert transformed_uri == expected_uri
+
+
+@pytest.mark.parametrize(
+    "workload_env_fixture,path,expected_id",
+    [
+        ("sample_anyscale_env", "/mnt/cluster_storage/data/file.csv", TEST_JOB_ID),
+        ("service_workload_env", "/mnt/cluster_storage/data/file.csv", TEST_SERVICE_ID),
+        (
+            "workspace_workload_env",
+            "/mnt/cluster_storage/data/file.csv",
+            TEST_WORKSPACE_ID,
+        ),
+        ("sample_anyscale_env", "/mnt/shared_storage/data/file.csv", TEST_CLOUD_ID),
+    ],
+)
+def test_evaluate_and_transform_uri_mnt_storage(
+    request, workload_env_fixture, path, expected_id
 ):
-    """Test transformation of /mnt storage paths."""
-    path = f"/mnt/{storage_type}/data/file.csv"
-    result = utils.transform_anyscale_mnt_path(path)
-    assert result == f"{expected_id}:/mnt/{storage_type}/data/file.csv"
-
-
-@pytest.mark.parametrize("scheme", ["file:", "local:"])
-def test_transform_anyscale_mnt_path_with_scheme(sample_anyscale_env, scheme):
-    """Test transformation with file: and local: schemes."""
-    path = f"{scheme}/mnt/user_storage/data/file.csv"
-    result = utils.transform_anyscale_mnt_path(path)
-    assert result == f"{scheme}{TEST_JOB_ID}:/mnt/user_storage/data/file.csv"
+    """Test /mnt/cluster_storage/ and /mnt/shared_storage/ transformations."""
+    request.getfixturevalue(workload_env_fixture)
+    should_track, transformed_uri = utils.evaluate_and_transform_uri(path)
+    assert should_track is True
+    assert transformed_uri == f"file://{expected_id}{path}"
 
 
 @pytest.mark.parametrize(
     "path",
     [
-        "/tmp/data/file.csv",
-        "s3://bucket/path/to/data",
-        "",
-        "/mnt/other_storage/data",
+        "/mnt/cluster_storage/data/file.csv",
+        "/mnt/shared_storage/data/file.csv",
     ],
 )
-def test_transform_anyscale_mnt_path_unchanged(sample_anyscale_env, path):
-    """Test that non-transformable paths remain unchanged."""
-    result = utils.transform_anyscale_mnt_path(path)
-    assert result == path
-
-
-def test_transform_anyscale_mnt_path_none():
-    """Test None handling."""
-    result = utils.transform_anyscale_mnt_path(None)
-    assert result is None
-
-
-@pytest.mark.parametrize(
-    "workload_env_fixture,storage_type,expected_id",
-    [
-        ("service_workload_env", "user_storage", TEST_SERVICE_ID),
-        ("workspace_workload_env", "cluster_storage", TEST_WORKSPACE_ID),
-    ],
-)
-def test_transform_anyscale_mnt_path_workload_types(
-    request, workload_env_fixture, storage_type, expected_id
-):
-    """Test transformation with different workload types."""
-    request.getfixturevalue(workload_env_fixture)
-    path = f"/mnt/{storage_type}/data/file.csv"
-    result = utils.transform_anyscale_mnt_path(path)
-    assert result == f"{expected_id}:/mnt/{storage_type}/data/file.csv"
+def test_evaluate_and_transform_uri_missing_env(clean_environment, path):
+    """Test graceful handling when required env vars are missing."""
+    should_track, transformed_uri = utils.evaluate_and_transform_uri(path)
+    assert should_track is False
+    assert transformed_uri == path
 
 
 @pytest.mark.no_mock_lineage_logs_dir

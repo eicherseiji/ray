@@ -1,9 +1,3 @@
-from ray.anyscale.lineage.mlflow_lineage.constants import (
-    ANYSCALE_MLFLOW_ARTIFACT_REPO_PREFIX,
-    ANYSCALE_MLFLOW_TRACKING_STORE_FILE_PREFIX,
-    ANYSCALE_MLFLOW_TRACKING_STORE_REST_PREFIX,
-)
-
 # ============================================================================
 # Anyscale environment constants
 # ============================================================================
@@ -91,8 +85,3 @@ TEST_MODEL_ARTIFACT_PATH = "model/file.pkl"
 
 # Test UUIDs and run IDs for OpenLineage
 TEST_WORKLOAD_OL_RUN_ID_ALT = "00000000-0000-0000-0000-00000000000a"
-
-# Plugin prefixes
-MLFLOW_TRACKING_STORE_FILE_PREFIX = f"{ANYSCALE_MLFLOW_TRACKING_STORE_FILE_PREFIX}:"
-MLFLOW_TRACKING_STORE_REST_PREFIX = f"{ANYSCALE_MLFLOW_TRACKING_STORE_REST_PREFIX}:"
-MLFLOW_ARTIFACT_REPO_PREFIX = f"{ANYSCALE_MLFLOW_ARTIFACT_REPO_PREFIX}:"

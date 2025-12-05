@@ -7,7 +7,6 @@ from ray.anyscale.lineage.common.facets.dataset import FileFormats
 from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import list_files, main
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_RAY_DATA_S3_URI as TEST_S3_URI,
-    TEST_JOB_ID,
     TEST_CLOUD_ID,
 )
 
@@ -102,7 +101,7 @@ def test_process_list_files_operator_path_builds_dataset(
 
 
 def test_process_list_files_operator_with_valid_paths(monkeypatch):
-    """Test process_list_files_operator with valid paths."""
+    """Test process_list_files_operator with valid remote paths."""
     processed_paths = []
 
     def fake_process_path(path, file_extensions):
@@ -115,19 +114,20 @@ def test_process_list_files_operator_with_valid_paths(monkeypatch):
         fake_process_path,
     )
 
+    # Use remote paths (s3://) which are always tracked
     operator = SimpleNamespace(
-        _source_paths=["/data/a", "/data/b"],
+        _source_paths=["s3://bucket/a", "s3://bucket/b"],
         file_extensions=[".parquet", ".parq"],
     )
 
     datasets, seen = main.process_list_files_operator(operator, set())
 
-    assert datasets == ["dataset:/data/a", "dataset:/data/b"]
+    assert datasets == ["dataset:s3://bucket/a", "dataset:s3://bucket/b"]
     assert processed_paths == [
-        ("/data/a", [".parquet", ".parq"]),
-        ("/data/b", [".parquet", ".parq"]),
+        ("s3://bucket/a", [".parquet", ".parq"]),
+        ("s3://bucket/b", [".parquet", ".parq"]),
     ]
-    assert seen == {"/data/a", "/data/b"}
+    assert seen == {"s3://bucket/a", "s3://bucket/b"}
 
 
 def test_process_list_files_operator_skips_duplicates(monkeypatch):
@@ -144,16 +144,17 @@ def test_process_list_files_operator_skips_duplicates(monkeypatch):
         fake_process_path,
     )
 
+    # Use remote paths (s3://) which are always tracked
     operator = SimpleNamespace(
-        _source_paths=["/data/a", "/data/a", "/data/b"],
+        _source_paths=["s3://bucket/a", "s3://bucket/a", "s3://bucket/b"],
         file_extensions=[".csv"],
     )
 
     datasets, seen = main.process_list_files_operator(operator, set())
 
     assert len(datasets) == 2
-    assert processed_paths == ["/data/a", "/data/b"]
-    assert seen == {"/data/a", "/data/b"}
+    assert processed_paths == ["s3://bucket/a", "s3://bucket/b"]
+    assert seen == {"s3://bucket/a", "s3://bucket/b"}
 
 
 def test_process_list_files_operator_with_no_paths(monkeypatch):
@@ -183,63 +184,76 @@ def test_process_list_files_operator_handles_string_path(monkeypatch):
         fake_process_path,
     )
 
-    # Create operator with _source_paths as a string instead of list
+    # Create operator with _source_paths as a string instead of list (remote path)
     operator = SimpleNamespace(
-        _source_paths="/data/single_path",
+        _source_paths="s3://bucket/single_path",
         file_extensions=[".json"],
     )
 
     datasets, seen = main.process_list_files_operator(operator, set())
 
     assert len(datasets) == 1
-    assert datasets == ["dataset:/data/single_path"]
-    assert processed_paths == ["/data/single_path"]
-    assert seen == {"/data/single_path"}
+    assert datasets == ["dataset:s3://bucket/single_path"]
+    assert processed_paths == ["s3://bucket/single_path"]
+    assert seen == {"s3://bucket/single_path"}
 
 
-def test_list_files_operator_transforms_mnt_user_storage_path(
-    patch_facet_constructors,
+def test_list_files_operator_user_storage_not_tracked(
     sample_anyscale_env,
+    monkeypatch,
 ):
-    """Test that /mnt/user_storage paths are transformed in ListFiles operator."""
-    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor.list_files import (
-        process_list_files_operator_path,
+    """Test that /mnt/user_storage paths are NOT tracked in ListFiles operator."""
+    processed_paths = []
+
+    def fake_process_path(path, file_extensions):
+        processed_paths.append(path)
+        return f"dataset:{path}"
+
+    monkeypatch.setattr(
+        main,
+        "process_list_files_operator_path",
+        fake_process_path,
     )
 
-    dataset = process_list_files_operator_path(
-        path="/mnt/user_storage/data",
+    operator = SimpleNamespace(
+        _source_paths=["/mnt/user_storage/data"],
         file_extensions=[".csv"],
     )
 
-    # Check that the dataset namespace is "namespace" (local file system constant)
-    assert dataset.namespace == "namespace"
-    # Check that the dataset name is the transformed path
-    assert dataset.name == f"{TEST_JOB_ID}:/mnt/user_storage/data"
+    datasets, seen = main.process_list_files_operator(operator, set())
 
-    # Check that the datasource facet contains the transformed URI
-    expected_uri = f"{TEST_JOB_ID}:/mnt/user_storage/data"
-    assert dataset.facets["datasource"] == expected_uri
+    # /mnt/user_storage/ paths should NOT be tracked
+    assert datasets == []
+    assert processed_paths == []
+    assert seen == {"/mnt/user_storage/data"}
 
 
 def test_list_files_operator_transforms_mnt_shared_storage_path(
-    patch_facet_constructors,
     sample_anyscale_env,
+    monkeypatch,
 ):
     """Test that /mnt/shared_storage paths are transformed in ListFiles operator."""
-    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor.list_files import (
-        process_list_files_operator_path,
+    processed_paths = []
+
+    def fake_process_path(path, file_extensions):
+        processed_paths.append(path)
+        return f"dataset:{path}"
+
+    monkeypatch.setattr(
+        main,
+        "process_list_files_operator_path",
+        fake_process_path,
     )
 
-    dataset = process_list_files_operator_path(
-        path="/mnt/shared_storage/datasets",
+    operator = SimpleNamespace(
+        _source_paths=["/mnt/shared_storage/datasets"],
         file_extensions=[".parquet"],
     )
 
-    # Check that the dataset namespace is "namespace" (local file system constant)
-    assert dataset.namespace == "namespace"
-    # Check that the dataset name is the transformed path
-    assert dataset.name == f"{TEST_CLOUD_ID}:/mnt/shared_storage/datasets"
+    datasets, seen = main.process_list_files_operator(operator, set())
 
-    # Check that the datasource facet contains the transformed URI
-    expected_uri = f"{TEST_CLOUD_ID}:/mnt/shared_storage/datasets"
-    assert dataset.facets["datasource"] == expected_uri
+    # /mnt/shared_storage/ paths should be transformed with cloud_id
+    expected_transformed = f"file://{TEST_CLOUD_ID}/mnt/shared_storage/datasets"
+    assert len(datasets) == 1
+    assert processed_paths == [expected_transformed]
+    assert seen == {"/mnt/shared_storage/datasets"}

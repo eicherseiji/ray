@@ -1,3 +1,6 @@
+import pytest
+
+from ray.anyscale.lineage.common.exceptions import AnyscaleLineageRayDataError
 from ray.anyscale.lineage.ray_lineage.data import utils
 
 
@@ -78,3 +81,28 @@ def test_build_file_formats_registry_function():
     for ds_name, file_format in registry.items():
         assert isinstance(ds_name, str)
         assert isinstance(file_format, FileFormats)
+
+
+class TestCatchLineageCallbackException:
+    def test_decorator_suppresses_error_when_ignore_errors_true(self, monkeypatch):
+        monkeypatch.setattr(utils, "IGNORE_ERRORS", True)
+
+        @utils.catch_lineage_callback_exception
+        def failing_function():
+            raise ValueError("test error")
+
+        result = failing_function()
+        assert result is None
+
+    def test_decorator_raises_wrapped_error_when_ignore_errors_false(self, monkeypatch):
+        monkeypatch.setattr(utils, "IGNORE_ERRORS", False)
+
+        @utils.catch_lineage_callback_exception
+        def failing_function():
+            raise ValueError("test error")
+
+        with pytest.raises(AnyscaleLineageRayDataError) as exc_info:
+            failing_function()
+
+        assert isinstance(exc_info.value.__cause__, ValueError)
+        assert "test error" in str(exc_info.value.__cause__)

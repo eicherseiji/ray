@@ -139,7 +139,7 @@ from ray.anyscale.lineage.common import uri_parsing
         (
             "local:///path/to/file",
             uri_parsing.parse_local_file_system_uri,
-            {"path": "path/to/file"},
+            {"path": "/path/to/file"},
         ),
         (
             "file://remotehost/path/to/file",
@@ -289,11 +289,20 @@ class TestLocalFileSystemURI:
     """Test Local File System URI parsing."""
 
     def test_parse_local_file_system_uri_without_scheme(self):
+        """Test absolute path without scheme preserves leading slash."""
         uri = "/absolute/path/to/file"
         parsed = urlsplit(uri)
         result = uri_parsing.parse_local_file_system_uri(uri, parsed)
 
-        assert result["path"] == "absolute/path/to/file"
+        assert result["path"] == "/absolute/path/to/file"
+
+    def test_parse_local_file_system_uri_with_file_scheme(self):
+        """Test file: scheme path preserves leading slash."""
+        uri = "file:/path/to/data.csv"
+        parsed = urlsplit(uri)
+        result = uri_parsing.parse_local_file_system_uri(uri, parsed)
+
+        assert result["path"] == "/path/to/data.csv"
 
 
 class TestS3URI:

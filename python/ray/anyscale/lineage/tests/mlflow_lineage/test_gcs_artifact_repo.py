@@ -45,15 +45,3 @@ def test_anyscale_gcs_artifact_repository_init_with_client(mock_gcs_repo):
     assert repo.artifact_uri == "gs://bucket/path"
     assert hasattr(repo, "ol_client")
     assert repo.ol_client is not None
-
-
-def test_anyscale_gcs_artifact_repository_extracts_uri(mock_gcs_repo):
-    """Test that AnyscaleGCSArtifactRepository extracts upstream URI."""
-    mock_init, _client_mock = mock_gcs_repo
-
-    repo = AnyscaleGCSArtifactRepository(
-        "anyscale-mlflow-artifact-repo-gcs://bucket/path"
-    )
-
-    mock_init.assert_called_once_with("gs://bucket/path", None, None)
-    assert repo.artifact_uri == "gs://bucket/path"

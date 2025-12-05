@@ -13,10 +13,10 @@ from ray.anyscale.lineage.common.utils import (
     create_openlineage_job_from_args,
     create_openlineage_output_dataset_from_args,
     create_openlineage_run_from_args,
+    evaluate_and_transform_uri,
     get_anyscale_workload_ol_job_name,
     get_anyscale_workload_ol_job_namespace,
     get_anyscale_workload_ol_run_id,
-    transform_anyscale_mnt_path,
 )
 from ray.anyscale.lineage.mlflow_lineage.facet_constructor import (
     MLflowFacetConstructor,
@@ -124,7 +124,9 @@ def process_and_emit_ol_events_for_model_logging(
         return
 
     # Transform Anyscale-specific /mnt paths
-    transformed_model_uri = transform_anyscale_mnt_path(model_uri)
+    should_track, transformed_model_uri = evaluate_and_transform_uri(model_uri)
+    if not should_track:
+        return
 
     # Input/Ouput schema not needed for now, add back when needed
     # extract input and output schema

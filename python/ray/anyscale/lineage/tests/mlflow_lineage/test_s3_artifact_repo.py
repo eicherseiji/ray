@@ -2,10 +2,6 @@ from unittest import mock
 
 import pytest
 
-from ray.anyscale.lineage.mlflow_lineage.store.artifact.s3_artifact_repo import (
-    AnyscaleS3ArtifactRepository,
-)
-
 
 @pytest.fixture
 def mock_s3_repo(monkeypatch):
@@ -23,15 +19,3 @@ def mock_s3_repo(monkeypatch):
     )
 
     return mock_init, client_mock
-
-
-def test_anyscale_s3_artifact_repository_extracts_uri(mock_s3_repo):
-    """Test that AnyscaleS3ArtifactRepository extracts upstream URI."""
-    mock_init, _client_mock = mock_s3_repo
-
-    repo = AnyscaleS3ArtifactRepository(
-        "anyscale-mlflow-artifact-repo-s3://bucket/path"
-    )
-
-    mock_init.assert_called_once_with("s3://bucket/path")
-    assert repo.artifact_uri == "s3://bucket/path"

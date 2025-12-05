@@ -9,7 +9,6 @@ from ray.anyscale.lineage.mlflow_lineage.store.tracking.rest_store import (
     AnyscaleRestStore,
 )
 from ray.anyscale.lineage.tests.test_constants import (
-    MLFLOW_TRACKING_STORE_REST_PREFIX,
     TEST_MLFLOW_HOST_EXAMPLE,
     TEST_MLFLOW_MODEL_NAME,
     TEST_MLFLOW_RUN_ID,
@@ -61,34 +60,6 @@ def test_anyscale_rest_store_initializes_client(monkeypatch) -> None:
     assert call_args.kwargs["mlflow_model"] == TEST_MLFLOW_MODEL_NAME
 
 
-def test_anyscale_rest_store_strips_plugin_prefix(monkeypatch) -> None:
-    """Test that AnyscaleRestStore strips the plugin prefix from store_uri."""
-    mock_host_creds = mock.Mock()
-    mock_host_creds.host = TEST_MLFLOW_HOST_EXAMPLE
-    get_host_creds = mock.Mock(return_value=mock_host_creds)
-    monkeypatch.setattr(
-        "mlflow.utils.credentials.get_default_host_creds",
-        lambda store_uri: get_host_creds(),
-    )
-
-    monkeypatch.setattr(
-        "mlflow.store.tracking.rest_store.RestStore.__init__",
-        lambda self, func: None,
-    )
-
-    mock_client = mock.Mock()
-    monkeypatch.setattr(
-        "ray.anyscale.lineage.common.openlineage_client.AnyscaleOpenLineageClient",
-        mock.Mock(return_value=mock_client),
-    )
-
-    store = AnyscaleRestStore(
-        store_uri=f"{MLFLOW_TRACKING_STORE_REST_PREFIX}https://{TEST_MLFLOW_HOST_EXAMPLE}"
-    )
-
-    assert store.host == TEST_MLFLOW_HOST_EXAMPLE
-
-
 def test_anyscale_rest_store_factory_caches_class(monkeypatch) -> None:
     """Test that the factory function caches the created class."""
     mock_host_creds = mock.Mock()
@@ -125,6 +96,11 @@ def test_anyscale_rest_store_record_logged_model_catches_exceptions(
     monkeypatch,
 ) -> None:
     """Test that record_logged_model catches and wraps exceptions from OpenLineage processing."""
+    from ray.anyscale.lineage.mlflow_lineage import utils as mlflow_utils
+
+    # Set IGNORE_ERRORS to False to ensure exceptions are raised
+    monkeypatch.setattr(mlflow_utils, "IGNORE_ERRORS", False)
+
     mock_host_creds = mock.Mock()
     mock_host_creds.host = TEST_MLFLOW_HOST_EXAMPLE
     get_host_creds = mock.Mock(return_value=mock_host_creds)

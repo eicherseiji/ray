@@ -10,10 +10,6 @@ def _create_anyscale_gcs_artifact_repository_class() -> Type[Any]:
     from ray.anyscale.lineage.mlflow_lineage.store.artifact.artifact_repo_mixin import (
         AnyscaleArtifactRepositoryMixin,
     )
-    from ray.anyscale.lineage.mlflow_lineage.utils import (
-        StoreType,
-        extract_upstream_store_uri,
-    )
 
     class AnyscaleGCSArtifactRepository(
         AnyscaleArtifactRepositoryMixin, GCSArtifactRepository
@@ -26,9 +22,6 @@ def _create_anyscale_gcs_artifact_repository_class() -> Type[Any]:
             client: Optional[Any] = None,
             credential_refresh_def: Optional[Any] = None,
         ) -> None:
-            artifact_uri = extract_upstream_store_uri(
-                artifact_uri, StoreType.ARTIFACT_REPO
-            )
             super().__init__(artifact_uri, client, credential_refresh_def)
 
     return AnyscaleGCSArtifactRepository

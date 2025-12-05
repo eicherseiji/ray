@@ -230,13 +230,15 @@ def resolve_dataset_naming_type_and_attributes(
     scheme = parsed_uri["scheme"]
     path = parsed_uri["path"].lstrip("/")
 
-    # Handle special case for ARN
+    # Handle special cases for known dataset types
     if scheme == "arn" and path.startswith("aws:glue:"):
         scheme = DatasetStorageLayerTypes.AWS_GLUE.value.schemes[0]
     elif scheme == "" and path.startswith("bigquery"):
         scheme = DatasetStorageLayerTypes.BIG_QUERY.value.schemes[0]
     elif scheme == "" and path.startswith("pubsub"):
         scheme = DatasetStorageLayerTypes.PUB_SUB_NAMING.value.schemes[0]
+    elif scheme == "file" and not parsed_uri.get("netloc"):
+        scheme = DatasetStorageLayerTypes.LOCAL_FILE_SYSTEM.value.schemes[0]
     elif scheme == "":
         scheme = DatasetStorageLayerTypes.LOCAL_FILE_SYSTEM.value.schemes[0]
     else:

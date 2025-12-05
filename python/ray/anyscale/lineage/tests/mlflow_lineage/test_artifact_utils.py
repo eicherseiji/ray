@@ -67,12 +67,8 @@ def test_process_and_emit_events_log(workload_env, mock_client, monkeypatch) -> 
     assert mock_client.emit_run_event.call_count == 1
 
 
-def test_artifact_download_transforms_mnt_user_storage_path(
-    workload_env, mock_client
-) -> None:
-    """Test that /mnt/user_storage artifact URIs are transformed during download."""
-    from ray.anyscale.lineage.tests.test_constants import TEST_JOB_ID
-
+def test_artifact_download_user_storage_not_tracked(workload_env, mock_client) -> None:
+    """Test that /mnt/user_storage artifact URIs are NOT tracked during download."""
     artifact_uri = "/mnt/user_storage/artifacts"
     artifact_path = "model/file.pkl"
 
@@ -83,20 +79,8 @@ def test_artifact_download_transforms_mnt_user_storage_path(
         artifact_path=artifact_path,
     )
 
-    # Verify run event was emitted
-    assert mock_client.emit_run_event.call_count == 1
-
-    # Check the inputs to verify the transformed path
-    call_args = mock_client.emit_run_event.call_args
-    inputs = call_args[1].get("inputs", [])
-
-    assert len(inputs) == 1
-    input_dataset = inputs[0]
-
-    # Check that the namespace is the transformed URI
-    expected_namespace = f"{TEST_JOB_ID}:/mnt/user_storage/artifacts"
-    assert input_dataset.namespace == expected_namespace
-    assert input_dataset.name == artifact_path
+    # /mnt/user_storage/ paths should NOT be tracked - no events emitted
+    assert mock_client.emit_run_event.call_count == 0
 
 
 def test_artifact_log_transforms_mnt_cluster_storage_path(
@@ -125,8 +109,8 @@ def test_artifact_log_transforms_mnt_cluster_storage_path(
     assert len(outputs) == 1
     output_dataset = outputs[0]
 
-    # Check that the namespace is the transformed URI
-    expected_namespace = f"{TEST_JOB_ID}:/mnt/cluster_storage/models"
+    # Check that the namespace is the transformed URI (format: file://{id}/path)
+    expected_namespace = f"file://{TEST_JOB_ID}/mnt/cluster_storage/models"
     assert output_dataset.namespace == expected_namespace
     assert output_dataset.name == artifact_path
 
@@ -157,8 +141,8 @@ def test_artifact_download_transforms_mnt_shared_storage_path(
     assert len(inputs) == 1
     input_dataset = inputs[0]
 
-    # Check that the namespace is the transformed URI
-    expected_namespace = f"{TEST_CLOUD_ID}:/mnt/shared_storage/common/artifacts"
+    # Check that the namespace is the transformed URI (format: file://{id}/path)
+    expected_namespace = f"file://{TEST_CLOUD_ID}/mnt/shared_storage/common/artifacts"
     assert input_dataset.namespace == expected_namespace
     assert input_dataset.name == artifact_path
 

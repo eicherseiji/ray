@@ -11,7 +11,7 @@ class TestLogicalPlanRunFacet:
         facet = LogicalPlanRunFacet(logical_plan="test")
         schema_url = facet._get_schema()
 
-        assert "lineage/ray_lineage/data/facets/run/logical_plan.py" in schema_url
+        assert "lineage/ray/data/facets/run/logical_plan" in schema_url
         assert schema_url.startswith("https://")
 
     def test_logical_plan_run_facet_with_empty_plan(self):

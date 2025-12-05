@@ -1,7 +1,13 @@
 from ray.anyscale.lineage.mlflow_lineage import run_context_provider
 
 
-def test_run_context_in_context() -> None:
+def test_run_context_in_context(monkeypatch) -> None:
+    # Set TRACKING_ENABLED to True for this test
+    monkeypatch.setattr(run_context_provider, "TRACKING_ENABLED", True)
+
+    # Reset the cached class to pick up the monkeypatch
+    run_context_provider._AnyscaleRunContextProviderClass = None
+
     # Instantiate the provider using the factory function
     provider = run_context_provider.AnyscaleRunContextProvider()
     assert provider.in_context() is True

@@ -21,9 +21,7 @@ class LogicalPlanRunFacet(RunFacet):
 
     @staticmethod
     def _get_schema() -> str:
-        return (
-            f"{REPO_URL}/blob/main/lineage/ray_lineage/data/facets/run/logical_plan.py"
-        )
+        return f"{REPO_URL}/blob/main/lineage/ray/data/facets/run/logical_plan"
 
 
 def create_logical_plan_run_facet(logical_plan: str) -> LogicalPlanRunFacet:

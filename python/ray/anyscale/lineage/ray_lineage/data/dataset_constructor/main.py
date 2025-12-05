@@ -10,6 +10,7 @@ from ray.data.datasource.datasource import Datasource
 
 from ray.anyscale.lineage.common.facets.dataset import FileFormats
 from ray.anyscale.lineage.common.logging import get_logger
+from ray.anyscale.lineage.common.utils import evaluate_and_transform_uri
 from ray.anyscale.lineage.ray_lineage.data.dataset_constructor.file_format import (
     process_file_format_datasink,
     process_file_format_datasource,
@@ -54,7 +55,11 @@ def process_datasource(
         for path in paths:
             if path not in seen_input_uris:
                 seen_input_uris.add(path)
-                input_datasets.append(process_file_format_datasource(path, file_format))
+                should_track, transformed_path = evaluate_and_transform_uri(path)
+                if should_track:
+                    input_datasets.append(
+                        process_file_format_datasource(transformed_path, file_format)
+                    )
 
     if isinstance(datasource, Datasources.MONGO_DATASOURCE.value):
         ds_uri = f"{datasource._uri}/{datasource._database}/{datasource._collection}"
@@ -107,7 +112,11 @@ def process_datasink(
         file_format = FILE_FORMATS_REGISTRY.get(ds_class.__name__, FileFormats.UNKNOWN)
         if path not in seen_output_uris:
             seen_output_uris.add(path)
-            output_datasets.append(process_file_format_datasink(path, file_format))
+            should_track, transformed_path = evaluate_and_transform_uri(path)
+            if should_track:
+                output_datasets.append(
+                    process_file_format_datasink(transformed_path, file_format)
+                )
 
     if isinstance(datasink, Datasinks.MONGO_DATASINK.value):
         ds_uri = f"{datasink.uri}/{datasink.database}/{datasink.collection}"
@@ -139,9 +148,11 @@ def process_list_files_operator(
     for path in paths:
         if path not in seen_input_uris:
             seen_input_uris.add(path)
-            input_datasets.append(
-                process_list_files_operator_path(path, file_extensions)
-            )
+            should_track, transformed_path = evaluate_and_transform_uri(path)
+            if should_track:
+                input_datasets.append(
+                    process_list_files_operator_path(transformed_path, file_extensions)
+                )
     return input_datasets, seen_input_uris
 
 

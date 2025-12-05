@@ -2,11 +2,12 @@ import os
 from enum import Enum, unique
 from typing import Any, Dict, Optional, Type
 
+from ray.anyscale.lineage.common.constants import TRACKING_ENABLED
+
 
 def is_lineage_tracking_enabled() -> bool:
     """Check if lineage tracking is enabled."""
-    # TODO (@sanketrai): check environment variable
-    return True
+    return TRACKING_ENABLED
 
 
 @unique

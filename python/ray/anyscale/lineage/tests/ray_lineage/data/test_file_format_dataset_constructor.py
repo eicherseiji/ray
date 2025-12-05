@@ -71,92 +71,160 @@ def test_process_file_format_datasink_builds_dataset(
     }
 
 
-def test_file_format_datasource_transforms_mnt_user_storage_path(
-    patch_facet_constructors,
+def test_file_format_datasource_user_storage_not_tracked(
     sample_anyscale_env,
+    monkeypatch,
 ):
-    """Test that /mnt/user_storage paths are transformed in file format datasources."""
-    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor.file_format import (
-        process_file_format_datasource,
+    """Test that /mnt/user_storage paths are NOT tracked in file format datasources."""
+    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import main
+
+    processed_uris = []
+
+    def fake_process(path, file_format):
+        processed_uris.append(path)
+        return f"dataset:{path}"
+
+    monkeypatch.setattr(
+        main,
+        "process_file_format_datasource",
+        fake_process,
     )
 
-    path = "/mnt/user_storage/data/file.csv"
-    dataset = process_file_format_datasource(path, FileFormats.CSV)
+    class FakeDatasource:
+        _source_paths = ["/mnt/user_storage/data/file.csv"]
 
-    # Check that the dataset namespace is "namespace" (local file system constant)
-    assert dataset.namespace == "namespace"
-    # Check that the dataset name is the transformed path
-    assert dataset.name == f"{TEST_JOB_ID}:/mnt/user_storage/data/file.csv"
+    monkeypatch.setattr(
+        main,
+        "get_file_format_datasources",
+        lambda: [FakeDatasource],
+    )
+    monkeypatch.setattr(
+        main, "FILE_FORMATS_REGISTRY", {"FakeDatasource": FileFormats.CSV}
+    )
 
-    # Check that the datasource facet contains the transformed URI
-    expected_uri = f"{TEST_JOB_ID}:/mnt/user_storage/data/file.csv"
-    assert dataset.facets["datasource"] == expected_uri
+    datasets, seen = main.process_datasource(FakeDatasource(), set())
+
+    # /mnt/user_storage/ paths should NOT be tracked
+    assert datasets == []
+    assert processed_uris == []
 
 
-def test_file_format_datasource_transforms_mnt_cluster_storage_path(
-    patch_facet_constructors,
+def test_file_format_datasource_cluster_storage_transformed(
     sample_anyscale_env,
+    monkeypatch,
 ):
     """Test that /mnt/cluster_storage paths are transformed in file format datasources."""
-    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor.file_format import (
-        process_file_format_datasource,
+    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import main
+
+    processed_uris = []
+
+    def fake_process(path, file_format):
+        processed_uris.append(path)
+        return f"dataset:{path}"
+
+    monkeypatch.setattr(
+        main,
+        "process_file_format_datasource",
+        fake_process,
     )
 
-    path = "/mnt/cluster_storage/models/model.pkl"
-    dataset = process_file_format_datasource(path, FileFormats.UNKNOWN)
+    class FakeDatasource:
+        _source_paths = ["/mnt/cluster_storage/models/model.pkl"]
 
-    # Check that the dataset namespace is "namespace" (local file system constant)
-    assert dataset.namespace == "namespace"
-    # Check that the dataset name is the transformed path
-    assert dataset.name == f"{TEST_JOB_ID}:/mnt/cluster_storage/models/model.pkl"
+    monkeypatch.setattr(
+        main,
+        "get_file_format_datasources",
+        lambda: [FakeDatasource],
+    )
+    monkeypatch.setattr(
+        main, "FILE_FORMATS_REGISTRY", {"FakeDatasource": FileFormats.UNKNOWN}
+    )
 
-    # Check that the datasource facet contains the transformed URI
-    expected_uri = f"{TEST_JOB_ID}:/mnt/cluster_storage/models/model.pkl"
-    assert dataset.facets["datasource"] == expected_uri
+    datasets, seen = main.process_datasource(FakeDatasource(), set())
+
+    # /mnt/cluster_storage/ paths should be transformed with workload_id
+    expected_transformed = f"file://{TEST_JOB_ID}/mnt/cluster_storage/models/model.pkl"
+    assert len(datasets) == 1
+    assert processed_uris == [expected_transformed]
 
 
-def test_file_format_datasource_transforms_mnt_shared_storage_path(
-    patch_facet_constructors,
+def test_file_format_datasource_shared_storage_transformed(
     sample_anyscale_env,
+    monkeypatch,
 ):
     """Test that /mnt/shared_storage paths are transformed in file format datasources."""
-    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor.file_format import (
-        process_file_format_datasource,
+    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import main
+
+    processed_uris = []
+
+    def fake_process(path, file_format):
+        processed_uris.append(path)
+        return f"dataset:{path}"
+
+    monkeypatch.setattr(
+        main,
+        "process_file_format_datasource",
+        fake_process,
     )
 
-    path = "/mnt/shared_storage/datasets/train.parquet"
-    dataset = process_file_format_datasource(path, FileFormats.PARQUET)
+    class FakeDatasource:
+        _source_paths = ["/mnt/shared_storage/datasets/train.parquet"]
 
-    # Check that the dataset namespace is "namespace" (local file system constant)
-    assert dataset.namespace == "namespace"
-    # Check that the dataset name is the transformed path
-    assert dataset.name == f"{TEST_CLOUD_ID}:/mnt/shared_storage/datasets/train.parquet"
+    monkeypatch.setattr(
+        main,
+        "get_file_format_datasources",
+        lambda: [FakeDatasource],
+    )
+    monkeypatch.setattr(
+        main, "FILE_FORMATS_REGISTRY", {"FakeDatasource": FileFormats.PARQUET}
+    )
 
-    # Check that the datasource facet contains the transformed URI
-    expected_uri = f"{TEST_CLOUD_ID}:/mnt/shared_storage/datasets/train.parquet"
-    assert dataset.facets["datasource"] == expected_uri
+    datasets, seen = main.process_datasource(FakeDatasource(), set())
+
+    # /mnt/shared_storage/ paths should be transformed with cloud_id
+    expected_transformed = (
+        f"file://{TEST_CLOUD_ID}/mnt/shared_storage/datasets/train.parquet"
+    )
+    assert len(datasets) == 1
+    assert processed_uris == [expected_transformed]
 
 
-def test_file_format_datasink_transforms_mnt_user_storage_path(
-    patch_facet_constructors,
+def test_file_format_datasink_user_storage_not_tracked(
     sample_anyscale_env,
+    monkeypatch,
 ):
-    """Test that /mnt/user_storage paths are transformed in file format datasinks."""
-    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor.file_format import (
-        process_file_format_datasink,
+    """Test that /mnt/user_storage paths are NOT tracked in file format datasinks."""
+    from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import main
+
+    processed_uris = []
+
+    def fake_process(path, file_format):
+        processed_uris.append(path)
+        return f"dataset:{path}"
+
+    monkeypatch.setattr(
+        main,
+        "process_file_format_datasink",
+        fake_process,
     )
 
-    path = "/mnt/user_storage/output/result.json"
-    dataset = process_file_format_datasink(path, FileFormats.JSON)
+    class FakeDatasink:
+        unresolved_path = "/mnt/user_storage/output/result.json"
 
-    # Check that the dataset namespace is "namespace" (local file system constant)
-    assert dataset.namespace == "namespace"
-    # Check that the dataset name is the transformed path
-    assert dataset.name == f"{TEST_JOB_ID}:/mnt/user_storage/output/result.json"
+    monkeypatch.setattr(
+        main,
+        "get_file_format_datasinks",
+        lambda: [FakeDatasink],
+    )
+    monkeypatch.setattr(
+        main, "FILE_FORMATS_REGISTRY", {"FakeDatasink": FileFormats.JSON}
+    )
 
-    # Check that the datasource facet contains the transformed URI
-    expected_uri = f"{TEST_JOB_ID}:/mnt/user_storage/output/result.json"
-    assert dataset.facets["datasource"] == expected_uri
+    datasets, seen = main.process_datasink(FakeDatasink(), set())
+
+    # /mnt/user_storage/ paths should NOT be tracked
+    assert datasets == []
+    assert processed_uris == []
 
 
 def test_file_format_datasource_does_not_transform_non_mnt_paths(

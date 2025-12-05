@@ -20,10 +20,6 @@ def _create_anyscale_file_store_class() -> Type[Any]:
     from ray.anyscale.lineage.mlflow_lineage.store.tracking.utils import (
         process_and_emit_ol_events_for_model_logging,
     )
-    from ray.anyscale.lineage.mlflow_lineage.utils import (
-        StoreType,
-        extract_upstream_store_uri,
-    )
 
     class AnyscaleFileStore(FileStore):
         """Anyscale implementation of MLflow File tracking store."""
@@ -31,23 +27,15 @@ def _create_anyscale_file_store_class() -> Type[Any]:
         def __init__(self, store_uri: str, artifact_uri: Optional[str] = None):
             self.is_plugin = True
 
-            root_directory = extract_upstream_store_uri(
-                store_uri, StoreType.TRACKING_STORE
-            )
-
-            artifact_root_uri = artifact_uri
-            if artifact_root_uri:
-                artifact_root_uri = extract_upstream_store_uri(
-                    artifact_root_uri, StoreType.ARTIFACT_REPO
-                )
-
-            super().__init__(root_directory, artifact_root_uri)  # type: ignore[no-untyped-call]
+            super().__init__(
+                root_directory=store_uri, artifact_root_uri=artifact_uri
+            )  # type: ignore[no-untyped-call]
 
             self.ol_client = AnyscaleOpenLineageClient(
                 ol_producer=MLFLOW_OPENLINEAGE_PRODUCER
             )
 
-            self.host = self.root_directory
+            self.host = store_uri
 
         @catch_mlflow_store_exception
         def record_logged_model(self, run_id: str, mlflow_model: Any) -> None:
