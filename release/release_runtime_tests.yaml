@@ -254,6 +254,7 @@
 - name: core_nodes_scale_test
   group: core-scalability-test
   working_dir: anyscale/core
+  python: "3.10"
 
   frequency: monthly
   team: core
