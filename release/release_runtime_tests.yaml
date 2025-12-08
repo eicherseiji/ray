@@ -3,7 +3,8 @@
 ###############
 
 - name: serve_node_draining
-  group: Serve tests
+  group: Rayturbo serve tests
+  python: "3.10"
   working_dir: anyscale/serve_tests
 
   frequency: nightly
@@ -29,7 +30,8 @@
         cluster_compute: compute_tpl_8_cpu_autoscaling_gce.yaml
 
 - name: safetensors_integration_tests_on_gpu
-  group: Serve tests
+  group: Rayturbo serve tests
+  python: "3.10"
   working_dir: //python/ray/anyscale/safetensors/tests/integration
 
   frequency: nightly
@@ -45,7 +47,8 @@
     script: TEST_ON_CUDA=1 pytest -vs test_dummy_model.py
 
 - name: safetensors_load_file_benchmark
-  group: Serve tests
+  group: Rayturbo serve tests
+  python: "3.10"
   working_dir: //python/ray/anyscale/safetensors/tests/benchmarks
 
   frequency: nightly
