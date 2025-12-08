@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 from openlineage.client.event_v2 import InputDataset
 
@@ -6,7 +6,11 @@ from ray.anyscale.lineage.common.dataset_naming import (
     resolve_dataset_naming_type_and_attributes,
     resolve_ol_dataset_namespace_and_name,
 )
-from ray.anyscale.lineage.common.facets.dataset import DatasetType, FileFormats
+from ray.anyscale.lineage.common.facets.dataset import (
+    DatasetType,
+    FileFormats,
+    FreeFormFileFormat,
+)
 from ray.anyscale.lineage.common.logging import get_logger
 from ray.anyscale.lineage.common.utils import (
     create_openlineage_input_dataset_from_args,
@@ -38,22 +42,32 @@ def get_list_files_common_facets(
     file_format = None
 
     if file_extensions:
-        # Infer file format from the first file extension
-        first_file_extension = file_extensions[0]
-        file_datasource_type = None
+        # Infer file format by checking all extensions until a match is found.
+        # Strip leading dot for comparison since FILE_EXTENSIONS_REGISTRY
+        # contains extensions without dots (e.g., "csv" not ".csv")
+        for file_extension in file_extensions:
+            normalized_extension = file_extension.lstrip(".")
 
-        for ds_name, ds_file_extensions in FILE_EXTENSIONS_REGISTRY.items():
-            if first_file_extension in ds_file_extensions:
-                file_datasource_type = ds_name
+            for ds_name, ds_file_extensions in FILE_EXTENSIONS_REGISTRY.items():
+                if normalized_extension in ds_file_extensions:
+                    file_format = FILE_FORMATS_REGISTRY.get(ds_name)
+                    break
+
+            if file_format:
                 break
 
-        if file_datasource_type:
-            file_format = FILE_FORMATS_REGISTRY.get(file_datasource_type)
+    format_value: Union[FileFormats, FreeFormFileFormat]
+    if file_format:
+        format_value = file_format
+    elif file_extensions:
+        # Use first extension (FreeFormFileFormat converts to uppercase)
+        normalized_extension = file_extensions[0].lstrip(".")
+        format_value = FreeFormFileFormat(format=normalized_extension)
+    else:
+        format_value = FileFormats.UNKNOWN
 
     facets.update(
-        RayDataFacetConstructor.construct_file_format_dataset_facet(
-            format=file_format or FileFormats.UNKNOWN
-        )
+        RayDataFacetConstructor.construct_file_format_dataset_facet(format=format_value)
     )
 
     return facets

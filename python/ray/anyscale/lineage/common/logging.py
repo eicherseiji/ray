@@ -51,7 +51,7 @@ class LineageSessionFileHandler(logging.Handler):
 
         try:
             return get_lineage_logs_dir()
-        except AttributeError:
+        except RuntimeError:
             return None
 
 

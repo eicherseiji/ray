@@ -128,7 +128,7 @@ class TestLineageSessionFileHandler:
         """Handler gracefully handles missing Ray session."""
         with mock.patch(
             "ray.anyscale.lineage.common.utils.get_lineage_logs_dir",
-            side_effect=AttributeError("_global_node is None"),
+            side_effect=RuntimeError("Ray global node is not initialized"),
         ):
             handler = LineageSessionFileHandler(filename="test.log")
 

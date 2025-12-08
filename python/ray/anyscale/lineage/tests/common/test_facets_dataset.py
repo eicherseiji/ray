@@ -6,15 +6,15 @@ def test_create_file_format_dataset_facet_with_free_form():
         dataset_facets.FreeFormFileFormat(format="custom-format")
     )
 
-    assert facet.format == "custom-format"
+    assert facet.format == "CUSTOM-FORMAT"
 
 
-def test_free_form_file_format_accepts_any_string():
+def test_free_form_file_format_converts_to_uppercase():
     format1 = dataset_facets.FreeFormFileFormat(format="pkl")
-    assert format1.value == "pkl"
+    assert format1.value == "PKL"
 
     format2 = dataset_facets.FreeFormFileFormat(format="python_function,sklearn")
-    assert format2.value == "python_function,sklearn"
+    assert format2.value == "PYTHON_FUNCTION,SKLEARN"
 
     format3 = dataset_facets.FreeFormFileFormat(format="")
     assert format3.value == ""

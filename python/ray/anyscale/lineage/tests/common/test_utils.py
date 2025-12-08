@@ -387,6 +387,14 @@ def test_get_lineage_logs_dir(monkeypatch, tmp_path):
 
 
 @pytest.mark.no_mock_lineage_logs_dir
+def test_get_lineage_logs_dir_global_node_none(monkeypatch):
+    monkeypatch.setattr("ray._private.worker._global_node", None)
+
+    with pytest.raises(RuntimeError, match="Ray global node is not initialized"):
+        utils.get_lineage_logs_dir()
+
+
+@pytest.mark.no_mock_lineage_logs_dir
 def test_get_openlineage_events_log_path(monkeypatch, tmp_path):
     from unittest import mock
 

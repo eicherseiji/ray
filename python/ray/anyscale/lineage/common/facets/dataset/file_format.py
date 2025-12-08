@@ -32,7 +32,7 @@ class FreeFormFileFormat:
     """Free form file format. Accepts any string value."""
 
     def __init__(self, format: str):
-        self.value = format
+        self.value = format.upper()
 
 
 @attr.define

@@ -450,6 +450,12 @@ def get_lineage_logs_dir() -> str:
     """
     from ray._private.worker import _global_node
 
+    if _global_node is None:
+        raise RuntimeError(
+            "Ray global node is not initialized. "
+            "Ensure ray.init() has been called before accessing lineage logs."
+        )
+
     logs_dir = _global_node.get_logs_dir_path()
     lineage_logs_dir = os.path.join(logs_dir, "lineage")
     os.makedirs(lineage_logs_dir, exist_ok=True)

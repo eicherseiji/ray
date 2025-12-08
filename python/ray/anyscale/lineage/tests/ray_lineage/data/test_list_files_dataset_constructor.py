@@ -2,13 +2,114 @@
 
 from types import SimpleNamespace
 
+import pytest
 
-from ray.anyscale.lineage.common.facets.dataset import FileFormats
+from ray.anyscale.lineage.common.facets.dataset import FileFormats, FreeFormFileFormat
 from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import list_files, main
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_RAY_DATA_S3_URI as TEST_S3_URI,
     TEST_CLOUD_ID,
 )
+
+
+# Test data for parameterized tests based on actual Ray Data datasource extensions
+# Format: (datasource_name, registry_extensions, input_extension, expected_format)
+FILE_FORMAT_TEST_CASES = [
+    # CSV formats
+    (
+        "CSVDatasource",
+        ["csv", "csv.gz", "csv.br", "csv.zst", "csv.lz4"],
+        ".csv",
+        FileFormats.CSV,
+    ),
+    (
+        "CSVDatasource",
+        ["csv", "csv.gz", "csv.br", "csv.zst", "csv.lz4"],
+        ".csv.gz",
+        FileFormats.CSV,
+    ),
+    (
+        "CSVDatasource",
+        ["csv", "csv.gz", "csv.br", "csv.zst", "csv.lz4"],
+        "csv",
+        FileFormats.CSV,
+    ),
+    # Parquet formats
+    ("ParquetDatasource", ["parquet"], ".parquet", FileFormats.PARQUET),
+    ("ParquetDatasource", ["parquet"], "parquet", FileFormats.PARQUET),
+    # JSON formats
+    (
+        "ArrowJSONDatasource",
+        ["json", "jsonl", "json.gz", "jsonl.gz"],
+        ".json",
+        FileFormats.JSON,
+    ),
+    (
+        "ArrowJSONDatasource",
+        ["json", "jsonl", "json.gz", "jsonl.gz"],
+        ".jsonl",
+        FileFormats.JSON,
+    ),
+    (
+        "ArrowJSONDatasource",
+        ["json", "jsonl", "json.gz", "jsonl.gz"],
+        ".json.gz",
+        FileFormats.JSON,
+    ),
+    # Image formats
+    (
+        "ImageDatasource",
+        ["png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif"],
+        ".png",
+        FileFormats.IMAGE,
+    ),
+    (
+        "ImageDatasource",
+        ["png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif"],
+        ".jpg",
+        FileFormats.IMAGE,
+    ),
+    (
+        "ImageDatasource",
+        ["png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif"],
+        ".jpeg",
+        FileFormats.IMAGE,
+    ),
+    # Avro format
+    ("AvroDatasource", ["avro"], ".avro", FileFormats.AVRO),
+    # Numpy format
+    ("NumpyDatasource", ["npy"], ".npy", FileFormats.NUMPY),
+    # TFRecord format
+    ("TFRecordDatasource", ["tfrecords"], ".tfrecords", FileFormats.TFRECORD),
+    # Video formats
+    (
+        "VideoDatasource",
+        ["mp4", "mkv", "mov", "avi", "webm"],
+        ".mp4",
+        FileFormats.VIDEO,
+    ),
+    (
+        "VideoDatasource",
+        ["mp4", "mkv", "mov", "avi", "webm"],
+        ".webm",
+        FileFormats.VIDEO,
+    ),
+    # Audio formats
+    (
+        "AudioDatasource",
+        ["mp3", "wav", "aac", "flac", "ogg"],
+        ".mp3",
+        FileFormats.AUDIO,
+    ),
+    (
+        "AudioDatasource",
+        ["mp3", "wav", "aac", "flac", "ogg"],
+        ".wav",
+        FileFormats.AUDIO,
+    ),
+    # WebDataset format
+    ("WebDatasetDatasource", ["tar"], ".tar", FileFormats.WEB_DATASET),
+]
 
 
 def test_get_list_files_common_facets_with_known_extension(
@@ -18,7 +119,7 @@ def test_get_list_files_common_facets_with_known_extension(
     monkeypatch.setattr(
         list_files,
         "FILE_EXTENSIONS_REGISTRY",
-        {"ParquetDatasource": [".parquet", ".parq"]},
+        {"ParquetDatasource": ["parquet", "parq"]},
     )
     monkeypatch.setattr(
         list_files,
@@ -35,14 +136,75 @@ def test_get_list_files_common_facets_with_known_extension(
     }
 
 
-def test_get_list_files_common_facets_with_unknown_extension(
-    patch_facet_constructors, monkeypatch
+@pytest.mark.parametrize(
+    "datasource_name,registry_extensions,input_extension,expected_format",
+    FILE_FORMAT_TEST_CASES,
+    ids=[f"{case[0]}-{case[2]}" for case in FILE_FORMAT_TEST_CASES],
+)
+def test_get_list_files_common_facets_file_formats(
+    patch_facet_constructors,
+    monkeypatch,
+    datasource_name,
+    registry_extensions,
+    input_extension,
+    expected_format,
 ):
-    """Test get_list_files_common_facets with an unknown file extension."""
+    """Test for file format detection across all supported formats."""
     monkeypatch.setattr(
         list_files,
         "FILE_EXTENSIONS_REGISTRY",
-        {"ParquetDatasource": [".parquet", ".parq"]},
+        {datasource_name: registry_extensions},
+    )
+    monkeypatch.setattr(
+        list_files,
+        "FILE_FORMATS_REGISTRY",
+        {datasource_name: expected_format},
+    )
+
+    facets = list_files.get_list_files_common_facets(TEST_S3_URI, [input_extension])
+
+    assert facets == {
+        "dataset_type": list_files.DatasetType.FILE,
+        "datasource": TEST_S3_URI,
+        "file_format": expected_format,
+    }
+
+
+def test_get_list_files_common_facets_matches_second_extension(
+    patch_facet_constructors, monkeypatch
+):
+    """Test that file format is inferred from second extension when first doesn't match."""
+    monkeypatch.setattr(
+        list_files,
+        "FILE_EXTENSIONS_REGISTRY",
+        {"CSVDatasource": ["csv", "csv.gz"]},
+    )
+    monkeypatch.setattr(
+        list_files,
+        "FILE_FORMATS_REGISTRY",
+        {"CSVDatasource": FileFormats.CSV},
+    )
+
+    # First extension ".unknown" won't match, but ".csv" should
+    facets = list_files.get_list_files_common_facets(
+        TEST_S3_URI, [".unknown", ".csv", ".txt"]
+    )
+
+    assert facets == {
+        "dataset_type": list_files.DatasetType.FILE,
+        "datasource": TEST_S3_URI,
+        "file_format": FileFormats.CSV,
+    }
+
+
+def test_get_list_files_common_facets_with_unrecognized_extension(
+    patch_facet_constructors, monkeypatch
+):
+    """Test get_list_files_common_facets with an unrecognized file extension uses FreeFormFileFormat."""
+    monkeypatch.setattr(
+        list_files,
+        "FILE_EXTENSIONS_REGISTRY",
+        {"ParquetDatasource": ["parquet", "parq"]},
     )
     monkeypatch.setattr(
         list_files,
@@ -50,9 +212,31 @@ def test_get_list_files_common_facets_with_unknown_extension(
         {"ParquetDatasource": FileFormats.PARQUET},
     )
 
-    facets = list_files.get_list_files_common_facets(TEST_S3_URI, [".unknown"])
+    facets = list_files.get_list_files_common_facets(TEST_S3_URI, [".xyz"])
 
-    # Should have dataset_type, datasource, and UNKNOWN file_format
+    assert facets["dataset_type"] == list_files.DatasetType.FILE
+    assert facets["datasource"] == TEST_S3_URI
+    assert isinstance(facets["file_format"], FreeFormFileFormat)
+    assert facets["file_format"].value == "XYZ"
+
+
+def test_get_list_files_common_facets_with_no_extensions(
+    patch_facet_constructors, monkeypatch
+):
+    """Test get_list_files_common_facets with no file extensions returns UNKNOWN."""
+    monkeypatch.setattr(
+        list_files,
+        "FILE_EXTENSIONS_REGISTRY",
+        {"ParquetDatasource": ["parquet", "parq"]},
+    )
+    monkeypatch.setattr(
+        list_files,
+        "FILE_FORMATS_REGISTRY",
+        {"ParquetDatasource": FileFormats.PARQUET},
+    )
+
+    facets = list_files.get_list_files_common_facets(TEST_S3_URI, [])
+
     assert facets == {
         "dataset_type": list_files.DatasetType.FILE,
         "datasource": TEST_S3_URI,
@@ -78,7 +262,7 @@ def test_process_list_files_operator_path_builds_dataset(
     monkeypatch.setattr(
         list_files,
         "FILE_EXTENSIONS_REGISTRY",
-        {"ParquetDatasource": [".parquet"]},
+        {"ParquetDatasource": ["parquet"]},
     )
     monkeypatch.setattr(
         list_files,
