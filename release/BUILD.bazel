@@ -434,6 +434,7 @@ py_library(
     ),
     data = glob([
         "ray_release/environments/*.env",
+        "release_*.yaml",
     ]) + [
         "ray_release/buildkite/aws_instance_types.csv",
         "ray_release/schema.json",
@@ -929,6 +930,7 @@ py_library(
     visibility = ["//visibility:private"],
     deps = [
         ":ray_release",
+        bk_require("click"),
     ],
 )
 
@@ -938,6 +940,7 @@ py_binary(
     exec_compatible_with = ["//bazel:py310"],
     deps = [
         ":ray_release",
+        bk_require("click"),
     ],
 )
 
@@ -948,15 +951,16 @@ py_library(
     visibility = ["//visibility:private"],
     deps = [
         ":ray_release",
+        bk_require("click"),
     ],
 )
 
 py_binary(
     name = "custom_image_build_and_test_init",
     srcs = ["ray_release/scripts/custom_image_build_and_test_init.py"],
-    data = glob(["release_*.yaml"]),
     exec_compatible_with = ["//bazel:py310"],
     deps = [
         ":ray_release",
+        bk_require("click"),
     ],
 )
