@@ -57,7 +57,10 @@ class AggregatorActor(FaultAwareApply):
             self.config,
             0.01 * float(self.config.num_gpus_per_learner > 0),
         )
-        self.metrics = MetricsLogger()
+        self.metrics: MetricsLogger = MetricsLogger(
+            stats_cls_lookup=config.stats_cls_lookup,
+            root=True,
+        )
 
         # Create the RLModule.
         # TODO (sven): For now, this RLModule (its weights) never gets updated.
