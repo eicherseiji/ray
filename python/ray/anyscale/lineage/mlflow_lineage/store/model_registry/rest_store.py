@@ -53,7 +53,7 @@ def _create_anyscale_rest_store_class() -> Type[Any]:
             **kwargs: Any,
         ) -> Any:
             result = super().create_model_version(  # type: ignore[no-untyped-call]
-                name=name, source=source, *args, **kwargs
+                name, source, *args, **kwargs
             )
 
             if self.ol_client:
