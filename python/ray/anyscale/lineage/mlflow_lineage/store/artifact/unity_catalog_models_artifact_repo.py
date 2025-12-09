@@ -18,8 +18,8 @@ def _create_anyscale_unity_catalog_models_artifact_repository_class() -> Type[An
     ):
         """Anyscale implementation of MLflow Unity Catalog models artifact repository."""
 
-        def __init__(self, artifact_uri: str, registry_uri: Optional[str]) -> None:
-            super().__init__(artifact_uri, registry_uri)
+        def __init__(self, artifact_uri: str, *args: Any, **kwargs: Any) -> None:
+            super().__init__(artifact_uri, *args, **kwargs)
 
     return AnyscaleUnityCatalogModelsArtifactRepository
 

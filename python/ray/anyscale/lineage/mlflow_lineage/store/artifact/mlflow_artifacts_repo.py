@@ -16,8 +16,8 @@ def _create_anyscale_mlflow_artifacts_repository_class() -> Type[Any]:
     ):
         """Anyscale implementation of MLflow MLflow artifacts repository."""
 
-        def __init__(self, artifact_uri: str) -> None:
-            super().__init__(artifact_uri)
+        def __init__(self, artifact_uri: str, *args: Any, **kwargs: Any) -> None:
+            super().__init__(artifact_uri, *args, **kwargs)
 
     return AnyscaleMLflowArtifactsRepository
 

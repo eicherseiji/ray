@@ -30,8 +30,6 @@ version = {attr = "anyscaleruntime.__version__"}
 "http" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleHTTPArtifactRepository"
 "https" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleHTTPArtifactRepository"
 "mlflow-artifacts" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleMLflowArtifactsRepository"
-"models" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleModelsArtifactRepository"
-"runs" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleRunsArtifactRepository"
 "s3" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleS3ArtifactRepository"
 "wasbs" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleAzureBlobArtifactRepository"
 

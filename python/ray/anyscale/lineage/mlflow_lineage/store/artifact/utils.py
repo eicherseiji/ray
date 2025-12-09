@@ -1,12 +1,12 @@
 import os
 from enum import Enum, unique
-from typing import Dict, Optional
+from typing import Dict
 
 import mlflow
 from openlineage.client.event_v2 import RunState
 from openlineage.client.facet_v2 import DatasetFacet, JobFacet, RunFacet
 
-from ray.anyscale.lineage.common.facets.dataset import DatasetType, FreeFormFileFormat
+from ray.anyscale.lineage.common.facets.dataset import DatasetType
 from ray.anyscale.lineage.common.openlineage_client import AnyscaleOpenLineageClient
 from ray.anyscale.lineage.common.utils import (
     create_openlineage_input_dataset_from_args,
@@ -21,24 +21,10 @@ from ray.anyscale.lineage.common.utils import (
 from ray.anyscale.lineage.mlflow_lineage.facet_constructor import (
     MLflowFacetConstructor,
 )
+from ray.anyscale.lineage.mlflow_lineage.utils import (
+    resolve_http_uri_from_mlflow_artifacts_uri,
+)
 from ray.anyscale.lineage.version import __version__
-
-ARTIFACT_PATH_FILE_FORMAT_SEPARATOR = "."
-
-
-def should_emit_openlineage_event_for_artifact(artifact_uri: str) -> bool:
-    """Determine if OpenLineage events should be emitted for an artifact URI.
-
-    Args:
-        artifact_uri: The artifact URI to check
-
-    Returns:
-        False if events should be skipped (e.g., for runs:/ URIs or /tmp paths), True otherwise
-    """
-    # Skip runs:/ URIs as they reference artifacts from other runs
-    # Skip /tmp paths as they are temporary local files, not meaningful artifacts
-    # Emitting events for these would create circular/duplicate lineage
-    return not (artifact_uri.startswith("runs:/") or artifact_uri.startswith("/tmp"))
 
 
 @unique
@@ -72,8 +58,8 @@ def _construct_ol_run_facets_for_artifact_repo_operation() -> Dict[str, RunFacet
 
 
 def _construct_ol_dataset_facets_for_artifact_repo_operation(
-    full_artifact_path: str,
-    file_format: Optional[str] = None,
+    model_name: str,
+    model_uri: str,
 ) -> Dict[str, DatasetFacet]:
     """Construct OpenLineage dataset facets for a artifact repository operation."""
     dataset_facets: Dict[str, DatasetFacet] = {}
@@ -84,16 +70,10 @@ def _construct_ol_dataset_facets_for_artifact_repo_operation(
     )
     dataset_facets.update(
         MLflowFacetConstructor.construct_datasource_dataset_facet(
-            name=None,
-            uri=full_artifact_path,
+            name=model_name,
+            uri=model_uri,
         )
     )
-    if file_format:
-        dataset_facets.update(
-            MLflowFacetConstructor.construct_file_format_dataset_facet(
-                format=FreeFormFileFormat(format=file_format),
-            )
-        )
     dataset_facets.update(MLflowFacetConstructor.construct_ownership_dataset_facet())
     return dataset_facets
 
@@ -105,21 +85,16 @@ def process_and_emit_ol_events_for_artifact_repo_operation(
     artifact_path: str,
 ) -> None:
     """Process and emit OpenLineage events for a artifact repository operation."""
-    full_artifact_path = os.path.join(artifact_uri, artifact_path)
+    # Extract model information
+    artifact_uri = resolve_http_uri_from_mlflow_artifacts_uri(artifact_uri)
+    model_name = artifact_path
 
     # Transform Anyscale-specific /mnt paths
-    _, transformed_artifact_uri = evaluate_and_transform_uri(artifact_uri)
-    should_track, transformed_full_artifact_path = evaluate_and_transform_uri(
-        full_artifact_path
-    )
+    should_track, transformed_artifact_uri = evaluate_and_transform_uri(artifact_uri)
     if not should_track:
         return
 
-    file_format = (
-        artifact_path.split(ARTIFACT_PATH_FILE_FORMAT_SEPARATOR)[-1]
-        if ARTIFACT_PATH_FILE_FORMAT_SEPARATOR in artifact_path
-        else None
-    )
+    model_uri = os.path.join(transformed_artifact_uri, model_name)
 
     # OpenLineage job corresponds to an Anyscale WSJ (Workspace, Service, or Job)
     # OpenLineage run corresponds to the execution of the Anyscale WSJ
@@ -128,16 +103,16 @@ def process_and_emit_ol_events_for_artifact_repo_operation(
     ol_job_name = get_anyscale_workload_ol_job_name()
     ol_run_id = get_anyscale_workload_ol_run_id()
 
-    # Dataset corresponds to the artifact that was downloaded
+    # Dataset corresponds to the artifact that was downloaded or logged
     ol_dataset_namespace = transformed_artifact_uri
-    ol_dataset_name = artifact_path
+    ol_dataset_name = model_name
 
     # construct facets
     job_facets = _construct_ol_job_facets_for_artifact_repo_operation()
     run_facets = _construct_ol_run_facets_for_artifact_repo_operation()
     dataset_facets = _construct_ol_dataset_facets_for_artifact_repo_operation(
-        full_artifact_path=transformed_full_artifact_path,
-        file_format=file_format,
+        model_name=model_name,
+        model_uri=model_uri,
     )
 
     # construct datasets

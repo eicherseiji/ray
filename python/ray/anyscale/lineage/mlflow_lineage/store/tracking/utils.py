@@ -1,4 +1,6 @@
-from typing import Any, Dict, Optional
+import os
+
+from typing import Dict
 
 import mlflow
 from mlflow.entities.run import Run
@@ -20,6 +22,9 @@ from ray.anyscale.lineage.common.utils import (
 )
 from ray.anyscale.lineage.mlflow_lineage.facet_constructor import (
     MLflowFacetConstructor,
+)
+from ray.anyscale.lineage.mlflow_lineage.utils import (
+    resolve_http_uri_from_mlflow_artifacts_uri,
 )
 from ray.anyscale.lineage.version import __version__
 
@@ -50,12 +55,8 @@ def _construct_ol_run_facets_for_model_logging() -> Dict[str, RunFacet]:
 
 def _construct_ol_dataset_facets_for_model_logging(
     model_name: str,
-    model_uuid: str,
     model_uri: str,
     model_flavors: str,
-    model_info: Any,
-    _input_schema: Optional[list[dict[str, Any]]] = None,
-    _output_schema: Optional[list[dict[str, Any]]] = None,
 ) -> Dict[str, DatasetFacet]:
     """Construct OpenLineage dataset facets for a model logging."""
     dataset_facets: Dict[str, DatasetFacet] = {}
@@ -66,7 +67,7 @@ def _construct_ol_dataset_facets_for_model_logging(
     )
     dataset_facets.update(
         MLflowFacetConstructor.construct_datasource_dataset_facet(
-            name=model_name or model_uuid,
+            name=model_name,
             uri=model_uri,
         )
     )
@@ -76,72 +77,26 @@ def _construct_ol_dataset_facets_for_model_logging(
         )
     )
     dataset_facets.update(MLflowFacetConstructor.construct_ownership_dataset_facet())
-
-    # Input/Ouput schema not needed for now, add back when needed
-    # if input_schema:
-    #     dataset_facets.update(
-    #         MLflowFacetConstructor.construct_input_schema_dataset_facet(
-    #             fields=input_schema,
-    #         )
-    #     )
-    # if output_schema:
-    #     dataset_facets.update(
-    #         MLflowFacetConstructor.construct_output_schema_dataset_facet(
-    #             fields=output_schema,
-    #         )
-    #     )
-
-    dataset_facets.update(
-        MLflowFacetConstructor.construct_version_dataset_facet(
-            version=getattr(model_info, "version", "1.0"),
-        )
-    )
     return dataset_facets
 
 
 def process_and_emit_ol_events_for_model_logging(
     ol_client: AnyscaleOpenLineageClient,
-    mlflow_host: str,
     run: Run,
     mlflow_model: Model,
 ) -> None:
     """Process and emit OpenLineage events for a model logging."""
-    # extract model logging information
-    _experiment_id = run.info.experiment_id
-    model_info = mlflow_model.get_model_info()
-    _run_id = mlflow_model.run_id
-    model_uuid = str(model_info.model_uuid)
-    model_uri = model_info.model_uri
-    model_name = getattr(model_info, "name", "")
-    model_flavors = ",".join(model_info.flavors.keys())
-
-    # Skip OpenLineage events for runs:/ URIs to avoid duplicate/circular lineage
-    if model_uri and model_uri.startswith("runs:/"):
-        logger.info(
-            f"Skipping OpenLineage event for runs:/ URI: {model_uri}. "
-            "These URIs reference artifacts from other runs and would create duplicate lineage."
-        )
-        return
+    # Extract model logging information
+    artifact_uri = resolve_http_uri_from_mlflow_artifacts_uri(run.info.artifact_uri)
+    model_name = mlflow_model.artifact_path
+    model_flavors = ",".join(mlflow_model.flavors.keys())
 
     # Transform Anyscale-specific /mnt paths
-    should_track, transformed_model_uri = evaluate_and_transform_uri(model_uri)
+    should_track, transformed_artifact_uri = evaluate_and_transform_uri(artifact_uri)
     if not should_track:
         return
 
-    # Input/Ouput schema not needed for now, add back when needed
-    # extract input and output schema
-    # input_schema = mlflow_model.get_input_schema()  # type: ignore[no-untyped-call]
-    # if input_schema:
-    #     input_schema = [
-    #         {"name": field, "type": val}
-    #         for field, val in input_schema.input_types_dict().items()
-    #     ]
-    # output_schema = mlflow_model.get_output_schema()  # type: ignore[no-untyped-call]
-    # if output_schema:
-    #     output_schema = [
-    #         {"name": field, "type": val}
-    #         for field, val in output_schema.output_types_dict().items()
-    #     ]
+    model_uri = os.path.join(transformed_artifact_uri, model_name)
 
     # OpenLineage job corresponds to an Anyscale WSJ (Workspace, Service, or Job)
     # OpenLineage run corresponds to the execution of the Anyscale WSJ
@@ -150,18 +105,17 @@ def process_and_emit_ol_events_for_model_logging(
     ol_job_name = get_anyscale_workload_ol_job_name()
     ol_run_id = get_anyscale_workload_ol_run_id()
 
-    ol_dataset_namespace = mlflow_host
-    ol_dataset_name = model_name or model_uuid
+    # Dataset corresponds to the model that was logged
+    ol_dataset_namespace = transformed_artifact_uri
+    ol_dataset_name = model_name
 
     # construct facets
     job_facets = _construct_ol_job_facets_for_model_logging()
     run_facets = _construct_ol_run_facets_for_model_logging()
     dataset_facets = _construct_ol_dataset_facets_for_model_logging(
         model_name=model_name,
-        model_uuid=model_uuid,
-        model_uri=transformed_model_uri,
+        model_uri=model_uri,
         model_flavors=model_flavors,
-        model_info=model_info,
     )
 
     # construct datasets

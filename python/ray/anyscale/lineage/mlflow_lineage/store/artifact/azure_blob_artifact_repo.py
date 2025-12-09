@@ -18,8 +18,8 @@ def _create_anyscale_azure_blob_artifact_repository_class() -> Type[Any]:
     ):
         """Anyscale implementation of MLflow Azure Blob artifact repository."""
 
-        def __init__(self, artifact_uri: str, client: Optional[Any] = None) -> None:
-            super().__init__(artifact_uri, client)
+        def __init__(self, artifact_uri: str, *args: Any, **kwargs: Any) -> None:
+            super().__init__(artifact_uri, *args, **kwargs)
 
     return AnyscaleAzureBlobArtifactRepository
 

@@ -1,3 +1,5 @@
+"""Tests for AnyscaleArtifactRepositoryMixin."""
+
 from unittest import mock
 
 import pytest
@@ -13,66 +15,100 @@ from ray.anyscale.lineage.tests.test_constants import (
 
 class DummyBaseArtifactRepo:
     def __init__(self, artifact_uri: str, *args, **kwargs) -> None:
-        self.initialized_with = (artifact_uri, args, kwargs)
         self.artifact_uri = artifact_uri
 
     def download_artifacts(self, artifact_path, dst_path=None, *args, **kwargs):
-        self.download_args = (artifact_path, dst_path, args, kwargs)
         return "downloaded/path"
 
     def log_artifact(self, local_file, artifact_path=None, *args, **kwargs):
-        self.log_artifact_args = (local_file, artifact_path, args, kwargs)
         return "logged-artifact"
 
     def log_artifacts(self, local_dir, artifact_path=None, *args, **kwargs):
-        self.log_artifacts_args = (local_dir, artifact_path, args, kwargs)
+        for i in range(3):
+            self.log_artifact(f"{local_dir}/file{i}", artifact_path)
         return "logged-artifacts"
 
 
 class DummyArtifactRepo(AnyscaleArtifactRepositoryMixin, DummyBaseArtifactRepo):
-    def __init__(self, artifact_uri: str) -> None:
-        super().__init__(artifact_uri)
+    pass
 
 
 @pytest.fixture
-def repo(monkeypatch):
-    client_mock = mock.Mock()
+def mock_process():
+    return mock.Mock()
+
+
+@pytest.fixture
+def repo(monkeypatch, mock_process):
     monkeypatch.setattr(
         "ray.anyscale.lineage.mlflow_lineage.store.artifact.artifact_repo_mixin.AnyscaleOpenLineageClient",
-        mock.Mock(return_value=client_mock),
+        mock.Mock(return_value=mock.Mock()),
     )
-    process_mock = mock.Mock()
     monkeypatch.setattr(
         "ray.anyscale.lineage.mlflow_lineage.store.artifact.artifact_repo_mixin.process_and_emit_ol_events_for_artifact_repo_operation",
-        process_mock,
+        mock_process,
     )
-
-    artifact_repo = DummyArtifactRepo(TEST_S3_URI)
-    return artifact_repo, client_mock, process_mock
+    return DummyArtifactRepo(TEST_S3_URI)
 
 
-def test_download_artifacts_triggers_lineage(repo):
-    artifact_repo, _, process_mock = repo
+class TestArtifactRepositoryMixin:
+    """Tests for artifact repository mixin behavior."""
 
-    result = artifact_repo.download_artifacts(TEST_ARTIFACT_PATH, dst_path="/tmp")
+    def test_download_triggers_lineage_event(self, repo, mock_process):
+        """Download artifacts triggers OpenLineage event."""
+        result = repo.download_artifacts(TEST_ARTIFACT_PATH)
+        assert result == "downloaded/path"
+        mock_process.assert_called_once()
 
-    assert result == "downloaded/path"
-    process_mock.assert_called_once()
+    def test_log_artifact_triggers_lineage_event(self, repo, mock_process):
+        """Log artifact triggers OpenLineage event."""
+        result = repo.log_artifact("local.file", artifact_path="remote/file")
+        assert result == "logged-artifact"
+        mock_process.assert_called_once()
+
+    def test_log_artifacts_emits_single_event(self, repo, mock_process):
+        """Log artifacts emits only one event despite calling log_artifact internally."""
+        result = repo.log_artifacts("/local/dir", artifact_path="remote/dir")
+        assert result == "logged-artifacts"
+        mock_process.assert_called_once()
+
+    def test_inside_log_artifacts_flag_prevents_duplicate_events(
+        self, repo, mock_process
+    ):
+        """The _inside_log_artifacts flag prevents duplicate events from nested calls."""
+        repo._inside_log_artifacts = True
+        repo.log_artifact("local.file", artifact_path="remote/file")
+        mock_process.assert_not_called()
 
 
-def test_log_artifact_triggers_lineage(repo):
-    artifact_repo, _, process_mock = repo
+class TestErrorHandling:
+    """Tests for graceful error handling."""
 
-    result = artifact_repo.log_artifact("local.file", artifact_path="remote/file")
+    def test_client_init_failure_sets_client_to_none(self, monkeypatch):
+        """When client initialization fails, ol_client is set to None."""
+        monkeypatch.setattr(
+            "ray.anyscale.lineage.mlflow_lineage.store.artifact.artifact_repo_mixin.AnyscaleOpenLineageClient",
+            mock.Mock(side_effect=Exception("init failed")),
+        )
 
-    assert result == "logged-artifact"
-    process_mock.assert_called()
+        repo = DummyArtifactRepo(TEST_S3_URI)
 
+        assert repo.ol_client is None
+        assert repo.download_artifacts(TEST_ARTIFACT_PATH) == "downloaded/path"
 
-def test_log_artifacts_defaults_to_local_dir(repo):
-    artifact_repo, _, process_mock = repo
+    def test_process_failure_does_not_affect_operation(self, monkeypatch):
+        """When event processing fails, the artifact operation still succeeds."""
+        monkeypatch.setattr(
+            "ray.anyscale.lineage.mlflow_lineage.store.artifact.artifact_repo_mixin.AnyscaleOpenLineageClient",
+            mock.Mock(return_value=mock.Mock()),
+        )
+        monkeypatch.setattr(
+            "ray.anyscale.lineage.mlflow_lineage.store.artifact.artifact_repo_mixin.process_and_emit_ol_events_for_artifact_repo_operation",
+            mock.Mock(side_effect=Exception("processing failed")),
+        )
 
-    result = artifact_repo.log_artifacts("/local/dir")
+        repo = DummyArtifactRepo(TEST_S3_URI)
 
-    assert result == "logged-artifacts"
-    process_mock.assert_called()
+        assert repo.download_artifacts(TEST_ARTIFACT_PATH) == "downloaded/path"
+        assert repo.log_artifact("file") == "logged-artifact"
+        assert repo.log_artifacts("/dir") == "logged-artifacts"

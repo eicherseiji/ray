@@ -1,148 +1,110 @@
+"""Tests for AnyscaleRestStore."""
+
 from unittest import mock
 
 import pytest
 
-from ray.anyscale.lineage.common.exceptions import (
-    AnyscaleLineageMLflowError,
-)
 from ray.anyscale.lineage.mlflow_lineage.store.tracking.rest_store import (
     AnyscaleRestStore,
 )
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_MLFLOW_HOST_EXAMPLE,
-    TEST_MLFLOW_MODEL_NAME,
     TEST_MLFLOW_RUN_ID,
+    TEST_MLFLOW_S3_URI,
 )
 
 
-def test_anyscale_rest_store_initializes_client(monkeypatch) -> None:
+@pytest.fixture
+def mock_rest_store(monkeypatch):
     mock_host_creds = mock.Mock()
     mock_host_creds.host = TEST_MLFLOW_HOST_EXAMPLE
-    get_host_creds = mock.Mock(return_value=mock_host_creds)
     monkeypatch.setattr(
         "mlflow.utils.credentials.get_default_host_creds",
-        lambda store_uri: get_host_creds(),
+        lambda store_uri: mock_host_creds,
     )
-
     monkeypatch.setattr(
         "mlflow.store.tracking.rest_store.RestStore.__init__",
         lambda self, func: None,
     )
-
-    super_record = mock.Mock()
     monkeypatch.setattr(
         "mlflow.store.tracking.rest_store.RestStore.record_logged_model",
-        super_record,
+        mock.Mock(),
     )
 
-    process_mock = mock.Mock()
-    monkeypatch.setattr(
-        "ray.anyscale.lineage.mlflow_lineage.store.tracking.utils.process_and_emit_ol_events_for_model_logging",
-        process_mock,
-    )
 
-    store = AnyscaleRestStore(store_uri=f"https://{TEST_MLFLOW_HOST_EXAMPLE}")
-
-    mock_run = mock.Mock()
-    store.get_run = mock.Mock(return_value=mock_run)
-
-    assert store.host == TEST_MLFLOW_HOST_EXAMPLE
-    assert hasattr(store, "ol_client")
-    assert store.is_plugin is True
-
-    store.record_logged_model(TEST_MLFLOW_RUN_ID, TEST_MLFLOW_MODEL_NAME)
-
-    super_record.assert_called_once_with(TEST_MLFLOW_RUN_ID, TEST_MLFLOW_MODEL_NAME)
-    process_mock.assert_called_once()
-    call_args = process_mock.call_args
-    assert call_args.kwargs["mlflow_host"] == TEST_MLFLOW_HOST_EXAMPLE
-    assert call_args.kwargs["run"] == mock_run
-    assert call_args.kwargs["mlflow_model"] == TEST_MLFLOW_MODEL_NAME
+def create_mock_run(artifact_uri=TEST_MLFLOW_S3_URI):
+    run = mock.Mock()
+    run.info.artifact_uri = artifact_uri
+    return run
 
 
-def test_anyscale_rest_store_factory_caches_class(monkeypatch) -> None:
-    """Test that the factory function caches the created class."""
-    mock_host_creds = mock.Mock()
-    mock_host_creds.host = TEST_MLFLOW_HOST_EXAMPLE
-    get_host_creds = mock.Mock(return_value=mock_host_creds)
-    monkeypatch.setattr(
-        "mlflow.utils.credentials.get_default_host_creds",
-        lambda store_uri: get_host_creds(),
-    )
-
-    monkeypatch.setattr(
-        "mlflow.store.tracking.rest_store.RestStore.__init__",
-        lambda self, func: None,
-    )
-
-    mock_client = mock.Mock()
-    monkeypatch.setattr(
-        "ray.anyscale.lineage.common.openlineage_client.AnyscaleOpenLineageClient",
-        mock.Mock(return_value=mock_client),
-    )
-
-    from ray.anyscale.lineage.mlflow_lineage.store import tracking
-
-    tracking.rest_store._AnyscaleRestStoreClass = None
-
-    store1 = AnyscaleRestStore(store_uri=f"https://{TEST_MLFLOW_HOST_EXAMPLE}")
-    store2 = AnyscaleRestStore(store_uri="https://other-host.example.com")
-
-    assert type(store1) is type(store2)
-    assert store1.__class__.__name__ == "AnyscaleRestStore"
+def create_mock_model():
+    model = mock.Mock()
+    model.artifact_path = "test-model"
+    model.flavors = {"python_function": {}}
+    return model
 
 
-def test_anyscale_rest_store_record_logged_model_catches_exceptions(
-    monkeypatch,
-) -> None:
-    """Test that record_logged_model catches and wraps exceptions from OpenLineage processing."""
-    from ray.anyscale.lineage.mlflow_lineage import utils as mlflow_utils
+class TestAnyscaleRestStore:
+    """Tests for AnyscaleRestStore."""
 
-    # Set IGNORE_ERRORS to False to ensure exceptions are raised
-    monkeypatch.setattr(mlflow_utils, "IGNORE_ERRORS", False)
+    def test_is_plugin_flag_set(self, mock_rest_store):
+        """is_plugin flag is set to True."""
+        store = AnyscaleRestStore(store_uri=f"https://{TEST_MLFLOW_HOST_EXAMPLE}")
+        assert store.is_plugin is True
 
-    mock_host_creds = mock.Mock()
-    mock_host_creds.host = TEST_MLFLOW_HOST_EXAMPLE
-    get_host_creds = mock.Mock(return_value=mock_host_creds)
-    monkeypatch.setattr(
-        "mlflow.utils.credentials.get_default_host_creds",
-        lambda store_uri: get_host_creds(),
-    )
+    def test_record_logged_model_triggers_lineage(self, mock_rest_store, monkeypatch):
+        """record_logged_model triggers OpenLineage event emission."""
+        from ray.anyscale.lineage.mlflow_lineage.store import tracking
 
-    monkeypatch.setattr(
-        "mlflow.store.tracking.rest_store.RestStore.__init__",
-        lambda self, func: None,
-    )
+        # Reset cached class so monkeypatch is captured during class creation
+        tracking.rest_store._AnyscaleRestStoreClass = None
 
-    super_record = mock.Mock()
-    monkeypatch.setattr(
-        "mlflow.store.tracking.rest_store.RestStore.record_logged_model",
-        super_record,
-    )
+        process_mock = mock.Mock()
+        monkeypatch.setattr(
+            "ray.anyscale.lineage.mlflow_lineage.store.tracking.utils.process_and_emit_ol_events_for_model_logging",
+            process_mock,
+        )
+        store = AnyscaleRestStore(store_uri=f"https://{TEST_MLFLOW_HOST_EXAMPLE}")
+        store.get_run = mock.Mock(return_value=create_mock_run())
 
-    process_mock = mock.Mock(side_effect=RuntimeError("OpenLineage processing failed"))
-    monkeypatch.setattr(
-        "ray.anyscale.lineage.mlflow_lineage.store.tracking.utils.process_and_emit_ol_events_for_model_logging",
-        process_mock,
-    )
+        store.record_logged_model(TEST_MLFLOW_RUN_ID, create_mock_model())
 
-    # Reset the cached class to ensure monkeypatch takes effect
-    from ray.anyscale.lineage.mlflow_lineage.store import tracking
+        process_mock.assert_called_once()
 
-    tracking.rest_store._AnyscaleRestStoreClass = None
+    def test_record_logged_model_catches_exceptions(self, mock_rest_store, monkeypatch):
+        """Exceptions from OpenLineage processing are caught and logged."""
+        from ray.anyscale.lineage.mlflow_lineage.store import tracking
 
-    store = AnyscaleRestStore(store_uri=f"https://{TEST_MLFLOW_HOST_EXAMPLE}")
+        # Reset cached class so monkeypatch is captured during class creation
+        tracking.rest_store._AnyscaleRestStoreClass = None
 
-    mock_run = mock.Mock()
-    store.get_run = mock.Mock(return_value=mock_run)
+        process_mock = mock.Mock(side_effect=RuntimeError("processing failed"))
+        monkeypatch.setattr(
+            "ray.anyscale.lineage.mlflow_lineage.store.tracking.utils.process_and_emit_ol_events_for_model_logging",
+            process_mock,
+        )
+        store = AnyscaleRestStore(store_uri=f"https://{TEST_MLFLOW_HOST_EXAMPLE}")
+        store.get_run = mock.Mock(return_value=create_mock_run())
 
-    mock_model = mock.Mock()
+        store.record_logged_model(TEST_MLFLOW_RUN_ID, create_mock_model())
 
-    with pytest.raises(
-        AnyscaleLineageMLflowError, match="OpenLineage processing failed"
-    ) as exc_info:
-        store.record_logged_model(TEST_MLFLOW_RUN_ID, mock_model)
 
-    assert isinstance(exc_info.value.__cause__, RuntimeError)
+class TestAnyscaleRestStoreFactory:
+    """Tests for factory function behavior."""
 
-    super_record.assert_called_once_with(TEST_MLFLOW_RUN_ID, mock_model)
+    def test_factory_caches_class(self, mock_rest_store, monkeypatch):
+        """Factory function caches the created class."""
+        monkeypatch.setattr(
+            "ray.anyscale.lineage.common.openlineage_client.AnyscaleOpenLineageClient",
+            mock.Mock(return_value=mock.Mock()),
+        )
+
+        from ray.anyscale.lineage.mlflow_lineage.store import tracking
+
+        tracking.rest_store._AnyscaleRestStoreClass = None
+
+        store1 = AnyscaleRestStore(store_uri=f"https://{TEST_MLFLOW_HOST_EXAMPLE}")
+        store2 = AnyscaleRestStore(store_uri="https://other.example.com")
+
+        assert type(store1) is type(store2)

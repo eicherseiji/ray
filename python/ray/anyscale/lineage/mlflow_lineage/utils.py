@@ -9,6 +9,9 @@ from ray.anyscale.lineage.common.logging import get_logger
 logger = get_logger(__name__)
 
 
+MLFLOW_ARTIFACTS_URI_SCHEME = "mlflow-artifacts:"
+
+
 def catch_mlflow_store_exception(func: Callable[..., Any]) -> Callable[..., Any]:
     """Wrapper to catch MLflow store exceptions."""
 
@@ -28,3 +31,26 @@ def catch_mlflow_store_exception(func: Callable[..., Any]) -> Callable[..., Any]
                 raise AnyscaleLineageMLflowError(error_msg) from e
 
     return wrapper
+
+
+def resolve_http_uri_from_mlflow_artifacts_uri(artifact_uri: str) -> str:
+    """Resolve an HTTP URI from a MLflow artifacts URI.
+
+    Converts an mlflow-artifacts:/ URI to an HTTP URI using the tracking URI.
+    Other URI schemes are returned unchanged.
+    """
+    if not artifact_uri.startswith(MLFLOW_ARTIFACTS_URI_SCHEME):
+        return artifact_uri
+
+    try:
+        from mlflow.store.artifact.mlflow_artifacts_repo import (
+            MlflowArtifactsRepository,
+        )
+        from mlflow.tracking import get_tracking_uri
+
+        return MlflowArtifactsRepository.resolve_uri(artifact_uri, get_tracking_uri())
+    except Exception as e:
+        logger.debug(
+            f"Failed to resolve HTTP URI from MLflow artifacts URI '{artifact_uri}': {e!r}"
+        )
+        return artifact_uri

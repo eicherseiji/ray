@@ -16,13 +16,8 @@ def _create_anyscale_gcs_artifact_repository_class() -> Type[Any]:
     ):
         """Anyscale implementation of MLflow GCS artifact repository."""
 
-        def __init__(
-            self,
-            artifact_uri: str,
-            client: Optional[Any] = None,
-            credential_refresh_def: Optional[Any] = None,
-        ) -> None:
-            super().__init__(artifact_uri, client, credential_refresh_def)
+        def __init__(self, artifact_uri: str, *args: Any, **kwargs: Any) -> None:
+            super().__init__(artifact_uri, *args, **kwargs)
 
     return AnyscaleGCSArtifactRepository
 

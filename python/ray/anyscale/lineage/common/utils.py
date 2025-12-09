@@ -479,12 +479,12 @@ def get_anyscale_openlineage_config() -> dict:
                     "type": "http",
                     "url": "http://0.0.0.0:8691",  # Vector collector endpoint
                     "endpoint": "",
+                    "priority": 1,
                 },
                 "second": {
                     "type": "file",
                     "log_file_path": get_openlineage_events_log_path(),
                     "append": True,
-                    "priority": 1,
                 },
             },
         }

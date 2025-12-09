@@ -76,6 +76,10 @@ def configure_logging(
 
     effective_level = level or "INFO"
 
+    # Set OpenLineage client logging level to match our logging level.
+    # This must be set before initializing the OpenLineage client.
+    os.environ["OPENLINEAGE_CLIENT_LOGGING"] = effective_level
+
     logger = logging.getLogger("ray.anyscale.lineage")
     logger.setLevel(effective_level)
 

@@ -1,3 +1,5 @@
+"""Tests for tracking store OpenLineage event processing."""
+
 from __future__ import annotations
 
 from unittest import mock
@@ -10,11 +12,9 @@ from ray.anyscale.lineage.mlflow_lineage.store.tracking.utils import (
 )
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_MLFLOW_EXPERIMENT_ID,
-    TEST_MLFLOW_HOST_LOCAL,
-    TEST_MLFLOW_MODEL_URI,
-    TEST_MLFLOW_MODEL_UUID,
     TEST_MLFLOW_RUN_ID,
     TEST_MLFLOW_RUN_NAME,
+    TEST_MLFLOW_S3_URI,
     TEST_WORKLOAD_OL_RUN_ID_ALT,
 )
 
@@ -22,8 +22,7 @@ from ray.anyscale.lineage.tests.test_constants import (
 @pytest.fixture
 def workload_env(sample_anyscale_env, monkeypatch):
     monkeypatch.setenv(
-        "ANYSCALE_WORKLOAD_OPENLINEAGE_RUN_ID",
-        TEST_WORKLOAD_OL_RUN_ID_ALT,
+        "ANYSCALE_WORKLOAD_OPENLINEAGE_RUN_ID", TEST_WORKLOAD_OL_RUN_ID_ALT
     )
     return sample_anyscale_env
 
@@ -33,69 +32,66 @@ def mock_run():
     run = mock.Mock()
     run.info.run_name = TEST_MLFLOW_RUN_NAME
     run.info.experiment_id = TEST_MLFLOW_EXPERIMENT_ID
+    run.info.artifact_uri = TEST_MLFLOW_S3_URI
     return run
 
 
 @pytest.fixture
 def mock_model():
-    model_info = mock.Mock()
-    model_info.model_uuid = TEST_MLFLOW_MODEL_UUID
-    model_info.model_uri = TEST_MLFLOW_MODEL_URI
-    model_info.flavors = {"python_function": {}}
-
     model = mock.Mock()
-    model.get_model_info.return_value = model_info
+    model.artifact_path = "test-model"
+    model.flavors = {"python_function": {}, "sklearn": {}}
     model.run_id = TEST_MLFLOW_RUN_ID
-    # Schema methods are no longer used as input/output schema extraction is commented out
     return model
 
 
 @pytest.fixture
 def mock_client():
-    client = mock.Mock()
-    return client
+    return mock.Mock()
 
 
-def test_process_and_emit_ol_events_for_model_logging_happy_path(
-    workload_env, mock_client, mock_run, mock_model, monkeypatch
-) -> None:
-    process_and_emit_ol_events_for_model_logging(
-        ol_client=mock_client,
-        mlflow_host=TEST_MLFLOW_HOST_LOCAL,
-        run=mock_run,
-        mlflow_model=mock_model,
-    )
+class TestModelLogging:
+    """Tests for model logging OpenLineage event emission."""
 
-    # Verify run event was emitted once with COMPLETE state
-    assert mock_client.emit_run_event.call_count == 1
+    def test_emits_complete_event_with_output_dataset(
+        self, workload_env, mock_client, mock_run, mock_model
+    ):
+        """Model logging emits COMPLETE event with output dataset."""
+        process_and_emit_ol_events_for_model_logging(
+            ol_client=mock_client,
+            run=mock_run,
+            mlflow_model=mock_model,
+        )
 
-    # Check the event type is COMPLETE
-    call_args_list = mock_client.emit_run_event.call_args_list
-    assert call_args_list[0][1]["event_type"] == RunState.COMPLETE
+        assert mock_client.emit_run_event.call_count == 1
+        call_args = mock_client.emit_run_event.call_args[1]
+        assert call_args["event_type"] == RunState.COMPLETE
+        assert len(call_args["outputs"]) == 1
 
+    def test_dataset_uses_artifact_uri_as_namespace(
+        self, workload_env, mock_client, mock_run, mock_model
+    ):
+        """Dataset namespace is derived from run's artifact_uri."""
+        process_and_emit_ol_events_for_model_logging(
+            ol_client=mock_client,
+            run=mock_run,
+            mlflow_model=mock_model,
+        )
 
-def test_process_and_emit_ol_events_for_model_logging_skips_runs_uri(
-    workload_env, mock_client, mock_run
-) -> None:
-    """Test that model logging with runs:/ URI is skipped."""
-    # Create a mock model with a runs:/ URI
-    model_info = mock.Mock()
-    model_info.model_uuid = TEST_MLFLOW_MODEL_UUID
-    model_info.model_uri = "runs:/b4e6a62eb8a54755b9991bb4b3fe7d96/clip-base"
-    model_info.flavors = {"transformers": {}}
+        call_args = mock_client.emit_run_event.call_args[1]
+        output = call_args["outputs"][0]
+        assert output.namespace == TEST_MLFLOW_S3_URI
+        assert output.name == "test-model"
 
-    model = mock.Mock()
-    model.get_model_info.return_value = model_info
-    model.run_id = TEST_MLFLOW_RUN_ID
+    def test_skips_untracked_uris(self, workload_env, mock_client, mock_model):
+        """Model logging skips untracked URIs like /tmp paths."""
+        run = mock.Mock()
+        run.info.artifact_uri = "/tmp/mlruns/artifacts"
 
-    # Call the function
-    process_and_emit_ol_events_for_model_logging(
-        ol_client=mock_client,
-        mlflow_host=TEST_MLFLOW_HOST_LOCAL,
-        run=mock_run,
-        mlflow_model=model,
-    )
+        process_and_emit_ol_events_for_model_logging(
+            ol_client=mock_client,
+            run=run,
+            mlflow_model=mock_model,
+        )
 
-    # Verify NO events were emitted
-    mock_client.emit_job_event.assert_not_called()
-    mock_client.emit_run_event.assert_not_called()
+        mock_client.emit_run_event.assert_not_called()

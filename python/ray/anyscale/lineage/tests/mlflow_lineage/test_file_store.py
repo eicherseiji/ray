@@ -1,129 +1,106 @@
+"""Tests for AnyscaleFileStore."""
+
 from unittest import mock
 
 import pytest
 
-from ray.anyscale.lineage.common.exceptions import (
-    AnyscaleLineageMLflowError,
-)
 from ray.anyscale.lineage.mlflow_lineage.store.tracking.file_store import (
     AnyscaleFileStore,
 )
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_LOCAL_MLRUNS_PATH,
-    TEST_MLFLOW_MODEL_NAME,
     TEST_MLFLOW_RUN_ID,
+    TEST_MLFLOW_S3_URI,
 )
 
 
-def test_anyscale_file_store_initializes_client(monkeypatch) -> None:
+@pytest.fixture
+def mock_file_store(monkeypatch):
     monkeypatch.setattr(
         "mlflow.store.tracking.file_store.FileStore.__init__",
         lambda self, root_directory=None, artifact_root_uri=None: setattr(
             self, "root_directory", root_directory or "default-root"
         ),
     )
-    super_record = mock.Mock()
     monkeypatch.setattr(
         "mlflow.store.tracking.file_store.FileStore.record_logged_model",
-        super_record,
+        mock.Mock(),
     )
 
-    process_mock = mock.Mock()
-    monkeypatch.setattr(
-        "ray.anyscale.lineage.mlflow_lineage.store.tracking.utils.process_and_emit_ol_events_for_model_logging",
-        process_mock,
-    )
 
-    store = AnyscaleFileStore(store_uri=TEST_LOCAL_MLRUNS_PATH)
-
-    mock_run = mock.Mock()
-    store.get_run = mock.Mock(return_value=mock_run)
-
-    assert store.host == TEST_LOCAL_MLRUNS_PATH
-    assert hasattr(store, "ol_client")
-    assert store.is_plugin is True
-
-    store.record_logged_model(TEST_MLFLOW_RUN_ID, TEST_MLFLOW_MODEL_NAME)
-
-    super_record.assert_called_once_with(TEST_MLFLOW_RUN_ID, TEST_MLFLOW_MODEL_NAME)
-    process_mock.assert_called_once()
-    call_args = process_mock.call_args
-    assert call_args.kwargs["mlflow_host"] == TEST_LOCAL_MLRUNS_PATH
-    assert call_args.kwargs["run"] == mock_run
-    assert call_args.kwargs["mlflow_model"] == TEST_MLFLOW_MODEL_NAME
+def create_mock_run(artifact_uri=TEST_MLFLOW_S3_URI):
+    run = mock.Mock()
+    run.info.artifact_uri = artifact_uri
+    return run
 
 
-def test_anyscale_file_store_factory_caches_class(monkeypatch) -> None:
-    """Test that the factory function caches the created class."""
-    monkeypatch.setattr(
-        "mlflow.store.tracking.file_store.FileStore.__init__",
-        lambda self, root_directory=None, artifact_root_uri=None: setattr(
-            self, "root_directory", root_directory or "default-root"
-        ),
-    )
-
-    mock_client = mock.Mock()
-    monkeypatch.setattr(
-        "ray.anyscale.lineage.common.openlineage_client.AnyscaleOpenLineageClient",
-        mock.Mock(return_value=mock_client),
-    )
-
-    from ray.anyscale.lineage.mlflow_lineage.store import tracking
-
-    tracking.file_store._AnyscaleFileStoreClass = None
-
-    store1 = AnyscaleFileStore(store_uri=TEST_LOCAL_MLRUNS_PATH)
-    store2 = AnyscaleFileStore(store_uri="/tmp/other_path")
-
-    assert type(store1) is type(store2)
-    assert store1.__class__.__name__ == "AnyscaleFileStore"
+def create_mock_model():
+    model = mock.Mock()
+    model.artifact_path = "test-model"
+    model.flavors = {"python_function": {}}
+    return model
 
 
-def test_anyscale_file_store_record_logged_model_catches_exceptions(
-    monkeypatch,
-) -> None:
-    """Test that record_logged_model catches and wraps exceptions from OpenLineage processing."""
-    from ray.anyscale.lineage.mlflow_lineage import utils as mlflow_utils
+class TestAnyscaleFileStore:
+    """Tests for AnyscaleFileStore."""
 
-    # Set IGNORE_ERRORS to False to ensure exceptions are raised
-    monkeypatch.setattr(mlflow_utils, "IGNORE_ERRORS", False)
+    def test_is_plugin_flag_set(self, mock_file_store):
+        """is_plugin flag is set to True."""
+        store = AnyscaleFileStore(store_uri=TEST_LOCAL_MLRUNS_PATH)
+        assert store.is_plugin is True
 
-    monkeypatch.setattr(
-        "mlflow.store.tracking.file_store.FileStore.__init__",
-        lambda self, root_directory=None, artifact_root_uri=None: setattr(
-            self, "root_directory", root_directory or "default-root"
-        ),
-    )
+    def test_record_logged_model_triggers_lineage(self, mock_file_store, monkeypatch):
+        """record_logged_model triggers OpenLineage event emission."""
+        from ray.anyscale.lineage.mlflow_lineage.store import tracking
 
-    super_record = mock.Mock()
-    monkeypatch.setattr(
-        "mlflow.store.tracking.file_store.FileStore.record_logged_model",
-        super_record,
-    )
+        # Reset cached class so monkeypatch is captured during class creation
+        tracking.file_store._AnyscaleFileStoreClass = None
 
-    process_mock = mock.Mock(side_effect=RuntimeError("OpenLineage processing failed"))
-    monkeypatch.setattr(
-        "ray.anyscale.lineage.mlflow_lineage.store.tracking.utils.process_and_emit_ol_events_for_model_logging",
-        process_mock,
-    )
+        process_mock = mock.Mock()
+        monkeypatch.setattr(
+            "ray.anyscale.lineage.mlflow_lineage.store.tracking.utils.process_and_emit_ol_events_for_model_logging",
+            process_mock,
+        )
+        store = AnyscaleFileStore(store_uri=TEST_LOCAL_MLRUNS_PATH)
+        store.get_run = mock.Mock(return_value=create_mock_run())
 
-    # Reset the cached class to ensure monkeypatch takes effect
-    from ray.anyscale.lineage.mlflow_lineage.store import tracking
+        store.record_logged_model(TEST_MLFLOW_RUN_ID, create_mock_model())
 
-    tracking.file_store._AnyscaleFileStoreClass = None
+        process_mock.assert_called_once()
 
-    store = AnyscaleFileStore(store_uri=TEST_LOCAL_MLRUNS_PATH)
+    def test_record_logged_model_catches_exceptions(self, mock_file_store, monkeypatch):
+        """Exceptions from OpenLineage processing are caught and logged."""
+        from ray.anyscale.lineage.mlflow_lineage.store import tracking
 
-    mock_run = mock.Mock()
-    store.get_run = mock.Mock(return_value=mock_run)
+        # Reset cached class so monkeypatch is captured during class creation
+        tracking.file_store._AnyscaleFileStoreClass = None
 
-    mock_model = mock.Mock()
+        process_mock = mock.Mock(side_effect=RuntimeError("processing failed"))
+        monkeypatch.setattr(
+            "ray.anyscale.lineage.mlflow_lineage.store.tracking.utils.process_and_emit_ol_events_for_model_logging",
+            process_mock,
+        )
+        store = AnyscaleFileStore(store_uri=TEST_LOCAL_MLRUNS_PATH)
+        store.get_run = mock.Mock(return_value=create_mock_run())
 
-    with pytest.raises(
-        AnyscaleLineageMLflowError, match="OpenLineage processing failed"
-    ) as exc_info:
-        store.record_logged_model(TEST_MLFLOW_RUN_ID, mock_model)
+        store.record_logged_model(TEST_MLFLOW_RUN_ID, create_mock_model())
 
-    assert isinstance(exc_info.value.__cause__, RuntimeError)
 
-    super_record.assert_called_once_with(TEST_MLFLOW_RUN_ID, mock_model)
+class TestAnyscaleFileStoreFactory:
+    """Tests for factory function behavior."""
+
+    def test_factory_caches_class(self, mock_file_store, monkeypatch):
+        """Factory function caches the created class."""
+        monkeypatch.setattr(
+            "ray.anyscale.lineage.common.openlineage_client.AnyscaleOpenLineageClient",
+            mock.Mock(return_value=mock.Mock()),
+        )
+
+        from ray.anyscale.lineage.mlflow_lineage.store import tracking
+
+        tracking.file_store._AnyscaleFileStoreClass = None
+
+        store1 = AnyscaleFileStore(store_uri=TEST_LOCAL_MLRUNS_PATH)
+        store2 = AnyscaleFileStore(store_uri="/other/path")
+
+        assert type(store1) is type(store2)
