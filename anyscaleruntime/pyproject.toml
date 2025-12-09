@@ -35,3 +35,8 @@ version = {attr = "anyscaleruntime.__version__"}
 
 [project.entry-points."mlflow.run_context_provider"]
 "unused" = "ray.anyscale.lineage.mlflow_lineage.run_context_provider:AnyscaleRunContextProvider"
+
+[project.entry-points."mlflow.model_registry_store"]
+"file" = "ray.anyscale.lineage.mlflow_lineage.store.model_registry:AnyscaleFileStore"
+"http" = "ray.anyscale.lineage.mlflow_lineage.store.model_registry:AnyscaleRestStore"
+"https" = "ray.anyscale.lineage.mlflow_lineage.store.model_registry:AnyscaleRestStore"
