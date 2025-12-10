@@ -39,8 +39,10 @@ repos:
     hooks:
       - id: ruff
         args: [ --fix, --exit-non-zero-on-fix ]
+        exclude: ^(python/ray/data/__init__.py)
       - id: ruff
         args: [ --select, "I", --fix, --exit-non-zero-on-fix ]
+        exclude: ^(python/ray/anyscale)
 
   - repo: https://github.com/jsh9/pydoclint
     rev: "0.8.3"
@@ -120,11 +122,16 @@ repos:
             python/ray/autoscaler/sdk/sdk.py|
             python/ray/autoscaler/_private/commands.py|
             python/ray/autoscaler/_private/autoscaler.py|
-            python/ray/_private/gcs_utils.py
+            python/ray/_private/gcs_utils.py|
+            python/ray/anyscale/safetensors/.*\.py|
+            python/ray/anyscale/lineage/.*\.py
           )
         additional_dependencies:
           [
+            mypy-extensions==1.0.0,
             types-PyYAML==6.0.12.2,
+            types-pycurl==7.45.3.20240421,
+            types-requests==2.31.0.6,
           ]
 
   - repo: https://github.com/pre-commit/pygrep-hooks
@@ -237,3 +244,14 @@ repos:
           - '@typescript-eslint/eslint-plugin@5.41.0'
           - '@typescript-eslint/parser@5.41.0'
           - '@typescript-eslint/eslint-plugin@5.41.0'
+
+  - repo: local
+    hooks:
+    - id: check-train-circular-imports-turbo
+      name: Check Rayturbo Train circular imports
+      entry: python python/ray/train/lint/check_circular_imports.py
+      language: system
+      types: [python]
+      files: '^python/ray/train/.*\.py$'
+      pass_filenames: false
+      args: ["--patch_dir", "ray/anyscale/train"]

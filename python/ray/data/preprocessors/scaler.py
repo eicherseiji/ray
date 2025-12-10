@@ -355,7 +355,6 @@ class MaxAbsScaler(SerializablePreprocessorBase):
         return f"{self.__class__.__name__}(columns={self.columns!r}, output_columns={self.output_columns!r})"
 
 
-@PublicAPI(stability="alpha")
 @SerializablePreprocessor(version=1, identifier="io.ray.preprocessors.robust_scaler")
 class RobustScaler(SerializablePreprocessorBase):
     r"""Scale and translate each column using approximate quantiles.

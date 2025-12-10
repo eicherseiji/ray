@@ -143,6 +143,7 @@ class OrdinalEncoder(SerializablePreprocessorBase):
         return self
 
     def _transform_pandas(self, df: pd.DataFrame):
+
         _validate_df(df, *self.columns)
 
         def encode_list(element: list, *, name: str):
@@ -789,6 +790,7 @@ class Categorizer(SerializablePreprocessorBase):
             post_key_fn=lambda col: col,
             columns=columns_to_get,
         )
+
         return self
 
     def _transform_pandas(self, df: pd.DataFrame):
