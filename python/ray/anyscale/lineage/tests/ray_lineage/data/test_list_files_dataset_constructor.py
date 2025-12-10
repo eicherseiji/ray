@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ray.anyscale.lineage.common.facets.dataset import FileFormats, FreeFormFileFormat
+from ray.anyscale.lineage.common.facets.dataset import FileFormats
 from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import list_files, main
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_RAY_DATA_S3_URI as TEST_S3_URI,
@@ -200,7 +200,7 @@ def test_get_list_files_common_facets_matches_second_extension(
 def test_get_list_files_common_facets_with_unrecognized_extension(
     patch_facet_constructors, monkeypatch
 ):
-    """Test get_list_files_common_facets with an unrecognized file extension uses FreeFormFileFormat."""
+    """Test get_list_files_common_facets with an unrecognized file extension returns UNKNOWN."""
     monkeypatch.setattr(
         list_files,
         "FILE_EXTENSIONS_REGISTRY",
@@ -214,10 +214,11 @@ def test_get_list_files_common_facets_with_unrecognized_extension(
 
     facets = list_files.get_list_files_common_facets(TEST_S3_URI, [".xyz"])
 
-    assert facets["dataset_type"] == list_files.DatasetType.FILE
-    assert facets["datasource"] == TEST_S3_URI
-    assert isinstance(facets["file_format"], FreeFormFileFormat)
-    assert facets["file_format"].value == "XYZ"
+    assert facets == {
+        "dataset_type": list_files.DatasetType.FILE,
+        "datasource": TEST_S3_URI,
+        "file_format": FileFormats.UNKNOWN,
+    }
 
 
 def test_get_list_files_common_facets_with_no_extensions(
@@ -241,6 +242,56 @@ def test_get_list_files_common_facets_with_no_extensions(
         "dataset_type": list_files.DatasetType.FILE,
         "datasource": TEST_S3_URI,
         "file_format": FileFormats.UNKNOWN,
+    }
+
+
+def test_get_list_files_common_facets_infers_format_from_path_extension(
+    patch_facet_constructors, monkeypatch
+):
+    """Test that when file_extensions is empty, format is inferred from path extension."""
+    monkeypatch.setattr(
+        list_files,
+        "FILE_EXTENSIONS_REGISTRY",
+        {"CSVDatasource": ["csv", "csv.gz"]},
+    )
+    monkeypatch.setattr(
+        list_files,
+        "FILE_FORMATS_REGISTRY",
+        {"CSVDatasource": FileFormats.CSV},
+    )
+
+    # Path has .csv extension, but no file_extensions provided
+    facets = list_files.get_list_files_common_facets("s3://bucket/data.csv", [])
+
+    assert facets == {
+        "dataset_type": list_files.DatasetType.FILE,
+        "datasource": "s3://bucket/data.csv",
+        "file_format": FileFormats.CSV,
+    }
+
+
+def test_get_list_files_common_facets_infers_compressed_format_from_path(
+    patch_facet_constructors, monkeypatch
+):
+    """Test that compressed file extensions like .csv.gz are correctly inferred from path."""
+    monkeypatch.setattr(
+        list_files,
+        "FILE_EXTENSIONS_REGISTRY",
+        {"CSVDatasource": ["csv", "csv.gz"]},
+    )
+    monkeypatch.setattr(
+        list_files,
+        "FILE_FORMATS_REGISTRY",
+        {"CSVDatasource": FileFormats.CSV},
+    )
+
+    # Path has .csv.gz extension (compressed), but no file_extensions provided
+    facets = list_files.get_list_files_common_facets("s3://bucket/data.csv.gz", [])
+
+    assert facets == {
+        "dataset_type": list_files.DatasetType.FILE,
+        "datasource": "s3://bucket/data.csv.gz",
+        "file_format": FileFormats.CSV,
     }
 
 

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 
 from openlineage.client.event_v2 import InputDataset
 
@@ -9,7 +9,6 @@ from ray.anyscale.lineage.common.dataset_naming import (
 from ray.anyscale.lineage.common.facets.dataset import (
     DatasetType,
     FileFormats,
-    FreeFormFileFormat,
 )
 from ray.anyscale.lineage.common.logging import get_logger
 from ray.anyscale.lineage.common.utils import (
@@ -24,6 +23,24 @@ from ray.anyscale.lineage.ray_lineage.data.utils import (
 )
 
 logger = get_logger(__name__)
+
+
+def _infer_format_from_path(path: str) -> FileFormats:
+    """Infer file format from path extension. Returns UNKNOWN if not found."""
+    # Normalize path for extension matching:
+    # - Strip trailing slashes (directories don't have extensions)
+    # - Remove query parameters and fragment identifiers (e.g., ?param=value, #section)
+    # - Lowercase for case-insensitive matching (e.g., .CSV, .Csv, .csv)
+    clean_path = path.rstrip("/").split("?")[0].split("#")[0].lower()
+
+    for ds_name, ds_extensions in FILE_EXTENSIONS_REGISTRY.items():
+        for ext in ds_extensions:
+            if clean_path.endswith(f".{ext}"):
+                file_format = FILE_FORMATS_REGISTRY.get(ds_name)
+                if file_format:
+                    return file_format
+
+    return FileFormats.UNKNOWN
 
 
 def get_list_files_common_facets(
@@ -56,18 +73,12 @@ def get_list_files_common_facets(
             if file_format:
                 break
 
-    format_value: Union[FileFormats, FreeFormFileFormat]
-    if file_format:
-        format_value = file_format
-    elif file_extensions:
-        # Use first extension (FreeFormFileFormat converts to uppercase)
-        normalized_extension = file_extensions[0].lstrip(".")
-        format_value = FreeFormFileFormat(format=normalized_extension)
-    else:
-        format_value = FileFormats.UNKNOWN
+    # If no format found from file_extensions, try to infer from path extension
+    if not file_format:
+        file_format = _infer_format_from_path(path)
 
     facets.update(
-        RayDataFacetConstructor.construct_file_format_dataset_facet(format=format_value)
+        RayDataFacetConstructor.construct_file_format_dataset_facet(format=file_format)
     )
 
     return facets
