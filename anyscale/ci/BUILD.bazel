@@ -13,7 +13,7 @@ py_library(
 py_test(
     name = "test_ray_wheels_lib",
     srcs = ["test_ray_wheels_lib.py"],
-    exec_compatible_with = ["//:hermetic_python"],
+    exec_compatible_with = ["//bazel:py3"],
     tags = [
         "ci_unit",
         "team:ci",
@@ -27,7 +27,7 @@ py_test(
 py_binary(
     name = "check_wheels_exist_s3",
     srcs = ["check_wheels_exist_s3.py"],
-    exec_compatible_with = ["//:hermetic_python"],
+    exec_compatible_with = ["//bazel:py3"],
     deps = [
         ":ray_wheels_lib",
         ci_require("click"),
