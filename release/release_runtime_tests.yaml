@@ -81,6 +81,7 @@
 ###############
 
 - name: cpu_job_autoscaling_benchmark
+  python: "3.10"
   group: data-tests
   working_dir: anyscale/data
 
@@ -96,6 +97,7 @@
     script: python cpu_job_autoscaling_benchmark.py
 
 - name: "checkpoint_benchmark_{{scale}}_{{id_column}}"
+  python: "3.9"
   group: data-tests
   working_dir: anyscale/data
 
@@ -160,6 +162,7 @@
 # Train tests
 ###############
 - name: train_elastic_e2e_with_node_killing
+  python: "3.10"
   group: Train tests
   working_dir: anyscale/train/elastic_e2e
 
@@ -184,6 +187,7 @@
   alert: default
 
 - name: elastic_benchmark
+  python: "3.10"
   group: Train tests
   working_dir: train_tests/benchmark
 
@@ -208,6 +212,7 @@
   alert: default
 
 - name: "mid_epoch_resume_benchmark_{{scale}}"
+  python: "3.10"
   group: Train tests
   working_dir: anyscale/train/mid_epoch_resume_benchmark
 
@@ -228,6 +233,7 @@
 
 
 - name: training_ingest_benchmark-task=image_classification
+  python: "3.10"
   group: Train tests
   working_dir: train_tests/benchmark
 
