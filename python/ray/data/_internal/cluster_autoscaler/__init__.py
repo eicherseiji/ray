@@ -41,11 +41,11 @@ def create_cluster_autoscaler(
         return RateBasedClusterAutoscaler.create(
             topology, resource_manager, execution_id=execution_id
         )
-    
+
     # The V2 OSS autoscaler is the same as the legacy RayTurbo autoscaler.
     elif (
-        selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO_LEGACY or 
-        selected_autoscaler == ClusterAutoscalerVersion.V2
+        selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO_LEGACY
+        or selected_autoscaler == ClusterAutoscalerVersion.V2
     ):
         return DefaultClusterAutoscalerV2(
             topology,
