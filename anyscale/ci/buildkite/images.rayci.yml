@@ -85,6 +85,7 @@ steps:
           - "cu12.5.1-cudnn"
           - "cu12.6.3-cudnn"
           - "cu12.8.1-cudnn"
+          - "cu12.9.1-cudnn"
 
   - label: ":tapioca: rayturbo py{{matrix.py}} {{matrix.base}} image (aarch64)"
     key: rayturbo-image-aarch64
@@ -117,6 +118,7 @@ steps:
           - "cu12.5.1-cudnn"
           - "cu12.6.3-cudnn"
           - "cu12.8.1-cudnn"
+          - "cu12.9.1-cudnn"
 
   - label: ":tapioca: slim rayturbo py{{matrix.py}} {{matrix.base}} image"
     key: rayturbo-slim-image
@@ -148,6 +150,7 @@ steps:
           - "cu12.5.1"
           - "cu12.6.3"
           - "cu12.8.1"
+          - "cu12.9.1"
 
   - label: ":tapioca: rayturbo llm py{{matrix.py}} {{matrix.base}} image"
     key: rayturbo-llm-image

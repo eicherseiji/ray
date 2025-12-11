@@ -91,6 +91,8 @@ if [[ "${IS_SLIM}" == "1" ]]; then
         IMG_TYPE_CODE="cu126"
     elif [[ "${IMG_TYPE}" == "cu12.8.1" ]]; then
         IMG_TYPE_CODE="cu128"
+    elif [[ "${IMG_TYPE}" == "cu12.9.1" ]]; then
+        IMG_TYPE_CODE="cu129"
     else
         echo "Unknown image type: ${IMG_TYPE}" >/dev/stderr
         exit 1
@@ -114,6 +116,8 @@ else
         IMG_TYPE_CODE="cu126"
     elif [[ "${IMG_TYPE}" == "cu12.8.1-cudnn" ]]; then
         IMG_TYPE_CODE="cu128"
+    elif [[ "${IMG_TYPE}" == "cu12.9.1-cudnn" ]]; then
+        IMG_TYPE_CODE="cu129"
     else
         echo "Unknown image type: ${IMG_TYPE}" >/dev/stderr
         exit 1
