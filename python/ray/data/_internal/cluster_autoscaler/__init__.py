@@ -10,6 +10,7 @@ from .base_autoscaling_coordinator import (
 from .base_cluster_autoscaler import ClusterAutoscaler
 from .default_autoscaling_coordinator import DefaultAutoscalingCoordinator
 from .default_cluster_autoscaler import DefaultClusterAutoscaler
+from .default_cluster_autoscaler_v2 import DefaultClusterAutoscalerV2
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
@@ -23,13 +24,15 @@ CLUSTER_AUTOSCALER_ENV_DEFAULT_VALUE = "RAYTURBO"
 class ClusterAutoscalerVersion(Enum):
     RAYTURBO = "RAYTURBO"
     RAYTURBO_LEGACY = "RAYTURBO_LEGACY"
-    OSS = "OSS"
+    V2 = "V2"
+    V1 = "V1"
 
 
 def create_cluster_autoscaler(
     topology: "Topology", resource_manager: "ResourceManager", *, execution_id: str
 ) -> ClusterAutoscaler:
     selected_autoscaler = _get_cluster_autoscaler_version()
+
     if selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO:
         from ray.anyscale.data._internal.cluster_autoscaler import (
             RateBasedClusterAutoscaler,
@@ -38,17 +41,19 @@ def create_cluster_autoscaler(
         return RateBasedClusterAutoscaler.create(
             topology, resource_manager, execution_id=execution_id
         )
-    elif selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO_LEGACY:
-        from ray.anyscale.data._internal.cluster_autoscaler import (
-            LegacyRayTurboClusterAutoscaler,
-        )
 
-        return LegacyRayTurboClusterAutoscaler(
+    # The V2 OSS autoscaler is the same as the legacy RayTurbo autoscaler.
+    elif (
+        selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO_LEGACY
+        or selected_autoscaler == ClusterAutoscalerVersion.V2
+    ):
+        return DefaultClusterAutoscalerV2(
             topology,
             resource_manager,
             execution_id=execution_id,
         )
-    elif selected_autoscaler == ClusterAutoscalerVersion.OSS:
+
+    elif selected_autoscaler == ClusterAutoscalerVersion.V1:
         return DefaultClusterAutoscaler(
             topology,
             resource_manager,
