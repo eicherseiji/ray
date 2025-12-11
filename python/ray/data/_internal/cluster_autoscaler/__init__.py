@@ -42,11 +42,18 @@ def create_cluster_autoscaler(
             topology, resource_manager, execution_id=execution_id
         )
 
-    # The V2 OSS autoscaler is the same as the legacy RayTurbo autoscaler.
-    elif (
-        selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO_LEGACY
-        or selected_autoscaler == ClusterAutoscalerVersion.V2
-    ):
+    elif selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO_LEGACY:
+        from ray.anyscale.data._internal.cluster_autoscaler import (
+            LegacyRayTurboClusterAutoscaler,
+        )
+
+        return LegacyRayTurboClusterAutoscaler(
+            topology,
+            resource_manager,
+            execution_id=execution_id,
+        )
+
+    elif selected_autoscaler == ClusterAutoscalerVersion.V2:
         return DefaultClusterAutoscalerV2(
             topology,
             resource_manager,

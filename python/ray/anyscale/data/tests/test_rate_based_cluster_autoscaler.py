@@ -20,6 +20,7 @@ from ray.anyscale.data._internal.cluster_autoscaler import (
 from ray.data._internal.cluster_autoscaler import (
     CLUSTER_AUTOSCALER_ENV_KEY,
     DefaultClusterAutoscaler,
+    DefaultClusterAutoscalerV2,
     create_cluster_autoscaler,
 )
 from ray.data._internal.execution.interfaces import PhysicalOperator
@@ -284,10 +285,10 @@ def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):
     [
         ("RAYTURBO", RateBasedClusterAutoscaler),
         ("RAYTURBO_LEGACY", LegacyRayTurboClusterAutoscaler),
-        ("OSS", DefaultClusterAutoscaler),
+        ("V2", DefaultClusterAutoscalerV2),
+        ("V1", DefaultClusterAutoscaler),
     ],
 )
-@pytest.mark.skip(reason="This test is blocking RayTurbo CI")
 def test_cluster_autoscaler_env_value_creates_correct_autoscaler(
     monkeypatch, cluster_autoscaler_env_value, expected_autoscaler_type
 ):
