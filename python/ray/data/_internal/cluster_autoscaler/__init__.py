@@ -24,6 +24,7 @@ CLUSTER_AUTOSCALER_ENV_DEFAULT_VALUE = "RAYTURBO"
 class ClusterAutoscalerVersion(Enum):
     RAYTURBO = "RAYTURBO"
     RAYTURBO_LEGACY = "RAYTURBO_LEGACY"
+    OSS = "OSS"  # Same as V1. Kept for backwards compatibility.
     V2 = "V2"
     V1 = "V1"
 
@@ -60,7 +61,10 @@ def create_cluster_autoscaler(
             execution_id=execution_id,
         )
 
-    elif selected_autoscaler == ClusterAutoscalerVersion.V1:
+    elif (
+        selected_autoscaler == ClusterAutoscalerVersion.V1
+        or selected_autoscaler == ClusterAutoscalerVersion.OSS
+    ):
         return DefaultClusterAutoscaler(
             topology,
             resource_manager,
