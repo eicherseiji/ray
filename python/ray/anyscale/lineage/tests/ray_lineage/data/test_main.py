@@ -89,9 +89,10 @@ def test_after_execution_succeeds_emits_complete_event(monkeypatch):
     callback.after_execution_succeeds(executor)
 
     # Verify run event was emitted with COMPLETE state
-    assert callback.ol_client.emitted_events[-1][0] == "run"
+    assert callback._ol_client.emitted_events[-1][0] == "run"
     assert (
-        callback.ol_client.emitted_events[-1][1]["event_type"] == main.RunState.COMPLETE
+        callback._ol_client.emitted_events[-1][1]["event_type"]
+        == main.RunState.COMPLETE
     )
 
 
@@ -132,14 +133,17 @@ def test_callback_initialization_sets_correct_attributes(monkeypatch):
 
     callback = main.RayDataOpenLineageExecutionCallback()
 
-    assert callback.ol_client is not None
-    assert callback.ol_job_namespace == TEST_RAY_NAMESPACE_PATTERN
-    assert callback.ol_job_name == TEST_RAY_JOB_NAME_PATTERN
-    assert callback.ol_run_id is not None
+    # Trigger lazy initialization
+    assert callback._ensure_initialized() is True
+
+    assert callback._ol_client is not None
+    assert callback._ol_job_namespace == TEST_RAY_NAMESPACE_PATTERN
+    assert callback._ol_job_name == TEST_RAY_JOB_NAME_PATTERN
+    assert callback._ol_run_id is not None
     # Verify it's a valid UUID
     from uuid import UUID
 
-    UUID(callback.ol_run_id)
+    UUID(callback._ol_run_id)
 
 
 def test_after_execution_completes_constructs_datasets_and_facets(monkeypatch):
@@ -232,3 +236,52 @@ def test_after_execution_fails_raises_on_emit_failure(monkeypatch):
 
     with pytest.raises(AnyscaleLineageRayDataError):
         callback.after_execution_fails(executor, error=RuntimeError("test error"))
+
+
+def test_lazy_initialization_deferred_until_callback_invoked(monkeypatch):
+    sample_env(monkeypatch)
+
+    callback = main.RayDataOpenLineageExecutionCallback()
+
+    # Before any callback method is invoked, client should not be initialized
+    assert callback._ol_client is None
+    assert callback._initialized is False
+
+
+def test_lazy_initialization_only_attempts_once_on_failure(monkeypatch):
+    sample_env(monkeypatch)
+
+    init_call_count = 0
+
+    def failing_client(*args, **kwargs):
+        nonlocal init_call_count
+        init_call_count += 1
+        raise RuntimeError("init failure")
+
+    monkeypatch.setattr(main, "AnyscaleOpenLineageClient", failing_client)
+
+    callback = main.RayDataOpenLineageExecutionCallback()
+
+    # First attempt should fail
+    assert callback._ensure_initialized() is False
+    assert init_call_count == 1
+
+    # Second attempt should not retry
+    assert callback._ensure_initialized() is False
+    assert init_call_count == 1  # Still 1, not retried
+
+
+def test_callback_skipped_when_lazy_initialization_fails(monkeypatch):
+    sample_env(monkeypatch)
+
+    def failing_client(*args, **kwargs):
+        raise RuntimeError("init failure")
+
+    monkeypatch.setattr(main, "AnyscaleOpenLineageClient", failing_client)
+
+    callback = main.RayDataOpenLineageExecutionCallback()
+    executor = DummyExecutor()
+
+    # These should not raise - they should silently skip when init fails
+    callback.after_execution_succeeds(executor)
+    callback.after_execution_fails(executor, error=RuntimeError("test"))

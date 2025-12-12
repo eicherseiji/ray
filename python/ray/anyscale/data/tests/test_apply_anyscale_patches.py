@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 import ray
@@ -14,6 +16,10 @@ from ray.anyscale.data.apply_anyscale_patches import (
     _patch_aggregations,
     _patch_class_with_dataclass_mixin,
     _patch_class_with_mixin,
+    _register_anyscale_lineage_tracking_callback,
+)
+from ray.data._internal.execution.execution_callback import (
+    EXECUTION_CALLBACKS_CONFIG_KEY,
 )
 from ray.data._internal.execution.bundle_queue import (
     FIFOBundleQueue,
@@ -92,6 +98,56 @@ def test_create_bundle_queue_returns_correct_type(
         monkeypatch.setenv("RAY_DATA_ENABLE_LOCATION_AWARE_BUNDLE_QUEUES", env_value)
 
     assert isinstance(create_bundle_queue(), expected_bundle_queue_type)
+
+
+@pytest.mark.parametrize(
+    "feature_enabled, expect_callback_registered",
+    [
+        (False, False),
+        (True, True),
+    ],
+)
+def test_register_anyscale_lineage_tracking_callback(
+    feature_enabled, expect_callback_registered, monkeypatch
+):
+    import ray.anyscale.data.apply_anyscale_patches as patches_module
+    from ray.data.context import DataContext
+
+    # Get a fresh context and clear any existing callbacks
+    context = DataContext.get_current()
+    context.remove_config(EXECUTION_CALLBACKS_CONFIG_KEY)
+
+    # Mock the feature flag
+    monkeypatch.setattr(
+        patches_module, "ANYSCALE_LINEAGE_TRACKING_ENABLED", feature_enabled
+    )
+
+    # Create a mock callback class (to avoid importing openlineage)
+    mock_callback_instance = MagicMock()
+    mock_callback_class = MagicMock(return_value=mock_callback_instance)
+
+    # Mock the callback import to avoid openlineage dependency
+    with patch.dict(
+        "sys.modules",
+        {
+            "ray.anyscale.lineage.ray_lineage.data.main": MagicMock(
+                RayDataOpenLineageExecutionCallback=mock_callback_class
+            )
+        },
+    ):
+        # Call the function
+        _register_anyscale_lineage_tracking_callback()
+
+    # Verify the result
+    callbacks = context.get_config(EXECUTION_CALLBACKS_CONFIG_KEY, [])
+
+    if expect_callback_registered:
+        assert len(callbacks) == 1
+        assert callbacks[0] is mock_callback_instance
+        mock_callback_class.assert_called_once()
+    else:
+        assert len(callbacks) == 0
+        mock_callback_class.assert_not_called()
 
 
 if __name__ == "__main__":

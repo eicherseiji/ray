@@ -14,6 +14,9 @@ ANYSCALE_MAP_TASK_MEMORY_CONFIGURATION_ENABLED = env_bool(
 )
 
 
+ANYSCALE_LINEAGE_TRACKING_ENABLED = env_bool("ANYSCALE_LINEAGE_TRACKING_ENABLED", False)
+
+
 def _patch_class_with_mixin(original_cls, mixin_cls):
     for name, method in mixin_cls.__dict__.items():
         if not name.startswith("__"):
@@ -169,6 +172,25 @@ def _patch_hash_shuffle_operator():
     HashShufflingOperatorBase.__init__ = patched_init
 
 
+def _register_anyscale_lineage_tracking_callback():
+    """Register Anyscale lineage tracking callback."""
+    if ANYSCALE_LINEAGE_TRACKING_ENABLED:
+        try:
+            from ray.data.context import DataContext
+            from ray.data._internal.execution.execution_callback import (
+                add_execution_callback,
+            )
+            from ray.anyscale.lineage.ray_lineage.data.main import (
+                RayDataOpenLineageExecutionCallback,
+            )
+
+            context = DataContext.get_current()
+            callback = RayDataOpenLineageExecutionCallback()
+            add_execution_callback(callback, context)
+        except Exception:
+            pass
+
+
 def apply_anyscale_patches():
     """Apply Anyscale-specific patches for Ray Data.
 
@@ -199,6 +221,9 @@ def apply_anyscale_patches():
 
     # Add optimization rules
     _add_optimization_rules()
+
+    # Register Anyscale lineage tracking callback
+    _register_anyscale_lineage_tracking_callback()
 
     from .api.context_mixin import DataContextMixin
     from .api.dataset_mixin import DatasetMixin
