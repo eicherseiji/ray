@@ -23,6 +23,9 @@ from ray.data._internal.cluster_autoscaler import (
     DefaultClusterAutoscalerV2,
     create_cluster_autoscaler,
 )
+from ray.data._internal.cluster_autoscaler.resource_utilization_gauge import (
+    ResourceUtilizationGauge,
+)
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.execution_options import ExecutionResources
 from ray.data._internal.execution.resource_manager import ResourceManager
@@ -39,6 +42,21 @@ class StubBottleneckDetector(BottleneckDetector):
         self, ops: List[SupportsClusterAutoscaling]
     ) -> Optional[SupportsClusterAutoscaling]:
         return self._bottleneck
+
+
+class StubUtilizationGauge(ResourceUtilizationGauge):
+    def __init__(self, utilization: Optional[ExecutionResources] = None):
+        if utilization is None:
+            utilization = ExecutionResources(
+                cpu=1, gpu=1, object_store_memory=1, memory=1
+            )
+        self._utilization = utilization
+
+    def observe(self):
+        pass
+
+    def get(self):
+        return self._utilization
 
 
 @dataclass(frozen=True)
@@ -62,15 +80,15 @@ class StubClusterAutoscalingOperator(SupportsClusterAutoscaling):
 
     # These fields define return values for the methods required by the interface.
     _per_task_resource_allocation: ExecutionResources = ExecutionResources.zero()
-    _max_task_concurrency: Optional[int] = None
+    _get_max_concurrency_limit: Optional[int] = None
     _min_scheduling_resources: ExecutionResources = ExecutionResources.zero()
     _completed: bool = False
 
     def per_task_resource_allocation(self) -> ExecutionResources:
         return self._per_task_resource_allocation
 
-    def max_task_concurrency(self) -> Optional[int]:
-        return self._max_task_concurrency
+    def get_max_concurrency_limit(self) -> Optional[int]:
+        return self._get_max_concurrency_limit
 
     def min_scheduling_resources(self) -> ExecutionResources:
         return self._min_scheduling_resources
@@ -91,6 +109,7 @@ def test_autoscaler_doubles_nodes_for_bottleneck_op():
         ops=[cpu_op, gpu_op],
         execution_id="test",
         bottleneck_detector=StubBottleneckDetector(bottleneck=gpu_op),
+        utility_calculator=StubUtilizationGauge(),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
         get_node_counts=lambda: {cpu_node_type: 1, gpu_node_type: 1},
         min_gap_between_autoscaling_requests_s=0,
@@ -124,6 +143,7 @@ def test_autoscaler_logs_warning_if_no_valid_node_types(
         ops=[gpu_op],
         execution_id="test",
         bottleneck_detector=StubBottleneckDetector(gpu_op),
+        utility_calculator=StubUtilizationGauge(),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
         get_node_counts=lambda: {cpu_node_type: 1},
         min_gap_between_autoscaling_requests_s=0,
@@ -149,6 +169,7 @@ def test_autoscaler_requests_resources_if_no_scalable_ops():
     time = 0
     autoscaler = RateBasedClusterAutoscaler(
         ops=[],
+        utility_calculator=StubUtilizationGauge(),
         execution_id="test",
         bottleneck_detector=StubBottleneckDetector(bottleneck=None),
         autoscaling_coordinator=FakeAutoscalingCoordinator(
@@ -301,6 +322,50 @@ def test_cluster_autoscaler_env_value_creates_correct_autoscaler(
     )
 
     assert isinstance(autoscaler, expected_autoscaler_type)
+
+
+@pytest.mark.parametrize("cpu_usage", [0.25, 0.9])
+@pytest.mark.parametrize("gpu_usage", [0.25, 0.9])
+@pytest.mark.parametrize("memory_usage", [0.25, 0.9])
+def test_autoscaler_utilization_threshold(cpu_usage, gpu_usage, memory_usage):
+    """Test autoscaler scaling behavior based on cluster utilization thresholds.
+
+    Tests all combinations of cpu, gpu, and memory utilization values.
+    The autoscaler should scale up if any utilization exceeds the 0.75 threshold.
+    """
+    # Calculate expected resources: scale up if any utilization >= 0.75
+    threshold = 0.75
+
+    cpu_op = StubClusterAutoscalingOperator(
+        _min_scheduling_resources=ExecutionResources(cpu=1),
+    )
+    cpu_node_type = NodeType({"CPU": 4, "memory": 1000})
+
+    execution_resources = ExecutionResources(
+        cpu=cpu_usage, gpu=gpu_usage, object_store_memory=memory_usage
+    )
+
+    autoscaler = RateBasedClusterAutoscaler(
+        ops=[cpu_op],
+        execution_id="test",
+        bottleneck_detector=StubBottleneckDetector(bottleneck=cpu_op),
+        utility_calculator=StubUtilizationGauge(execution_resources),
+        autoscaling_coordinator=FakeAutoscalingCoordinator(),
+        get_node_counts=lambda: {cpu_node_type: 1},
+        min_gap_between_autoscaling_requests_s=0,
+        cluster_scaling_up_util_threshold=threshold,  # 75% threshold
+        cluster_scaling_up_gpu_threshold=threshold,  # 75% threshold for GPU
+    )
+
+    requested_resources = autoscaler.try_trigger_scaling()
+
+    over_threshold = (
+        cpu_usage >= threshold or gpu_usage >= threshold or memory_usage >= threshold
+    )
+    if over_threshold:
+        assert len(requested_resources) > 0
+    else:
+        assert len(requested_resources) == 0
 
 
 if __name__ == "__main__":

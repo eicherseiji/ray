@@ -5,6 +5,13 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set
 
 import ray
+from ray.data._internal.cluster_autoscaler.base_cluster_autoscaler import (
+    ClusterAutoscaler,
+)
+from ray.data._internal.cluster_autoscaler.resource_utilization_gauge import (
+    ResourceUtilizationGauge,
+    RollingLogicalUtilizationGauge,
+)
 from .bottleneck_detector import (
     NormalizedThroughputBottleneckDetector,
     BottleneckDetector,
@@ -14,9 +21,6 @@ from ray._private.ray_constants import env_float, env_integer
 from ray.anyscale.air._internal.autoscaling_coordinator import (
     AutoscalingCoordinator,
     DefaultAutoscalingCoordinator,
-)
-from ray.data._internal.cluster_autoscaler import (
-    ClusterAutoscaler,
 )
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.execution_options import ExecutionResources
@@ -106,14 +110,28 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
     # The time in seconds after which an autoscaling request will expire.
     AUTOSCALING_REQUEST_EXPIRE_TIME_S = 180
 
+    # Default time window in seconds to calculate the average of cluster utilization.
+    DEFAULT_CLUSTER_UTIL_AVG_WINDOW_S: int = 10
+
+    # TODO(Justin): Make this env variables so that users can override
+    # Default cluster utilization threshold to trigger scaling up.
+    DEFAULT_CLUSTER_SCALING_UP_UTIL_THRESHOLD: float = 0.75
+
+    # TODO(Justin): Make this env variables so that users can override
+    # Default cluster GPU utilization threshold to trigger scaling up.
+    DEFAULT_CLUSTER_GPU_SCALING_UP_UTIL_THRESHOLD: float = 0.75
+
     def __init__(
         self,
         ops: List[SupportsClusterAutoscaling],
         execution_id: str,
         bottleneck_detector: BottleneckDetector,
         *,
+        utility_calculator: ResourceUtilizationGauge,
         autoscaling_coordinator: Optional["AutoscalingCoordinator"] = None,
         get_node_counts: Callable[[], Dict[NodeType, int]] = _get_node_types_and_counts,
+        cluster_scaling_up_util_threshold: float = DEFAULT_CLUSTER_SCALING_UP_UTIL_THRESHOLD,  # noqa: E501
+        cluster_scaling_up_gpu_threshold: float = DEFAULT_CLUSTER_GPU_SCALING_UP_UTIL_THRESHOLD,  # noqa: E501
         cluster_scaling_up_factor: float = DEFAULT_CLUSTER_SCALING_UP_FACTOR,
         min_gap_between_autoscaling_requests_s: int = MIN_GAP_BETWEEN_AUTOSCALING_REQUESTS_S,
         autoscaling_request_expire_time_s: int = AUTOSCALING_REQUEST_EXPIRE_TIME_S,
@@ -125,11 +143,22 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             execution_id: The execution ID of the dataset. This is used to identify the
                 dataset when requesting resources.
             bottleneck_detector: The detector to identify the bottleneck operator.
+            utility_calculator: The calculator to track and compute cluster resource
+                utilization (CPU, GPU, object store memory). Used to determine if cluster
+                utilization is high enough to trigger scaling up.
             autoscaling_coordinator: The `AutoscalingCoordinator` to request resources
                 from. This is exposed as a seam for testing. If not provided, this uses
                 the default coordinator.
             get_node_counts: A function to get the number of nodes of each type. This
                 is exposed as a seam for testing.
+            cluster_scaling_up_util_threshold: The cluster utilization threshold that
+                must be exceeded before scaling up. If average CPU or memory utilization
+                is below this threshold, the autoscaler will not scale up even if there
+                is a bottleneck. Defaults to 0.75 (75%).
+            cluster_scaling_up_gpu_threshold: The GPU cluster utilization threshold that
+                must be exceeded before scaling up. If average GPU utilization
+                is below this threshold, the autoscaler will not scale up even if there
+                is a bottleneck. Defaults to 0.75 (75%).
             cluster_scaling_up_factor: The factor to scale up the cluster.
             min_gap_between_autoscaling_requests_s: The minimum gap between two
                 autoscaling requests. This is exposed as a seam for testing.
@@ -144,6 +173,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         self._ops = ops
         self._execution_id = execution_id
         self._bottleneck_detector = bottleneck_detector
+        self._utility_calculator = utility_calculator
         self._autoscaling_coordinator = autoscaling_coordinator
         self._get_node_counts = get_node_counts
         self._cluster_scaling_up_factor = cluster_scaling_up_factor
@@ -151,7 +181,8 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             min_gap_between_autoscaling_requests_s
         )
         self._autoscaling_request_expire_time_s = autoscaling_request_expire_time_s
-
+        self._cluster_scaling_up_util_threshold = cluster_scaling_up_util_threshold
+        self._cluster_scaling_up_gpu_util_threshold = cluster_scaling_up_gpu_threshold
         self._last_request_time = 0
         self._requester_id = f"data-{execution_id}"
 
@@ -182,6 +213,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             scalable_ops,
             execution_id=execution_id,
             bottleneck_detector=bottleneck_detector,
+            utility_calculator=RollingLogicalUtilizationGauge(resource_manager),
         )
 
     @classmethod
@@ -205,24 +237,63 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         if now - self._last_request_time < self._min_gap_between_autoscaling_requests:
             return
 
-        # Identify the bottleneck operator.
+        # 1. update and report cluster utilization based on usages / limits
+        self._utility_calculator.observe()
+
+        # 2. Identify the bottleneck operator.
         bottleneck_op = self._bottleneck_detector.get_bottleneck(self._ops)
 
-        # Log the bottleneck.
-        if bottleneck_op:
-            logger.debug(f"Bottleneck operator: {bottleneck_op}")
-
-        # Still send an empty request if we couldn't identify a bottleneck. This is
+        # 3. Send an empty request if we couldn't identify a bottleneck. This is
         # necessary to renew our registration with the autoscaling coordinator and
         # ensure we request the remaining resources for operators that don't support
         # autoscaling.
         if not bottleneck_op:
+            logger.debug(
+                "Bottleneck Operator not identified yet -- skipping cluster autoscaling."
+            )
             self._send_resource_request([])
             return []
 
-        needed_node_types = self._find_needed_node_types(bottleneck_op)
-        requested_resources = self._scale_up_cluster(needed_node_types)
-        return requested_resources
+        min_scheduling_resources = bottleneck_op.min_scheduling_resources()
+        logger.debug(
+            f"Bottleneck operator: {bottleneck_op} requires {min_scheduling_resources} per task/actor"
+        )
+
+        # 4. Calculate the average utilization across CPU, GPU and Object Store
+        util = self._utility_calculator.get()
+
+        logger.debug(
+            f"Average cluster util: (cpu={util.cpu}, "
+            f"gpu={util.gpu}, "
+            f"object_store={util.object_store_memory}) "
+            f"threshold={self._cluster_scaling_up_util_threshold}"
+            f"gpu_threshold={self._cluster_scaling_up_gpu_util_threshold}"
+        )
+
+        gpu_util_high = util.gpu >= self._cluster_scaling_up_gpu_util_threshold
+        cpu_util_high = util.cpu >= self._cluster_scaling_up_util_threshold
+        obj_store_util_high = (
+            util.object_store_memory >= self._cluster_scaling_up_util_threshold
+        )
+
+        if not gpu_util_high and not cpu_util_high and not obj_store_util_high:
+            # We need utilization to high enough for GPU, CPU, or Object Store
+            logger.debug("Cluster utilization is low -- skipping cluster autoscaling.")
+            self._send_resource_request([])
+            return []
+
+        # 5. Find the nodes that will benefit the bottlenecked operator.
+        needed_node_types = self._find_needed_node_types(op=bottleneck_op)
+        if not needed_node_types:
+            logger.warning(f"No existing node types can schedule {bottleneck_op}.")
+            # Still send an empty request when upscaling is not needed, to renew our
+            # registration on AutoscalingCoordinator.
+            self._send_resource_request([])
+            return []
+
+        resource_request = self._create_resource_request(needed_node_types)
+
+        return [ExecutionResources.from_resource_dict(r) for r in resource_request]
 
     def _find_needed_node_types(self, op: SupportsClusterAutoscaling) -> Set[NodeType]:
         """Find all the worker node types that can schedule the given operator."""
@@ -260,17 +331,12 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         return valid_worker_node_types
 
-    def _scale_up_cluster(
+    def _create_resource_request(
         self, needed_node_types: Set[NodeType]
-    ) -> List[ExecutionResources]:
+    ) -> List[Dict[str, float]]:
         """Scale up the cluster by requesting resources for the needed node types."""
-        if not needed_node_types:
-            # Still send an empty request when upscaling is not needed, to renew our
-            # registration on AutoscalingCoordinator.
-            self._send_resource_request([])
-            return []
 
-        resource_request = []
+        resource_request: List[Dict[str, float]] = []
         debug_msg = "Scaling up cluster. Requesting resources:"
         node_type_counts = self._get_node_counts()
         for node_type, count in node_type_counts.items():
@@ -284,12 +350,10 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
             resource_request.extend([bundle] * num_to_request)
 
-        logger.debug(debug_msg)
-        self._send_resource_request(resource_request)
+        return resource_request
 
-        return [ExecutionResources.from_resource_dict(r) for r in resource_request]
-
-    def _send_resource_request(self, resource_request):
+    def _send_resource_request(self, resource_request: List[Dict[str, float]]):
+        logger.debug(f"Sending Resource Request: {resource_request}")
         self._autoscaling_coordinator.request_resources(
             requester_id=self._requester_id,
             resources=resource_request,

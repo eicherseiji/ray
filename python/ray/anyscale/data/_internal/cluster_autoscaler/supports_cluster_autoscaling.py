@@ -1,5 +1,4 @@
 from typing import List, Optional, Protocol, runtime_checkable
-
 from ray.data._internal.execution.interfaces import ExecutionResources, PhysicalOperator
 
 
@@ -39,7 +38,7 @@ class SupportsClusterAutoscaling(Protocol):
         """
         ...
 
-    def max_task_concurrency(self: "PhysicalOperator") -> Optional[int]:
+    def get_max_concurrency_limit(self: "PhysicalOperator") -> Optional[int]:
         """The maximum number of tasks that can be run concurrently.
 
         Some operators manually configure a maximum concurrency. For example, if you
@@ -47,9 +46,7 @@ class SupportsClusterAutoscaling(Protocol):
         """
         ...
 
-    def min_scheduling_resources(
-        self: "PhysicalOperator",
-    ) -> ExecutionResources:
+    def min_scheduling_resources(self) -> ExecutionResources:
         """The minimum resource bundle required to schedule the operator.
 
         For regular tasks, this is the resources required to schedule a task. For actor

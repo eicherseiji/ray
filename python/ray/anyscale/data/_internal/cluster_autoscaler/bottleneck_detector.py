@@ -283,8 +283,8 @@ class NormalizedThroughputBottleneckDetector(BottleneckDetector):
 
         # Some operators enforce a maximum number of concurrent tasks. For example, if
         # the user specifies `concurrency` in `map_batches`.
-        if op.max_task_concurrency() is not None:
-            max_num_tasks = min(max_num_tasks, op.max_task_concurrency())
+        if op.get_max_concurrency_limit() is not None:
+            max_num_tasks = min(max_num_tasks, op.get_max_concurrency_limit())
 
         return max_num_tasks
 
