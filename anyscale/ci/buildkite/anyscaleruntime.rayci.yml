@@ -1,0 +1,10 @@
+group: anyscaleruntime tests
+depends_on:
+  - forge
+steps:
+  - label: "package install test"
+    instance_type: small
+    commands:
+      - bash anyscaleruntime/test-install.sh
+    tags:
+      - anyscaleruntime

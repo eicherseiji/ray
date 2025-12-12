@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import pprint
@@ -83,6 +84,16 @@ def run_rllib_example_script_experiment(*args, **kwargs):
     from ray.rllib.utils.test_utils import run_rllib_example_script_experiment
 
     return run_rllib_example_script_experiment(*args, **kwargs)
+
+
+def seed_testing_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--num-cpus-for-main-process", type=int, default=1)
+    parser.add_argument("--inference-num-cpus-per-process", type=int, default=1)
+    parser.add_argument("--inference-num-gpus-per-process", type=float, default=0)
+    parser.add_argument("--inference-batch-size", type=int, default=1)
+    parser.add_argument("--n-inference-processes", type=int, default=1)
+
+    return parser
 
 
 def check(x, y, decimals=5, atol=None, rtol=None, false=False):

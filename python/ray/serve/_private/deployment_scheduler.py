@@ -45,23 +45,6 @@ class Resources(dict):
     CUSTOM_PRIORITY: List[str] = RAY_SERVE_HIGH_PRIORITY_CUSTOM_RESOURCES
     EPSILON = 1e-9
 
-    def get(self, key: str):
-        val = super().get(key)
-        if val is not None:
-            return val
-
-        # Implicit resources by default have 1 total
-        if key.startswith(ray._raylet.IMPLICIT_RESOURCE_PREFIX):
-            return 1
-
-        # Otherwise by default there is 0 of this resource
-        return 0
-
-    def can_fit(self, other):
-        keys = set(self.keys()) | set(other.keys())
-        # We add a small epsilon to avoid floating point precision issues.
-        return all(self.get(k) + self.EPSILON >= other.get(k) for k in keys)
-
     def __eq__(self, other):
         keys = set(self.keys()) | set(other.keys())
         return all([self.get(k) == other.get(k) for k in keys])
@@ -76,12 +59,12 @@ class Resources(dict):
             else:
                 kwargs[key] = self.get(key) + other.get(key)
 
-        return Resources(kwargs)
+        return type(self)(kwargs)
 
     def __sub__(self, other):
         keys = set(self.keys()) | set(other.keys())
         kwargs = {key: self.get(key) - other.get(key) for key in keys}
-        return Resources(kwargs)
+        return type(self)(kwargs)
 
     def __lt__(self, other):
         """Determines priority when sorting a list of SoftResources.
@@ -127,6 +110,47 @@ class Resources(dict):
         return False
 
 
+@total_ordering
+class AvailableNodeResources(Resources):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def get(self, key: str):
+        val = super().get(key)
+        if val is not None:
+            return val
+
+        # Implicit resources by default have 1 total
+        # NOTE(zcin): Implicit resources are automatically and
+        # artificially injected into each node and are used to limit how
+        # many replicas of the same deployment can run on a single node.
+        # This is used to enforce `max_replicas_per_node`.
+        if key.startswith(ray._raylet.IMPLICIT_RESOURCE_PREFIX):
+            return 1
+
+        # Otherwise by default there is 0 of this resource
+        return 0
+
+    def can_fit(self, other):
+        keys = set(self.keys()) | set(other.keys())
+        # We add a small epsilon to avoid floating point precision issues.
+        return all(self.get(k) + self.EPSILON >= other.get(k) for k in keys)
+
+
+@total_ordering
+class RequestedResources(Resources):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def get(self, key: str):
+        # We DON'T inject implicit resources for required resources.
+        val = super().get(key)
+        if val is not None:
+            return val
+
+        return 0
+
+
 class ReplicaSchedulingRequestStatus(str, Enum):
     """The status of a replica scheduling request."""
 
@@ -158,7 +182,7 @@ class ReplicaSchedulingRequest:
     max_replicas_per_node: Optional[int] = None
 
     @property
-    def required_resources(self) -> Resources:
+    def requested_resources(self) -> RequestedResources:
         """The resources required to schedule this replica on a node.
 
         If this replica uses a strict pack placement group, the
@@ -171,11 +195,11 @@ class ReplicaSchedulingRequest:
             and self.placement_group_strategy == "STRICT_PACK"
         ):
             return sum(
-                [Resources(bundle) for bundle in self.placement_group_bundles],
-                Resources(),
+                [RequestedResources(bundle) for bundle in self.placement_group_bundles],
+                RequestedResources(),
             )
         else:
-            required = Resources(self.actor_resources)
+            required = RequestedResources(self.actor_resources)
 
             # Using implicit resource (resources that every node
             # implicitly has and total is 1)
@@ -207,13 +231,13 @@ class DeploymentDownscaleRequest:
 class DeploymentSchedulingInfo:
     deployment_id: DeploymentID
     scheduling_policy: Any
-    actor_resources: Optional[Resources] = None
-    placement_group_bundles: Optional[List[Resources]] = None
+    actor_resources: Optional[RequestedResources] = None
+    placement_group_bundles: Optional[List[RequestedResources]] = None
     placement_group_strategy: Optional[str] = None
     max_replicas_per_node: Optional[int] = None
 
     @property
-    def required_resources(self) -> Resources:
+    def required_resources(self) -> RequestedResources:
         """The resources required to schedule a replica of this deployment on a node.
 
         If this replicas uses a strict pack placement group, the
@@ -225,7 +249,7 @@ class DeploymentSchedulingInfo:
             self.placement_group_bundles is not None
             and self.placement_group_strategy == "STRICT_PACK"
         ):
-            return sum(self.placement_group_bundles, Resources())
+            return sum(self.placement_group_bundles, RequestedResources())
         else:
             required = self.actor_resources
 
@@ -336,11 +360,12 @@ class DeploymentScheduler(ABC):
         assert deployment_id in self._deployments
 
         info = self._deployments[deployment_id]
-        info.actor_resources = Resources(replica_config.resource_dict)
+        info.actor_resources = RequestedResources(replica_config.resource_dict)
         info.max_replicas_per_node = replica_config.max_replicas_per_node
         if replica_config.placement_group_bundles:
             info.placement_group_bundles = [
-                Resources(bundle) for bundle in replica_config.placement_group_bundles
+                RequestedResources(bundle)
+                for bundle in replica_config.placement_group_bundles
             ]
         if replica_config.placement_group_strategy:
             info.placement_group_strategy = replica_config.placement_group_strategy
@@ -414,7 +439,7 @@ class DeploymentScheduler(ABC):
 
         return res
 
-    def _get_available_resources_per_node(self) -> Dict[str, Resources]:
+    def _get_available_resources_per_node(self) -> Dict[str, AvailableNodeResources]:
         """Gets current available resources per node.
 
         This returns a conservative view of the available resources
@@ -440,12 +465,15 @@ class DeploymentScheduler(ABC):
         )
         total_resources = self._cluster_node_info_cache.get_total_resources_per_node()
 
-        gcs_info = {node_id: Resources(r) for node_id, r in available_resources.items()}
+        gcs_info = {
+            node_id: AvailableNodeResources(r)
+            for node_id, r in available_resources.items()
+        }
 
         # Manually calculate available resources per node by subtracting
         # launching and running replicas from total resources
         total_minus_replicas = {
-            node_id: Resources(resources)
+            node_id: AvailableNodeResources(resources)
             for node_id, resources in total_resources.items()
         }
         for deployment_id, replicas in self._launching_replicas.items():
@@ -465,9 +493,9 @@ class DeploymentScheduler(ABC):
 
                 total_minus_replicas[node_id] -= deployment.required_resources
 
-        def custom_min(a: Resources, b: Resources):
+        def custom_min(a: AvailableNodeResources, b: AvailableNodeResources):
             keys = set(a.keys()) | set(b.keys())
-            res = Resources()
+            res = AvailableNodeResources()
             for key in keys:
                 res[key] = min(a.get(key), b.get(key))
             return res
@@ -475,14 +503,16 @@ class DeploymentScheduler(ABC):
         # Filter by active node ids (alive but not draining)
         return {
             node_id: custom_min(
-                gcs_info.get(node_id, Resources()),
-                total_minus_replicas.get(node_id, Resources()),
+                gcs_info.get(node_id, AvailableNodeResources()),
+                total_minus_replicas.get(node_id, AvailableNodeResources()),
             )
             for node_id in self._cluster_node_info_cache.get_active_node_ids()
         }
 
     def _best_fit_node(
-        self, required_resources: Resources, available_resources: Dict[str, Resources]
+        self,
+        required_resources: RequestedResources,
+        available_resources: Dict[str, AvailableNodeResources],
     ) -> Optional[str]:
         """Chooses a node using best fit strategy.
 
@@ -791,8 +821,8 @@ class DefaultDeploymentScheduler(DeploymentScheduler):
 
     def _find_best_available_node(
         self,
-        required_resources: Resources,
-        available_resources_per_node: Dict[str, Resources],
+        required_resources: RequestedResources,
+        available_resources_per_node: Dict[str, AvailableNodeResources],
     ) -> Optional[str]:
         """Chooses best available node to schedule the required resources.
 

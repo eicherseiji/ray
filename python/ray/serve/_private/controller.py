@@ -42,7 +42,10 @@ from ray.serve._private.constants import (
     SERVE_NAMESPACE,
     SERVE_ROOT_URL_ENV_KEY,
 )
-from ray.serve._private.default_impl import create_cluster_node_info_cache
+from ray.serve._private.default_impl import (
+    create_cluster_node_info_cache,
+    get_proxy_actor_class,
+)
 from ray.serve._private.deployment_info import DeploymentInfo
 from ray.serve._private.deployment_state import DeploymentStateManager
 from ray.serve._private.endpoint_state import EndpointState
@@ -178,6 +181,7 @@ class ServeController:
             cluster_node_info_cache=self.cluster_node_info_cache,
             logging_config=self.global_logging_config,
             grpc_options=set_proxy_default_grpc_options(grpc_options),
+            proxy_actor_class=get_proxy_actor_class(),
         )
         # We modify the HTTP and gRPC options above, so delete them to avoid
         del http_options, grpc_options
@@ -1081,6 +1085,7 @@ class ServeController:
                     protocol=RequestProtocol.HTTP,
                     route_prefix="/",
                     targets=self.proxy_state_manager.get_targets(RequestProtocol.HTTP),
+                    app_name="",
                 )
             )
             if is_grpc_enabled(self.get_grpc_config()):
@@ -1091,6 +1096,7 @@ class ServeController:
                         targets=self.proxy_state_manager.get_targets(
                             RequestProtocol.GRPC
                         ),
+                        app_name="",
                     )
                 )
         return target_groups
