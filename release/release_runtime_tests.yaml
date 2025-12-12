@@ -97,7 +97,7 @@
     script: python cpu_job_autoscaling_benchmark.py
 
 - name: "checkpoint_benchmark_{{scale}}_{{id_column}}"
-  python: "3.9"
+  python: "3.10"
   group: data-tests
   working_dir: anyscale/data
 
