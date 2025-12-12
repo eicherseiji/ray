@@ -3,6 +3,7 @@ import logging
 from typing import Dict, List, Optional
 
 import ray
+from ray.exceptions import GetTimeoutError
 from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
     RowIDBasedDataIteratorCheckpointer,
     RowIDBasedStateDict,
@@ -42,6 +43,7 @@ class DatasetManager:
         )
         self._world_size = world_size
         self._worker_node_ids = worker_node_ids
+        self._coordinator_actors: List[ray.actor.ActorHandle] = []
 
         # Maps dataset name to a list of cached `DataIterator`s corresponding to
         # Train worker ranks.
@@ -247,6 +249,9 @@ class DatasetManager:
                 self._configure_checkpoint_save_on_iterators(dataset_info, iterators)
                 iterator = iterators[world_rank]
 
+                # Cache the split coordinators for resource cleanup.
+                self._coordinator_actors.append(iterator._coord_actor)
+
                 # Cache the dataset iterators for future use.
                 self._dataset_iterators[dataset_name] = iterators
                 self._condition.notify_all()
@@ -282,3 +287,24 @@ class DatasetManager:
             return await self._get_sharded_dataset_iterator(dataset_info)
         else:
             return self._get_unsharded_dataset_iterator(dataset_info)
+
+    def shutdown_data_executors(self) -> None:
+        """
+        Attempts to shut down the data executors of each sharded dataset,
+        freeing resources allocated to data execution.
+
+        Note: The data executors for unsharded datasets are not managed by
+        SplitCoordinator actors and hence, are not accessible via the DatasetManager
+        so their cleanup is not handled by this method.
+        """
+        try:
+            shutdown_refs = [
+                coord.shutdown_executor.remote() for coord in self._coordinator_actors
+            ]
+            ray.get(shutdown_refs, timeout=5)
+        except GetTimeoutError:
+            logger.error("Ray Data executor shutdown task timed out after 5 seconds.")
+        except Exception:
+            logger.exception(
+                "Failed to gracefully terminate the Ray Data executor for each running dataset."
+            )

@@ -56,6 +56,21 @@ py_test(
 )
 
 py_test(
+    name = "test_data_resource_cleanup",
+    size = "medium",
+    srcs = ["tests/test_data_resource_cleanup.py"],
+    env = {"RAY_TRAIN_V2_ENABLED": "1"},
+    tags = [
+        "exclusive",
+        "team:ml",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
     name = "test_elastic_e2e",
     size = "medium",
     srcs = ["tests/test_elastic_e2e.py"],

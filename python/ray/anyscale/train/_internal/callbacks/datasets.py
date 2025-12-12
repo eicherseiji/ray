@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import ray
 from ray.data import DataContext, DataIterator, NodeIdStr
@@ -15,6 +15,10 @@ from ray.train.v2._internal.data_integration.interfaces import (
 from ray.train.v2._internal.execution.context import TrainRunContext
 from ray.train.v2._internal.execution.worker_group import Worker
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+from ray.train.v2._internal.execution.worker_group import (
+    WorkerGroupContext,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +77,24 @@ class AnyscaleDatasetShardProvider:
 
         return self._cached_dataset_shards[dataset_name]
 
+    def shutdown_data_executors(self) -> None:
+        """
+        Attempts to eagerly shutdown the data executors for datasets, freeing resources allocated to data execution.
+        """
+        try:
+            self._dataset_manager.shutdown_data_executors.remote()
+        except Exception:
+            logger.debug("Failed to invoke remote cleanup of Dataset Manager.")
+
 
 class DatasetsSetupCallback(RayDatasetsSetupCallback):
+    """The callback to setup and cleanup Ray Datasets for the worker group."""
+
     def __init__(self, train_run_context: TrainRunContext):
         super().__init__(train_run_context)
 
         storage_context = train_run_context.run_config.storage_context
+        self._dataset_shard_provider: Optional[AnyscaleDatasetShardProvider] = None
 
         # Update default dataset checkpoint paths/filesystem to the RunConfig settings.
         dataset_checkpoint_configs = self._data_config.dataset_checkpoint_configs
@@ -125,11 +141,31 @@ class DatasetsSetupCallback(RayDatasetsSetupCallback):
             total_train_resources.get("CPU", 0), total_train_resources.get("GPU", 0)
         )
 
-        dataset_shard_provider = AnyscaleDatasetShardProvider(
+        self._dataset_shard_provider = AnyscaleDatasetShardProvider(
             datasets=datasets,
             data_config=self._data_config,
             data_context=self._data_context,
             world_size=world_size,
             worker_node_ids=worker_node_ids,
         )
-        return {"dataset_shard_provider": [dataset_shard_provider] * world_size}
+        return {"dataset_shard_provider": [self._dataset_shard_provider] * world_size}
+
+    def after_worker_group_shutdown(
+        self, worker_group_context: WorkerGroupContext
+    ) -> None:
+        assert self._dataset_shard_provider
+        self._dataset_shard_provider.shutdown_data_executors()
+
+    def after_worker_group_abort(
+        self, worker_group_context: WorkerGroupContext
+    ) -> None:
+        shard_provider = self._dataset_shard_provider
+        if shard_provider:
+            shard_provider.shutdown_data_executors()
+
+    # --------------------------
+    # ControllerCallback
+    # --------------------------
+
+    def before_controller_shutdown(self):
+        pass

@@ -52,7 +52,7 @@ def test_scaling_policy():
 @pytest.mark.parametrize(
     "num_workers, excluded_resources", [(2, {"CPU": 2}), [(2, 4), {}]]
 )
-def test_dataset_setup_callback_patch(num_workers, excluded_resources):
+def test_dataset_callback_patch(num_workers, excluded_resources):
     """Ray Train resources should be excluded from the total resources unless
     an elastic number of workers is enabled."""
     from ray.train.v2._internal.callbacks import DatasetsSetupCallback  # isort: skip

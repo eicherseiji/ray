@@ -29,7 +29,7 @@ pytestmark = pytest.mark.usefixtures("mock_runtime_context")
 @pytest.fixture(autouse=True)
 def set_oss_autoscaler(monkeypatch):
     """Set cluster autoscaler to use OSS autoscaler for all tests in this module."""
-    monkeypatch.setenv(CLUSTER_AUTOSCALER_ENV_KEY, ClusterAutoscalerVersion.OSS.value)
+    monkeypatch.setenv(CLUSTER_AUTOSCALER_ENV_KEY, ClusterAutoscalerVersion.V1.value)
 
 
 @pytest.fixture
