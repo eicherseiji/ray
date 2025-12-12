@@ -13,6 +13,7 @@ ARG FULL_BASE_IMAGE
 FROM $FULL_BASE_IMAGE
 
 ARG WHEEL_PATH
+ARG ANYSCALERUNTIME_WHEEL_PATH
 ARG RAY_VERSION="3.0.0.dev0"
 
 COPY requirements_compiled.txt ./
@@ -27,6 +28,7 @@ COPY \
 
 RUN \
     --mount=type=bind,source=$WHEEL_PATH,target=$WHEEL_PATH \
+    --mount=type=bind,source=$ANYSCALERUNTIME_WHEEL_PATH,target=$ANYSCALERUNTIME_WHEEL_PATH \
     --mount=type=bind,source=runtime-requirements.txt,target=runtime-requirements.txt \
 <<EOF
 #!/bin/bash
@@ -50,6 +52,10 @@ fi
 # Installs the runtime wheel.
 "${PIP}" --no-cache-dir \
     install -c requirements_compiled.txt "$WHEEL_PATH"[all]
+
+# Installs anyscaleruntime package.
+"${PIP}" --no-cache-dir \
+    install -c requirements_compiled.txt "$ANYSCALERUNTIME_WHEEL_PATH"
 
 "${PIP}" freeze > /home/ray/pip-freeze.txt
 

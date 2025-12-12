@@ -7,7 +7,7 @@ name = "anyscaleruntime"
 dynamic = ["version"]
 description = "Anyscale Runtime for faster, cheaper and more resilient AI, powered by Ray"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 authors = [
     {name = "Anyscale Inc.", email = "support@anyscale.com"}
 ]

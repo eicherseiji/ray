@@ -284,6 +284,10 @@ cp LICENSE.runtime "${CONTEXT_TMP}/LICENSE"
 aws s3 cp "${S3_TEMP}/download_anyscale_data${ARCH_SUFFIX}" "${CONTEXT_TMP}/download_anyscale_data"
 chmod +x "${CONTEXT_TMP}/download_anyscale_data"
 
+# Build anyscaleruntime wheel from source.
+pip wheel --no-deps -w "${CONTEXT_TMP}/.whl" ./anyscaleruntime
+ANYSCALERUNTIME_WHEEL_FILE=$(basename "${CONTEXT_TMP}/.whl"/anyscaleruntime*.whl)
+
 # If RAY_INLINE_SITE_PKG is not set, then inline the site package if it is a dev build.
 if [[ "${RAY_INLINE_SITE_PKG:-}" == "" ]]; then
     if [[ "${RAY_RELEASE_BUILD:-}" != "true" ]]; then
@@ -329,6 +333,7 @@ fi
         | docker build --progress=plain \
             --build-arg FULL_BASE_IMAGE="${BASE_IMG}" \
             --build-arg WHEEL_PATH=".whl/${WHEEL_FILE}" \
+            --build-arg ANYSCALERUNTIME_WHEEL_PATH=".whl/${ANYSCALERUNTIME_WHEEL_FILE}" \
             --build-arg RAY_VERSION="${RAY_VERSION}" \
             --label io.ray.ray-version="${RAY_VERSION}" \
             --label io.ray.ray-commit="${UPSTREAM_COMMIT}" \
