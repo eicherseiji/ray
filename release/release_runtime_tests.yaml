@@ -283,3 +283,45 @@
 
   variations:
     - __suffix__: aws
+
+###############
+# Lineage tests
+###############
+
+- name: lineage_ray_data_tests
+  python: "3.10"
+  group: Lineage tests
+  working_dir: anyscale/lineage
+
+  frequency: nightly
+  team: lineage
+
+  cluster:
+    byod:
+      runtime_env:
+        - ANYSCALE_LINEAGE_LOG_LEVEL=DEBUG
+        - ANYSCALE_LINEAGE_IGNORE_ERRORS=false
+    cluster_compute: compute_lineage_small.yaml
+
+  run:
+    timeout: 1200
+    script: python ray_data_workload.py
+
+- name: lineage_mlflow_tests
+  python: "3.10"
+  group: Lineage tests
+  working_dir: anyscale/lineage
+
+  frequency: nightly
+  team: lineage
+
+  cluster:
+    byod:
+      runtime_env:
+        - ANYSCALE_LINEAGE_LOG_LEVEL=DEBUG
+        - ANYSCALE_LINEAGE_IGNORE_ERRORS=false
+    cluster_compute: compute_lineage_small.yaml
+
+  run:
+    timeout: 1200
+    script: python mlflow_workload.py
