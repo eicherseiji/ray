@@ -2055,6 +2055,15 @@ class DeploymentState:
             tag_keys=("deployment", "replica", "application"),
         )
 
+        self.target_replicas_gauge = metrics.Gauge(
+            "serve_autoscaling_target_replicas",
+            description=(
+                "The target number of replicas for this deployment. "
+                "This is the number the autoscaler is trying to reach."
+            ),
+            tag_keys=("deployment", "application"),
+        )
+
         # Whether the request routing info have been updated since the last
         # time we checked.
         self._request_routing_info_updated = False
@@ -2360,6 +2369,15 @@ class DeploymentState:
                 ServeUsageTag.NUM_REPLICAS_LIGHTWEIGHT_UPDATED.record("True")
 
         self._target_state = new_target_state
+
+        # Emit target replicas metric
+        self.target_replicas_gauge.set(
+            target_num_replicas,
+            tags={
+                "deployment": self.deployment_name,
+                "application": self.app_name,
+            },
+        )
 
     def deploy(self, deployment_info: DeploymentInfo) -> bool:
         """Deploy the deployment.
