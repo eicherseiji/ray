@@ -40,7 +40,7 @@ from ray.serve._private.constants import (
     RAY_SERVE_ENABLE_TASK_EVENTS,
     RAY_SERVE_FAIL_ON_RANK_ERROR,
     RAY_SERVE_FORCE_STOP_UNHEALTHY_REPLICAS,
-    RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY,
+    RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY,
     REPLICA_HEALTH_CHECK_UNHEALTHY_THRESHOLD,
     SERVE_LOGGER_NAME,
     SERVE_NAMESPACE,
@@ -3686,7 +3686,7 @@ class DeploymentStateManager:
         self._all_deployments_healthy = all_deployments_healthy
 
         draining_nodes = self._cluster_node_info_cache.get_draining_nodes()
-        if RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY:
+        if RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY:
             # Only allow new compaction if there are no externally draining nodes,
             # and all deployments have been stable for
             # ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S seconds (5min by default)
