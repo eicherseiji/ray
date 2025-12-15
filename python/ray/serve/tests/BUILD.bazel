@@ -101,9 +101,11 @@ py_test_module_list(
 # Medium tests.
 py_test_module_list(
     size = "medium",
+    env = {"ANYSCALE_TRACING_EXPORTER_IMPORT_PATH": ""},
     files = [
         "test_actor_replica_wrapper.py",
         "test_backpressure.py",
+        "test_backpressure_grpc.py",
         "test_batching.py",
         "test_callback.py",
         "test_cluster.py",
@@ -112,6 +114,7 @@ py_test_module_list(
         "test_deployment_scheduler.py",
         "test_deployment_topology.py",
         "test_failure.py",
+        "test_failure_2.py",
         "test_handle_1.py",
         "test_handle_2.py",
         "test_handle_cancellation.py",
@@ -177,6 +180,7 @@ py_test_module_list(
         "test_deploy.py",
         "test_grpc.py",
         "test_logging.py",
+        "test_logging_2.py",
         "test_standalone.py",
         "test_standalone_3.py",
         "test_target_capacity.py",
@@ -202,6 +206,7 @@ py_test_module_list(
         "test_cli.py",
         "test_cli_2.py",
         "test_cli_3.py",
+        "test_cli_4.py",
     ],
     tags = [
         "exclusive",
@@ -237,6 +242,7 @@ py_test_module_list(
 py_test_module_list(
     size = "medium",
     timeout = "long",
+    env = {"ANYSCALE_TRACING_EXPORTER_IMPORT_PATH": ""},
     files = [
         "test_deploy_app.py",
         "test_deploy_app_2.py",
@@ -339,6 +345,7 @@ py_test(
         "test_api_2.py",
         "test_controller_crashes.py",
         "test_failure.py",
+        "test_failure_2.py",
     ],
     tags = [
         "exclusive",
@@ -446,7 +453,7 @@ py_test_module_list(
 py_test_module_list(
     size = "medium",
     data = glob(["test_config_files/**/*"]),
-    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "1"},
+    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "0"},
     files = [
         "test_cluster.py",
         "test_controller_recovery.py",
@@ -471,7 +478,7 @@ py_test_module_list(
 # Large tests with pack scheduling
 py_test_module_list(
     size = "large",
-    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "1"},
+    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "0"},
     files = [
         "test_standalone.py",
         "test_standalone_3.py",
@@ -492,7 +499,7 @@ py_test_module_list(
 py_test_module_list(
     size = "large",
     data = glob(["test_config_files/**/*"]),
-    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "1"},
+    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "0"},
     files = [
         "test_standalone_2.py",
     ],
