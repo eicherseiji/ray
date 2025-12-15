@@ -7,6 +7,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple
+import warnings
 
 from ray.anyscale._private.constants import ANYSCALE_RAY_NODE_AVAILABILITY_ZONE_LABEL
 from ray.anyscale.serve._private.constants import (
@@ -17,6 +18,7 @@ from ray.serve._private.cluster_node_info_cache import ClusterNodeInfoCache
 from ray.serve._private.common import DeploymentID, ReplicaID
 from ray.serve._private.constants import (
     RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY,
+    RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY,
     SERVE_LOGGER_NAME,
 )
 from ray.serve._private.deployment_scheduler import (
@@ -130,7 +132,15 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
             d.is_non_strict_pack_pg() for d in self._deployments.values()
         )
         # Schedule replicas using compact strategy.
-        if RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY and not non_strict_pack_pgs_exist:
+        if RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY:
+            warnings.warn(
+                "The environment variable 'RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY' "
+                "is deprecated and will be removed in a v2.55.0 release. "
+                "Please use 'RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY and not non_strict_pack_pgs_exist:
             # Flatten dict of deployment replicas into all replicas,
             # then sort by decreasing resource size
             all_scheduling_requests = sorted(

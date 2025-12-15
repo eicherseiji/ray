@@ -7,7 +7,7 @@ import ray
 from ray import serve
 from ray._private.test_utils import fetch_prometheus_metrics
 from ray._common.test_utils import wait_for_condition
-from ray.serve._private.constants import RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY
+from ray.serve._private.constants import RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY
 from ray.serve._private.test_utils import check_num_alive_nodes
 from ray.serve.context import _get_global_client
 from ray.serve.handle import DeploymentHandle
@@ -76,7 +76,7 @@ class CallActor:
 
 
 @pytest.mark.skipif(
-    not RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY, reason="Need compact strategy."
+    not RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY, reason="Need compact strategy."
 )
 def test_node_compactions(autoscaling_cluster_with_metrics):
     client = _get_global_client()

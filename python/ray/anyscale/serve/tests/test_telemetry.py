@@ -7,7 +7,7 @@ import ray
 from ray import serve
 from ray._common.test_utils import wait_for_condition
 from ray.actor import ActorHandle
-from ray.serve._private.constants import RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY
+from ray.serve._private.constants import RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY
 from ray.serve._private.test_utils import check_num_alive_nodes
 from ray.serve._private.usage import ServeUsageTag
 from ray.serve.context import _get_global_client
@@ -30,7 +30,7 @@ def check_telemetry(tag: ServeUsageTag, storage_handle: ActorHandle, expected: A
 
 
 @pytest.mark.skipif(
-    not RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY, reason="Need compact strategy."
+    not RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY, reason="Need compact strategy."
 )
 def test_node_compactions(autoscaling_cluster_with_telemetry):
     storage_handle = autoscaling_cluster_with_telemetry

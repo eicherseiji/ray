@@ -17,7 +17,7 @@ from ray.cluster_utils import AutoscalingCluster, Cluster
 from ray.serve._private import default_impl
 from ray.serve._private.common import DeploymentID, DeploymentStatus, ReplicaID
 from ray.serve._private.constants import (
-    RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY,
+    RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY,
     SERVE_CONTROLLER_NAME,
     SERVE_NAMESPACE,
 )
@@ -68,7 +68,7 @@ def kill_controller_and_wait_for_restart(controller):
 
 
 @pytest.mark.skipif(
-    RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY, reason="Needs spread strategy."
+    RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY, reason="Needs spread strategy."
 )
 class TestSpreadScheduling:
     def test_upscale_multi_az(self, ray_start_cluster):
@@ -462,7 +462,7 @@ def setup_compact_scheduling(request, monkeypatch):
 
 
 @pytest.mark.skipif(
-    not RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY, reason="Needs compact strategy."
+    not RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY, reason="Needs compact strategy."
 )
 class TestCompactScheduling:
     def test_e2e_compact_node_basic(self, setup_compact_scheduling):

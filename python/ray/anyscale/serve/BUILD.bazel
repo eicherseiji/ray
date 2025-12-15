@@ -52,7 +52,7 @@ py_library(
 py_test_module_list(
     size = "medium",
     data = glob(["tests/fixtures/*.*"]),
-    env = {"RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY": "0"},
+    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "0"},
     files = [
         "tests/test_az_routing.py",
         "tests/test_deployment_scheduler.py",
