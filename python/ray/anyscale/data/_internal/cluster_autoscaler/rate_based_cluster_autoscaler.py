@@ -292,6 +292,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             return []
 
         resource_request = self._create_resource_request(needed_node_types)
+        self._send_resource_request(resource_request)
 
         return [ExecutionResources.from_resource_dict(r) for r in resource_request]
 
@@ -350,6 +351,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
             resource_request.extend([bundle] * num_to_request)
 
+        logger.debug(debug_msg)
         return resource_request
 
     def _send_resource_request(self, resource_request: List[Dict[str, float]]):

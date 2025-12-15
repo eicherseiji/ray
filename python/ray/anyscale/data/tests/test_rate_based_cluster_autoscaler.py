@@ -115,15 +115,11 @@ def test_autoscaler_doubles_nodes_for_bottleneck_op():
         min_gap_between_autoscaling_requests_s=0,
     )
 
-    requested_resources = autoscaler.try_trigger_scaling()
+    autoscaler.try_trigger_scaling()
 
     # The requested resources include the existing nodes and the new nodes. Since the
     # bottleneck is the GPU operator, it should double the GPU nodes.
-    assert requested_resources == [
-        ExecutionResources(cpu=1),
-        ExecutionResources(gpu=1),
-        ExecutionResources(gpu=1),
-    ]
+    assert autoscaler.get_total_resources().gpu == 2
 
 
 def test_autoscaler_logs_warning_if_no_valid_node_types(
@@ -357,15 +353,15 @@ def test_autoscaler_utilization_threshold(cpu_usage, gpu_usage, memory_usage):
         cluster_scaling_up_gpu_threshold=threshold,  # 75% threshold for GPU
     )
 
-    requested_resources = autoscaler.try_trigger_scaling()
+    autoscaler.try_trigger_scaling()
 
     over_threshold = (
         cpu_usage >= threshold or gpu_usage >= threshold or memory_usage >= threshold
     )
     if over_threshold:
-        assert len(requested_resources) > 0
+        assert autoscaler.get_total_resources().cpu > 4
     else:
-        assert len(requested_resources) == 0
+        assert autoscaler.get_total_resources().cpu <= 4
 
 
 if __name__ == "__main__":
