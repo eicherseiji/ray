@@ -6,7 +6,7 @@ from ray.anyscale.train.api.config import ScalingConfig
 def test_scaling_config_validation():
     elastic_scaling_config = ScalingConfig(
         num_workers=(1, 2),
-        bundle_label_selector=[
+        label_selector=[
             {"subcluster": "my_subcluster"},
             {"subcluster": "other_subcluster"},
         ],
@@ -29,10 +29,10 @@ def test_scaling_config_validation():
 
     with pytest.raises(
         ValueError,
-        match="`bundle_label_selector` is a list of length 1, but it must be of length `max_workers=2` instead.",
+        match="`label_selector` is a list of length 1, but it must be of length `max_workers=2` instead.",
     ):
         ScalingConfig(
-            num_workers=(1, 2), bundle_label_selector=[{"subcluster": "my_subcluster"}]
+            num_workers=(1, 2), label_selector=[{"subcluster": "my_subcluster"}]
         )
 
 

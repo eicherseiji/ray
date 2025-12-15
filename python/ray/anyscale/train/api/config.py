@@ -58,10 +58,10 @@ class ScalingConfig(RayScalingConfig):
             )
         if (
             is_elastic
-            and isinstance(self.bundle_label_selector, list)
-            and len(self.bundle_label_selector) != self.max_workers
+            and isinstance(self.label_selector, list)
+            and len(self.label_selector) != self.max_workers
         ):
             raise ValueError(
-                f"`bundle_label_selector` is a list of length {len(self.bundle_label_selector)}, "
+                f"`label_selector` is a list of length {len(self.label_selector)}, "
                 f"but it must be of length `max_workers={self.max_workers}` instead."
             )
