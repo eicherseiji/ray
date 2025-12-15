@@ -33,3 +33,6 @@ class Write(AbstractMap):
         self._datasink_or_legacy_datasource = datasink_or_legacy_datasource
         self._write_args = write_args
         self._concurrency = concurrency
+
+    def can_modify_num_rows(self) -> bool:
+        return False

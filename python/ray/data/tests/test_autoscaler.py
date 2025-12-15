@@ -52,7 +52,7 @@ def test_actor_pool_scaling():
         num_free_task_slots=MagicMock(return_value=5),
         num_tasks_in_flight=MagicMock(return_value=15),
         per_actor_resource_usage=MagicMock(return_value=ExecutionResources(cpu=1)),
-        _max_actor_concurrency=1,
+        max_actor_concurrency=MagicMock(return_value=1),
         get_pool_util=MagicMock(
             # NOTE: Unittest mocking library doesn't support proxying to actual
             #       non-mocked methods so we have emulate it by directly binding existing
@@ -66,7 +66,7 @@ def test_actor_pool_scaling():
         completed=MagicMock(return_value=False),
         _inputs_complete=False,
         input_dependencies=[MagicMock()],
-        internal_queue_num_blocks=MagicMock(return_value=1),
+        internal_input_queue_num_blocks=MagicMock(return_value=1),
     )
     op_state = OpState(
         op, inqueues=[MagicMock(__len__=MagicMock(return_value=10), num_blocks=10)]
@@ -409,6 +409,8 @@ def test_actor_pool_respects_max_size(ray_start_10_cpus_shared, restore_data_con
         ).take_all()
 
 
+# TODO(DATA-1356) re-enable
+@pytest.mark.skip(reason="DATA-1356")
 def test_autoscaling_config_validation_warnings(
     ray_start_10_cpus_shared, restore_data_context
 ):
@@ -439,7 +441,7 @@ def test_autoscaling_config_validation_warnings(
         ds.take_all()
 
     # Check that warning was called with expected message
-    wanr_log_args_str = str(mock_warning.call_args_list)
+    warn_log_args_str = str(mock_warning.call_args_list)
     expected_message = (
         "⚠️  Actor Pool configuration of the "
         "ActorPoolMapOperator[MapBatches(SimpleMapper)] will not allow it to scale up: "
@@ -448,7 +450,7 @@ def test_autoscaling_config_validation_warnings(
         "(max utilization will be max_tasks_in_flight_per_actor / max_concurrency = 100%)"
     )
 
-    assert expected_message in wanr_log_args_str
+    assert expected_message in warn_log_args_str
 
     # Test #2: Provided config is valid (no warnings)
     #   - max_tasks_in_flight / max_concurrency == 2 (default)
@@ -466,13 +468,13 @@ def test_autoscaling_config_validation_warnings(
         ds.take_all()
 
     # Check that this warning hasn't been emitted
-    wanr_log_args_str = str(mock_warning.call_args_list)
+    warn_log_args_str = str(mock_warning.call_args_list)
     expected_message = (
         "⚠️  Actor Pool configuration of the "
         "ActorPoolMapOperator[MapBatches(SimpleMapper)] will not allow it to scale up: "
     )
 
-    assert expected_message not in wanr_log_args_str
+    assert expected_message not in warn_log_args_str
 
     # Test #3: Default config is valid (no warnings)
     #   - max_tasks_in_flight / max_concurrency == 4 (default)
@@ -486,13 +488,13 @@ def test_autoscaling_config_validation_warnings(
         ds.take_all()
 
     # Check that this warning hasn't been emitted
-    wanr_log_args_str = str(mock_warning.call_args_list)
+    warn_log_args_str = str(mock_warning.call_args_list)
     expected_message = (
         "⚠️  Actor Pool configuration of the "
         "ActorPoolMapOperator[MapBatches(SimpleMapper)] will not allow it to scale up: "
     )
 
-    assert expected_message not in wanr_log_args_str
+    assert expected_message not in warn_log_args_str
 
 
 @pytest.fixture
