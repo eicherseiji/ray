@@ -67,6 +67,7 @@ def test_actor_pool_scaling():
         _inputs_complete=False,
         input_dependencies=[MagicMock()],
         internal_input_queue_num_blocks=MagicMock(return_value=1),
+        metrics=MagicMock(average_num_inputs_per_task=1),
     )
     op_state = OpState(
         op, inqueues=[MagicMock(__len__=MagicMock(return_value=10), num_blocks=10)]
@@ -99,6 +100,15 @@ def test_actor_pool_scaling():
         delta=1,
         expected_reason="utilization of 1.5 >= 1.0",
     )
+
+    # Should scale up immediately when the actor pool has no running actors.
+    with patch(actor_pool, "num_running_actors", 0):
+        with patch(actor_pool, "num_free_task_slots", 0):
+            with patch(actor_pool, "get_pool_util", float("inf")):
+                assert_autoscaling_action(
+                    delta=1,
+                    expected_reason="no running actors, scale up immediately",
+                )
 
     # Should be no-op since the util is below the threshold.
     with patch(actor_pool, "num_tasks_in_flight", 9):
@@ -159,11 +169,10 @@ def test_actor_pool_scaling():
                     expected_reason="consumed all inputs",
                 )
 
-            # If the input queue is empty but inputs did not complete,
-            # allow to scale up still
+            # Should be no-op since the op has enough free task slots to consume the existing inputs (which is 0).
             assert_autoscaling_action(
-                delta=1,
-                expected_reason="utilization of 1.5 >= 1.0",
+                delta=0,
+                expected_reason="enough free task slots to consume the existing inputs",
             )
 
     # Should be no-op since the op doesn't have enough resources.
@@ -222,6 +231,7 @@ def autoscaler_max_upscaling_delta_setup():
         current_size=MagicMock(return_value=10),
         get_current_size=MagicMock(return_value=10),
         num_pending_actors=MagicMock(return_value=0),
+        num_free_task_slots=MagicMock(return_value=0),
         get_pool_util=MagicMock(return_value=2.0),
     )
 
@@ -229,6 +239,7 @@ def autoscaler_max_upscaling_delta_setup():
         spec=InternalQueueOperatorMixin,
         completed=MagicMock(return_value=False),
         _inputs_complete=False,
+        metrics=MagicMock(average_num_inputs_per_task=1),
     )
     op_state = MagicMock(
         spec=OpState,
