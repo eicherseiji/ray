@@ -153,6 +153,7 @@ class OrdinalEncoder(SerializablePreprocessorBase):
         return ordinal_map.get(tuple(element))
 
     def _transform_pandas(self, df: pd.DataFrame):
+
         _validate_df(df, *self.columns)
 
         def column_ordinal_encoder(s: pd.Series):
@@ -791,6 +792,7 @@ class Categorizer(SerializablePreprocessorBase):
             post_key_fn=lambda col: col,
             columns=columns_to_get,
         )
+
         return self
 
     def _transform_pandas(self, df: pd.DataFrame):

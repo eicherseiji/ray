@@ -5,6 +5,10 @@ from unittest.mock import MagicMock, create_autospec
 import pytest
 
 import ray
+from ray.data._internal.cluster_autoscaler import (
+    CLUSTER_AUTOSCALER_ENV_KEY,
+    ClusterAutoscalerVersion,
+)
 from ray.data._internal.execution.autoscaling_requester import (
     get_or_create_autoscaling_requester_actor,
 )
@@ -20,6 +24,19 @@ from ray.train.v2._internal.execution.worker_group import (
 from ray.train.v2.tests.util import DummyObjectRefWrapper, create_dummy_run_context
 
 pytestmark = pytest.mark.usefixtures("mock_runtime_context")
+
+
+@pytest.fixture(autouse=True)
+def set_oss_autoscaler(monkeypatch):
+    """Set cluster autoscaler to use OSS autoscaler for all tests in this module."""
+    monkeypatch.setenv(CLUSTER_AUTOSCALER_ENV_KEY, ClusterAutoscalerVersion.V1.value)
+
+
+@pytest.fixture
+def ray_start_4_cpus():
+    ray.init(num_cpus=4)
+    yield
+    ray.shutdown()
 
 
 def test_datasets_callback_multiple_datasets(ray_start_4_cpus):
