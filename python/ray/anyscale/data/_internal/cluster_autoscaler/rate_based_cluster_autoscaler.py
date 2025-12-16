@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
     from ray.data._internal.execution.streaming_executor_state import Topology
 
+
 logger = getLogger(__name__)
 
 
@@ -49,7 +50,7 @@ class NodeType:
         # with it.
         self._resources = ExecutionResources.from_resource_dict(resource_dict)
 
-    def to_bundle(self, include_obj_store: bool):
+    def to_bundle(self, include_obj_store: bool) -> Dict[str, float]:
         resources = self._resources
         if not include_obj_store:
             resources = resources.copy(object_store_memory=0)
@@ -128,6 +129,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
     def __init__(
         self,
         ops: List[SupportsClusterAutoscaling],
+        resource_manager: "ResourceManager",
         execution_id: str,
         bottleneck_detector: BottleneckDetector,
         *,
@@ -179,6 +181,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         self._ops = ops
         self._execution_id = execution_id
+        self._resource_manager = resource_manager
         self._bottleneck_detector = bottleneck_detector
         self._max_cluster_limits = max_cluster_limits
         self._utility_calculator = utility_calculator
@@ -223,6 +226,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         return RateBasedClusterAutoscaler(
             scalable_ops,
             execution_id=execution_id,
+            resource_manager=resource_manager,
             bottleneck_detector=bottleneck_detector,
             max_cluster_limits=max_cluster_limits,
             utility_calculator=RollingLogicalUtilizationGauge(resource_manager),
@@ -294,8 +298,27 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             self._send_resource_request([])
             return []
 
-        # 5. Find the nodes that will benefit the bottlenecked operator.
+        # 5. Check bottleneck operator is at scheduling capacity.
+        op_usage = self._resource_manager.get_op_usage(bottleneck_op)
+        max_op_limits = bottleneck_op.min_max_resource_requirements()[1]
+        op_usage_with_additional_task = op_usage.add(min_scheduling_resources)
+        under_op_max_limit = op_usage_with_additional_task.satisfies_limit(
+            max_op_limits
+        )
+        if not under_op_max_limit:
+            # If the operator were to schedule an additional task, and it goes above the
+            # max op resource limits, then a larger cluster configuration would not benefit
+            # the bottlenecked operator because it's already at its max limits.
+            logger.debug(
+                f"{bottleneck_op} at max resource usage: {op_usage}, "
+                f"-- skipping cluster autoscaling."
+            )
+            self._send_resource_request([])
+            return []
+
+        # 6. Find the nodes that will benefit the bottlenecked operator.
         needed_node_types = self._find_needed_node_types(op=bottleneck_op)
+
         if not needed_node_types:
             logger.warning(f"No existing node types can schedule {bottleneck_op}.")
             # Still send an empty request when upscaling is not needed, to renew our
@@ -318,12 +341,17 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         return [ExecutionResources.from_resource_dict(r) for r in resource_request]
 
-    def _find_needed_node_types(self, op: SupportsClusterAutoscaling) -> Set[NodeType]:
+    def _find_needed_node_types(
+        self,
+        op: SupportsClusterAutoscaling,
+    ) -> List[NodeType]:
         """Find all the worker node types that can schedule the given operator."""
+
         valid_worker_node_types: Set[NodeType] = set()
 
         resource_requirement = op.min_scheduling_resources().copy(object_store_memory=0)
         worker_node_type_counts = self._get_node_counts()
+
         for worker_node_type in worker_node_type_counts:
             if worker_node_type.can_schedule(resource_requirement):
                 valid_worker_node_types.add(worker_node_type)

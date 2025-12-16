@@ -1,4 +1,4 @@
-from typing import List, Optional, Protocol, runtime_checkable
+from typing import List, Optional, Protocol, Tuple, runtime_checkable
 from ray.data._internal.execution.interfaces import ExecutionResources, PhysicalOperator
 
 
@@ -56,4 +56,10 @@ class SupportsClusterAutoscaling(Protocol):
 
     def completed(self: "PhysicalOperator") -> bool:
         """Whether the operator has completed."""
+        ...
+
+    def min_max_resource_requirements(
+        self,
+    ) -> Tuple[ExecutionResources, ExecutionResources]:
+        """Returns lower/upper boundary of resource requirements for this operator"""
         ...
