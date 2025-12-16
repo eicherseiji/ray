@@ -108,7 +108,13 @@ class StubClusterAutoscalingOperator(SupportsClusterAutoscaling):
         return self._completed
 
 
-def test_autoscaler_doubles_nodes_for_bottleneck_op():
+@pytest.mark.parametrize(
+    "cpu_node_count, gpu_node_count, expected_max_nodes_delta",
+    [(1, 1, 2), (50, 50, 32)],
+)
+def test_autoscaler_scales_correct_num_nodes_for_bottleneck_op(
+    cpu_node_count: int, gpu_node_count: int, expected_max_nodes_delta: int
+):
     cpu_op = StubClusterAutoscalingOperator(
         _min_scheduling_resources=ExecutionResources(cpu=1),
     )
@@ -125,15 +131,19 @@ def test_autoscaler_doubles_nodes_for_bottleneck_op():
         max_cluster_limits=ExecutionResources.for_limits(),
         utility_calculator=StubUtilizationGauge(),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
-        get_node_counts=lambda: {cpu_node_type: 1, gpu_node_type: 1},
+        get_node_counts=lambda: {
+            cpu_node_type: cpu_node_count,
+            gpu_node_type: gpu_node_count,
+        },
         min_gap_between_autoscaling_requests_s=0,
     )
 
     autoscaler.try_trigger_scaling()
 
     # The requested resources include the existing nodes and the new nodes. Since the
-    # bottleneck is the GPU operator, it should double the GPU nodes.
-    assert autoscaler.get_total_resources().gpu == 2
+    # bottleneck is the GPU operator, it should double the GPU nodes, or clamp to
+    # default max scaling delta (32.0)
+    assert autoscaler.get_total_resources().gpu == expected_max_nodes_delta
 
 
 def test_autoscaler_logs_warning_if_no_valid_node_types(

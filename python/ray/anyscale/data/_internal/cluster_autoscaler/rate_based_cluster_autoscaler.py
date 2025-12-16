@@ -108,6 +108,14 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
     DEFAULT_CLUSTER_SCALING_UP_FACTOR: float = env_float(
         "RAY_DATA_DEFAULT_CLUSTER_SCALING_UP_FACTOR", 2.0
     )
+    # Default scaling max delta (# of nodes) for cluster autoscaling.
+    # 32 was chosen because it's not too low so that scaling by 2 is worth it
+    # for smaller clusters and not too high to prevent scaling too many nodes
+    # at a time. In english, this means "no more than 32 nodes can be provisioned
+    # of a node type at a time"
+    DEFAULT_CLUSTER_SCALING_UP_MAX_DELTA: float = env_float(
+        "RAY_DATA_DEFAULT_CLUSTER_SCALING_UP_MAX_DELTA", 32.0
+    )
     # Min number of seconds between two autoscaling requests.
     MIN_GAP_BETWEEN_AUTOSCALING_REQUESTS_S = env_integer(
         "RAY_DATA_MIN_GAP_BETWEEN_AUTOSCALING_REQUESTS", 10
@@ -140,6 +148,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         cluster_scaling_up_util_threshold: float = DEFAULT_CLUSTER_SCALING_UP_UTIL_THRESHOLD,  # noqa: E501
         cluster_scaling_up_gpu_threshold: float = DEFAULT_CLUSTER_GPU_SCALING_UP_UTIL_THRESHOLD,  # noqa: E501
         cluster_scaling_up_factor: float = DEFAULT_CLUSTER_SCALING_UP_FACTOR,
+        cluster_scaling_up_max_delta: float = DEFAULT_CLUSTER_SCALING_UP_MAX_DELTA,
         min_gap_between_autoscaling_requests_s: int = MIN_GAP_BETWEEN_AUTOSCALING_REQUESTS_S,
         autoscaling_request_expire_time_s: int = AUTOSCALING_REQUEST_EXPIRE_TIME_S,
     ):
@@ -169,6 +178,11 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
                 is below this threshold, the autoscaler will not scale up even if there
                 is a bottleneck. Defaults to 0.75 (75%).
             cluster_scaling_up_factor: The factor to scale up the cluster.
+            cluster_scaling_up_max_delta: Maximum absolute increase in number of nodes
+                when scaling up. By default, because we scale the number of nodes by 2 every time,
+                the cluster size can experience unbounded growth, which is bad for cost savings
+                and resource management. By limiting the # of nodes added to the cluster, the resource
+                manager has time to accordingly adjust to the new cluster size.
             min_gap_between_autoscaling_requests_s: The minimum gap between two
                 autoscaling requests. This is exposed as a seam for testing.
             autoscaling_request_expire_time_s: The number of seconds before requested
@@ -188,6 +202,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         self._autoscaling_coordinator = autoscaling_coordinator
         self._get_node_counts = get_node_counts
         self._cluster_scaling_up_factor = cluster_scaling_up_factor
+        self._cluster_scaling_up_max_delta = cluster_scaling_up_max_delta
         self._min_gap_between_autoscaling_requests = (
             min_gap_between_autoscaling_requests_s
         )
@@ -393,12 +408,17 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         for node_type, count in node_type_counts.items():
 
             if node_type in needed_node_types:
-                num_to_request = int(math.ceil(count * self._cluster_scaling_up_factor))
+                num_to_request = int(
+                    min(
+                        math.ceil(count * self._cluster_scaling_up_factor),
+                        self._cluster_scaling_up_max_delta,
+                    )
+                )
                 debug_msg += f" [{node_type.to_bundle(include_obj_store=True)}: {count} -> {num_to_request}]"
             else:
                 num_to_request = count
 
-            node_type_request.extend([node_type for _ in range(num_to_request)])
+            node_type_request.extend([node_type] * num_to_request)
 
         logger.debug(debug_msg)
 
