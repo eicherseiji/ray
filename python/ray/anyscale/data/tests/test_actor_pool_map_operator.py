@@ -49,7 +49,7 @@ class MinMaxResourceUsageBoundsTestCase:
                 cpu=2, object_store_memory=2
             ),
             expected_max_resource_usage_bound=ExecutionResources(
-                cpu=2, object_store_memory=2
+                cpu=2, object_store_memory=float("inf")
             ),
         ),
         # Autoscaling pool.
@@ -61,7 +61,7 @@ class MinMaxResourceUsageBoundsTestCase:
                 cpu=1, object_store_memory=1
             ),
             expected_max_resource_usage_bound=ExecutionResources(
-                cpu=2, object_store_memory=2
+                cpu=2, object_store_memory=float("inf")
             ),
         ),
         # Unbounded pool.
@@ -85,7 +85,7 @@ class MinMaxResourceUsageBoundsTestCase:
                 cpu=1, object_store_memory=1
             ),
             expected_max_resource_usage_bound=ExecutionResources(
-                cpu=1, object_store_memory=1 * 2
+                cpu=1, object_store_memory=float("inf")
             ),
         ),
     ],

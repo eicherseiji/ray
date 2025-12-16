@@ -58,7 +58,9 @@ def test_min_max_resource_requirements_with_inputs_complete(
     assert min_resource_usage_bound == ExecutionResources.zero()
     # If the operator is done receiving inputs, it knows it doesn't need more resources
     # than to run the active tasks.
-    assert max_resource_usage_bound == ExecutionResources(cpu=2, object_store_memory=2)
+    assert max_resource_usage_bound == ExecutionResources(
+        cpu=2, object_store_memory=float("inf")
+    )
 
 
 if __name__ == "__main__":

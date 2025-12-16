@@ -24,9 +24,9 @@ class TaskPoolMapOperator(OSSTaskPoolMapOperator, ReportsExtraResourceUsage):
         num_cpus_per_task = self._ray_remote_args.get("num_cpus", 0)
         num_gpus_per_task = self._ray_remote_args.get("num_gpus", 0)
         memory_per_task = self._ray_remote_args.get("memory", 0)
-        object_store_memory_per_task = (
-            self._metrics.obj_store_mem_max_pending_output_per_task or 0
-        )
+        # Set the max object_store_memory requirement to inf,
+        # because we don't know how much data each task can output.
+        max_object_store_memory = float("inf")
 
         if self._inputs_complete:
             # If the operator has already received all input data, we know it won't
@@ -36,16 +36,14 @@ class TaskPoolMapOperator(OSSTaskPoolMapOperator, ReportsExtraResourceUsage):
                 cpu=num_cpus_per_task * self.num_active_tasks(),
                 gpu=num_gpus_per_task * self.num_active_tasks(),
                 memory=memory_per_task * self.num_active_tasks(),
-                object_store_memory=object_store_memory_per_task
-                * self.num_active_tasks(),
+                object_store_memory=max_object_store_memory,
             )
         elif self._max_concurrency is not None:
             resources = ExecutionResources(
                 cpu=num_cpus_per_task * self._max_concurrency,
                 gpu=num_gpus_per_task * self._max_concurrency,
                 memory=memory_per_task * self._max_concurrency,
-                object_store_memory=object_store_memory_per_task
-                * self._max_concurrency,
+                object_store_memory=max_object_store_memory,
             )
         else:
             resources = ExecutionResources.for_limits()
