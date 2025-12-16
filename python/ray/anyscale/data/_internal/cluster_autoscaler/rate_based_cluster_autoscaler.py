@@ -5,6 +5,9 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set
 
 import ray
+from ray.anyscale.data._internal.cluster_autoscaler.cluster_limits_aware import (
+    clamp_resource_limits,
+)
 from ray.data._internal.cluster_autoscaler.base_cluster_autoscaler import (
     ClusterAutoscaler,
 )
@@ -22,7 +25,7 @@ from ray.anyscale.air._internal.autoscaling_coordinator import (
     AutoscalingCoordinator,
     DefaultAutoscalingCoordinator,
 )
-from ray.data._internal.execution.interfaces import PhysicalOperator
+from ray.data._internal.execution.interfaces import ExecutionOptions, PhysicalOperator
 from ray.data._internal.execution.interfaces.execution_options import ExecutionResources
 from ray.data._internal.execution.operators.base_physical_operator import (
     AllToAllOperator,
@@ -44,12 +47,13 @@ class NodeType:
     def __init__(self, resource_dict: Dict[str, float]):
         # Remove object store memory because the autoscaler SDK doesn't work correctly
         # with it.
-        self._resources = ExecutionResources.from_resource_dict(resource_dict).copy(
-            object_store_memory=0
-        )
+        self._resources = ExecutionResources.from_resource_dict(resource_dict)
 
-    def to_bundle(self):
-        return {k: v for k, v in self._resources.to_resource_dict().items() if v > 0}
+    def to_bundle(self, include_obj_store: bool):
+        resources = self._resources
+        if not include_obj_store:
+            resources = resources.copy(object_store_memory=0)
+        return {k: v for k, v in resources.to_resource_dict().items() if v > 0}
 
     def __hash__(self):
         return hash(self._resources)
@@ -127,6 +131,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         execution_id: str,
         bottleneck_detector: BottleneckDetector,
         *,
+        max_cluster_limits: ExecutionResources,
         utility_calculator: ResourceUtilizationGauge,
         autoscaling_coordinator: Optional["AutoscalingCoordinator"] = None,
         get_node_counts: Callable[[], Dict[NodeType, int]] = _get_node_types_and_counts,
@@ -143,6 +148,8 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             execution_id: The execution ID of the dataset. This is used to identify the
                 dataset when requesting resources.
             bottleneck_detector: The detector to identify the bottleneck operator.
+            max_cluster_limits: Maximum cluster resource limits. Used to clamp resource
+                requests to ensure we don't exceed the maximum cluster capacity.
             utility_calculator: The calculator to track and compute cluster resource
                 utilization (CPU, GPU, object store memory). Used to determine if cluster
                 utilization is high enough to trigger scaling up.
@@ -173,6 +180,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         self._ops = ops
         self._execution_id = execution_id
         self._bottleneck_detector = bottleneck_detector
+        self._max_cluster_limits = max_cluster_limits
         self._utility_calculator = utility_calculator
         self._autoscaling_coordinator = autoscaling_coordinator
         self._get_node_counts = get_node_counts
@@ -194,6 +202,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
     def create(
         cls,
         topology: "Topology",
+        execution_options: ExecutionOptions,
         resource_manager: "ResourceManager",
         *,
         execution_id: str,
@@ -209,10 +218,13 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         bottleneck_detector = NormalizedThroughputBottleneckDetector(
             resource_manager, requester_id
         )
+        # This is the amount of resources we can only scale up to.
+        max_cluster_limits = execution_options.max_cluster_limits()
         return RateBasedClusterAutoscaler(
             scalable_ops,
             execution_id=execution_id,
             bottleneck_detector=bottleneck_detector,
+            max_cluster_limits=max_cluster_limits,
             utility_calculator=RollingLogicalUtilizationGauge(resource_manager),
         )
 
@@ -291,7 +303,17 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             self._send_resource_request([])
             return []
 
-        resource_request = self._create_resource_request(needed_node_types)
+        node_type_request = self._create_node_type_request(needed_node_types)
+        # 6. Clamp resources to respect user resource_limits.
+        resource_request = clamp_resource_limits(
+            node_type_request=node_type_request,
+            max_cluster_limits=self._max_cluster_limits,
+        )
+
+        # 7. Exclude Object Store becaue Autoscaler SDK doesn't work with obj store.
+        resource_request = [
+            r.to_bundle(include_obj_store=False) for r in resource_request
+        ]
         self._send_resource_request(resource_request)
 
         return [ExecutionResources.from_resource_dict(r) for r in resource_request]
@@ -332,27 +354,30 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         return valid_worker_node_types
 
-    def _create_resource_request(
+    def _create_node_type_request(
         self, needed_node_types: Set[NodeType]
-    ) -> List[Dict[str, float]]:
+    ) -> List[NodeType]:
         """Scale up the cluster by requesting resources for the needed node types."""
 
-        resource_request: List[Dict[str, float]] = []
+        node_type_request: List[Dict[str, float]] = []
         debug_msg = "Scaling up cluster. Requesting resources:"
         node_type_counts = self._get_node_counts()
         for node_type, count in node_type_counts.items():
-            bundle = node_type.to_bundle()
 
             if node_type in needed_node_types:
                 num_to_request = int(math.ceil(count * self._cluster_scaling_up_factor))
-                debug_msg += f" [{bundle}: {count} -> {num_to_request}]"
+                debug_msg += f" [{node_type.to_bundle(include_obj_store=True)}: {count} -> {num_to_request}]"
             else:
                 num_to_request = count
 
-            resource_request.extend([bundle] * num_to_request)
+            node_type_request.extend([node_type for _ in range(num_to_request)])
 
         logger.debug(debug_msg)
-        return resource_request
+
+        # NOTE: We sort the resource request by str to get a deterministic ordering of nodes.
+        # This is important for clamping resources to limits.
+        node_type_request.sort(key=lambda x: str(x))
+        return node_type_request
 
     def _send_resource_request(self, resource_request: List[Dict[str, float]]):
         logger.debug(f"Sending Resource Request: {resource_request}")

@@ -1,5 +1,6 @@
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import DefaultDict, List, Optional, Dict
 from unittest.mock import MagicMock
 
 import logging
@@ -27,6 +28,7 @@ from ray.data._internal.cluster_autoscaler.resource_utilization_gauge import (
     ResourceUtilizationGauge,
 )
 from ray.data._internal.execution.interfaces import PhysicalOperator
+from ray.data._internal.execution.interfaces.execution_options import ExecutionOptions
 from ray.data._internal.execution.interfaces.execution_options import ExecutionResources
 from ray.data._internal.execution.resource_manager import ResourceManager
 from ray.data.tests.conftest import propagate_logs  # noqa
@@ -109,6 +111,7 @@ def test_autoscaler_doubles_nodes_for_bottleneck_op():
         ops=[cpu_op, gpu_op],
         execution_id="test",
         bottleneck_detector=StubBottleneckDetector(bottleneck=gpu_op),
+        max_cluster_limits=ExecutionResources.for_limits(),
         utility_calculator=StubUtilizationGauge(),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
         get_node_counts=lambda: {cpu_node_type: 1, gpu_node_type: 1},
@@ -139,6 +142,7 @@ def test_autoscaler_logs_warning_if_no_valid_node_types(
         ops=[gpu_op],
         execution_id="test",
         bottleneck_detector=StubBottleneckDetector(gpu_op),
+        max_cluster_limits=ExecutionResources.for_limits(),
         utility_calculator=StubUtilizationGauge(),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
         get_node_counts=lambda: {cpu_node_type: 1},
@@ -165,9 +169,10 @@ def test_autoscaler_requests_resources_if_no_scalable_ops():
     time = 0
     autoscaler = RateBasedClusterAutoscaler(
         ops=[],
-        utility_calculator=StubUtilizationGauge(),
         execution_id="test",
         bottleneck_detector=StubBottleneckDetector(bottleneck=None),
+        max_cluster_limits=ExecutionResources.for_limits(),
+        utility_calculator=StubUtilizationGauge(),
         autoscaling_coordinator=FakeAutoscalingCoordinator(
             get_time=lambda: time, remaining=[{"CPU": 1}]
         ),
@@ -292,6 +297,7 @@ def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):
     with pytest.raises(ValueError):
         create_cluster_autoscaler(
             topology={},
+            execution_options=ExecutionOptions(),
             resource_manager=MagicMock(spec=ResourceManager),
             execution_id="test",
         )
@@ -313,6 +319,7 @@ def test_cluster_autoscaler_env_value_creates_correct_autoscaler(
 
     autoscaler = create_cluster_autoscaler(
         topology={},
+        execution_options=ExecutionOptions(),
         resource_manager=MagicMock(spec=ResourceManager),
         execution_id="test",
     )
@@ -340,11 +347,11 @@ def test_autoscaler_utilization_threshold(cpu_usage, gpu_usage, memory_usage):
     execution_resources = ExecutionResources(
         cpu=cpu_usage, gpu=gpu_usage, object_store_memory=memory_usage
     )
-
     autoscaler = RateBasedClusterAutoscaler(
         ops=[cpu_op],
         execution_id="test",
         bottleneck_detector=StubBottleneckDetector(bottleneck=cpu_op),
+        max_cluster_limits=ExecutionResources.for_limits(),
         utility_calculator=StubUtilizationGauge(execution_resources),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
         get_node_counts=lambda: {cpu_node_type: 1},
@@ -362,6 +369,78 @@ def test_autoscaler_utilization_threshold(cpu_usage, gpu_usage, memory_usage):
         assert autoscaler.get_total_resources().cpu > 4
     else:
         assert autoscaler.get_total_resources().cpu <= 4
+
+
+@pytest.mark.parametrize(
+    "max_cluster_limits,resource_request,expected_clamped",
+    [
+        # Test with requests that don't exceed the limit - all should be included
+        (
+            ExecutionResources(cpu=8, gpu=0, memory=0),
+            [{"CPU": 2}, {"CPU": 2}],
+            [{"CPU": 2}, {"CPU": 2}],
+        ),
+        # Test with requests that exceed the cluster limit
+        (
+            ExecutionResources(cpu=8, gpu=0, memory=0),
+            [{"CPU": 3}, {"CPU": 3}, {"CPU": 3}, {"CPU": 3}],
+            [{"CPU": 3}, {"CPU": 3}],
+        ),
+        # Test with heterogeneous cluster (both CPU and GPU resources, not evenly divisible)
+        (
+            ExecutionResources(cpu=7, gpu=2, memory=0),
+            [{"CPU": 3, "GPU": 1}, {"CPU": 3, "GPU": 1}, {"CPU": 3, "GPU": 1}],
+            [{"CPU": 3, "GPU": 1}, {"CPU": 3, "GPU": 1}],
+        ),
+        # Test with object store memory limits
+        # Note: object_store_memory is stripped from the final result because Autoscaler SDK
+        # doesn't work with obj store, but it still affects clamping logic
+        (
+            ExecutionResources(cpu=8, gpu=0, memory=0, object_store_memory=1000),
+            [
+                {"CPU": 2, "object_store_memory": 400},
+                {"CPU": 2, "object_store_memory": 400},
+                {"CPU": 2, "object_store_memory": 400},
+            ],
+            [{"CPU": 2}, {"CPU": 2}],  # object_store_memory stripped in final result
+        ),
+    ],
+)
+def test_resource_limits_clamper(
+    max_cluster_limits: ExecutionResources,
+    resource_request: List[Dict[str, float]],
+    expected_clamped: List[Dict[str, float]],
+):
+    """Test that clamp_resource_limits respects cluster limits through RateBasedClusterAutoscaler."""
+    # Create a minimal operator for the autoscaler
+    cpu_op = StubClusterAutoscalingOperator(
+        _min_scheduling_resources=ExecutionResources(cpu=1),
+    )
+    node_count: DefaultDict[NodeType, int] = defaultdict(int)
+    for r in resource_request:
+        node_count[NodeType(r)] += 1
+    autoscaler = RateBasedClusterAutoscaler(
+        ops=[cpu_op],
+        execution_id="test",
+        bottleneck_detector=StubBottleneckDetector(bottleneck=cpu_op),
+        max_cluster_limits=max_cluster_limits,
+        utility_calculator=StubUtilizationGauge(),
+        autoscaling_coordinator=FakeAutoscalingCoordinator(),
+        get_node_counts=lambda: node_count,
+        min_gap_between_autoscaling_requests_s=0,
+        # Setting this to 1.0 so that we can directly compare against
+        # the clamped value.
+        cluster_scaling_up_factor=1.0,
+    )
+
+    # Test clamping through the autoscaler
+    requested_resources = autoscaler.try_trigger_scaling()
+
+    expected_clamped = [
+        ExecutionResources.from_resource_dict(er) for er in expected_clamped
+    ]
+    assert len(requested_resources) == len(expected_clamped)
+    assert requested_resources == expected_clamped
 
 
 if __name__ == "__main__":

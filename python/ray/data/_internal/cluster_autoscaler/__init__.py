@@ -11,6 +11,7 @@ from .base_cluster_autoscaler import ClusterAutoscaler
 from .default_autoscaling_coordinator import DefaultAutoscalingCoordinator
 from .default_cluster_autoscaler import DefaultClusterAutoscaler
 from .default_cluster_autoscaler_v2 import DefaultClusterAutoscalerV2
+from ray.data._internal.execution.interfaces import ExecutionOptions
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
@@ -30,7 +31,11 @@ class ClusterAutoscalerVersion(Enum):
 
 
 def create_cluster_autoscaler(
-    topology: "Topology", resource_manager: "ResourceManager", *, execution_id: str
+    topology: "Topology",
+    execution_options: ExecutionOptions,
+    resource_manager: "ResourceManager",
+    *,
+    execution_id: str,
 ) -> ClusterAutoscaler:
     selected_autoscaler = _get_cluster_autoscaler_version()
 
@@ -40,7 +45,7 @@ def create_cluster_autoscaler(
         )
 
         return RateBasedClusterAutoscaler.create(
-            topology, resource_manager, execution_id=execution_id
+            topology, execution_options, resource_manager, execution_id=execution_id
         )
 
     elif selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO_LEGACY:
