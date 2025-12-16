@@ -5,6 +5,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional
 
 import pyarrow as pa
+import pyarrow.json as pajson
 
 from .native_file_reader import NativeFileReader
 from ray.data.block import DataBatch
@@ -28,7 +29,7 @@ class ArrowJSONReader(NativeFileReader):
             arrow_json_args = {}
 
         self._read_options = arrow_json_args.pop(
-            "read_options", pa.json.ReadOptions(use_threads=False)
+            "read_options", pajson.ReadOptions(use_threads=False)
         )
         self._arrow_json_args = arrow_json_args
 
@@ -80,7 +81,7 @@ class ArrowJSONReader(NativeFileReader):
         max_block_size = self.data_context.target_max_block_size
         while True:
             try:
-                table = pa.json.read_json(
+                table = pajson.read_json(
                     BytesIO(buffer),
                     read_options=self._read_options,
                     **self._arrow_json_args,
