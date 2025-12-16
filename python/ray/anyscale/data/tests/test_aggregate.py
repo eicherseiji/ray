@@ -63,7 +63,7 @@ def test_null_safe_aggregation_protocol(agg_cls, ignore_nulls):
 
     expected = pac_method(col, ignore_nulls)
 
-    agg_kwargs = {} if agg_cls is Unique else {"ignore_nulls": ignore_nulls}
+    agg_kwargs = {"ignore_nulls": ignore_nulls}
 
     agg = agg_cls(on="A", **agg_kwargs)
 
@@ -96,6 +96,11 @@ def test_null_safe_aggregation_protocol(agg_cls, ignore_nulls):
             else:
                 # NOTE: Default aggregations return set as is
                 res_set = res
+
+            # NOTE: Pyarrow's `unique` method doesn't provide `ignore_nulls`
+            #       param hence we have to filter out manually
+            if ignore_nulls:
+                expected = expected.drop_null()
 
             assert set(expected.to_pylist()) == res_set, permuted_accumulators
         else:

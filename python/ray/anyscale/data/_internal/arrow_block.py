@@ -91,7 +91,7 @@ class _OptimizedArrowRow(Mapping):
         return row_repr_pretty(self, p, cycle)
 
 
-class ArrowBlockMixin(OptimizedTableBlockMixin):
+class OptimizedArrowBlockMixin(OptimizedTableBlockMixin):
     """Mixin extending ``ArrowBlockAccessor`` providing optimized
     implementations for some common operations
     """

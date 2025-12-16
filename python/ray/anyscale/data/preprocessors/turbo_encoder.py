@@ -1,7 +1,5 @@
-from functools import partial
-from typing import Dict, Any
+from typing import Dict
 
-import numpy
 import pandas as pd
 import ray.data.preprocessors as preprocessors_module
 
@@ -10,11 +8,8 @@ from ray.anyscale.data.aggregate_vectorized import (
     TopKUniqueVectorized,
 )
 from ray.anyscale.data.preprocessors.turbo_preprocessor import TurboPreprocessor
-from ray.data.block import BlockColumnAccessor
 from ray.data.preprocessors.encoder import (
     unique_post_fn,
-    _validate_df,
-    _is_series_composed_of_lists,
 )
 from ray.data.preprocessors.utils import make_post_processor
 from ray.data.preprocessors.version_support import SerializablePreprocessor
@@ -33,42 +28,17 @@ class OrdinalEncoder(_OriginalOrdinalEncoder, TurboPreprocessor):
         self.stat_computation_plan.add_aggregator(
             aggregator_fn=lambda col: UniqueVectorized(
                 on=col,
-                encode_lists=self.encode_lists,
+                encode_lists=(
+                    UniqueVectorized.ListEncodingMode.FLATTEN
+                    if self.encode_lists
+                    else None
+                ),
                 alias_name=f"unique_values({col})",
             ),
             post_process_fn=unique_post_fn(),
             columns=self.columns,
         )
         return self
-
-    def _transform_pandas(self, df: pd.DataFrame):
-
-        _validate_df(df, *self.columns)
-
-        def encode_list(element: list, *, name: str):
-            return [self.stats_[f"unique_values({name})"].get(x) for x in element]
-
-        def column_ordinal_encoder(s: pd.Series):
-            if _is_series_composed_of_lists(s):
-                if self.encode_lists:
-                    return s.map(partial(encode_list, name=s.name))
-
-                def list_as_category(element):
-                    if not isinstance(element, (list, numpy.ndarray)):
-                        raise ValueError("unexpected type")
-                    column_accessor = BlockColumnAccessor.for_column(
-                        pd.Series([element])
-                    )
-                    key = column_accessor.hash()
-                    return self.stats_[f"unique_values({s.name})"].get(key[0])
-
-                return s.apply(list_as_category)
-
-            s_values = self.stats_[f"unique_values({s.name})"]
-            return s.map(s_values)
-
-        df[self.output_columns] = df[self.columns].apply(column_ordinal_encoder)
-        return df
 
 
 @SerializablePreprocessor(version=1, identifier="io.ray.preprocessors.one_hot_encoder")
@@ -91,13 +61,6 @@ class OneHotEncoder(_OriginalOneHotEncoder, TurboPreprocessor):
             columns=self.columns,
         )
         return self
-
-    def safe_get(self, v: Any, stats: Dict[str, int]):
-        if not isinstance(v, (tuple, list, numpy.ndarray)):
-            return super().safe_get(v, stats)
-        column_accessor = BlockColumnAccessor.for_column(pd.Series([v]))
-        key = column_accessor.hash()
-        return stats.get(key[0], -1)
 
 
 @SerializablePreprocessor(
