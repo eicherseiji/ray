@@ -494,6 +494,8 @@ class HAProxyApi(ProxyApi):
         # Lock to prevent concurrent config modifications
         self._config_lock = asyncio.Lock()
         self._proc = None
+        # Track old processes from graceful reloads that may still be draining
+        self._old_procs: List[asyncio.subprocess.Process] = []
 
         # Ensure required directories exist during initialization
         self._initialize_directories_and_error_files()
@@ -552,7 +554,15 @@ class HAProxyApi(ProxyApi):
             stderr=asyncio.subprocess.PIPE,
         )
 
-        await self._wait_for_hap_availability(proc)
+        try:
+            await self._wait_for_hap_availability(proc)
+        except Exception:
+            # If startup fails, ensure the process is killed to avoid orphaned processes
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            raise
+
         return proc
 
     async def _save_server_state(self) -> None:
@@ -578,6 +588,10 @@ class HAProxyApi(ProxyApi):
                 reload_args.extend(["-x", self.cfg.socket_path])
 
             self._proc = await self._start_and_wait_for_haproxy(*reload_args)
+
+            # Track old process so we can ensure it's cleaned up during shutdown
+            if old_proc is not None:
+                self._old_procs.append(old_proc)
 
             logger.info(
                 "Successfully performed graceful HAProxy reload with process restart."
@@ -821,10 +835,23 @@ class HAProxyApi(ProxyApi):
             return
 
         try:
+            # Kill the current process
             if proc.returncode is None:
                 proc.kill()
                 await proc.wait()
                 self._proc = None
+
+            # Also kill any old processes from graceful reloads that might still be running
+            for old_proc in self._old_procs:
+                try:
+                    if old_proc.returncode is None:
+                        old_proc.kill()
+                        await old_proc.wait()
+                        logger.info(f"Killed old HAProxy process (PID: {old_proc.pid})")
+                except Exception as e:
+                    logger.warning(f"Error killing old HAProxy process: {e}")
+
+            self._old_procs.clear()
 
             logger.info("Stopped HAProxy process.")
         except RuntimeError as e:
