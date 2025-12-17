@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 import ray
 from ray.data import DataContext, DataIterator, NodeIdStr
 from ray.train.v2._internal.callbacks.datasets import (
-    DatasetsSetupCallback as RayDatasetsSetupCallback,
+    DatasetsCallback as RayDatasetsCallback,
 )
 from ray.train.v2._internal.data_integration.interfaces import (
     DatasetShardProvider,
@@ -87,7 +87,7 @@ class AnyscaleDatasetShardProvider:
             logger.debug("Failed to invoke remote cleanup of Dataset Manager.")
 
 
-class DatasetsSetupCallback(RayDatasetsSetupCallback):
+class DatasetsCallback(RayDatasetsCallback):
     """The callback to setup and cleanup Ray Datasets for the worker group."""
 
     def __init__(self, train_run_context: TrainRunContext):

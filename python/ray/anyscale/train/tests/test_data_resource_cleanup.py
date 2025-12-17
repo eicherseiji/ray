@@ -12,7 +12,7 @@ from ray.data._internal.iterator.stream_split_iterator import (
 
 from ray.anyscale.train._internal.callbacks.datasets import (
     AnyscaleDatasetShardProvider,
-    DatasetsSetupCallback,
+    DatasetsCallback,
 )
 from ray.anyscale.train._internal.data_integration.dataset_manager import DatasetManager
 from ray.anyscale.train.tests.test_dataset_manager import (
@@ -25,8 +25,8 @@ from ray.train.v2.tests.util import (
 
 
 def test_after_worker_group_shutdown():
-    """Test that the DatasetsSetupCallback calls cleanup on the dataset shard provider on after_worker_group_shutdown"""
-    callback = DatasetsSetupCallback(train_run_context=create_dummy_run_context())
+    """Test that the DatasetsCallback calls cleanup on the dataset shard provider on after_worker_group_shutdown"""
+    callback = DatasetsCallback(train_run_context=create_dummy_run_context())
     shard_provider = create_autospec(AnyscaleDatasetShardProvider)
     callback._dataset_shard_provider = shard_provider
 
@@ -37,8 +37,8 @@ def test_after_worker_group_shutdown():
 
 
 def test_after_worker_group_abort():
-    """Test that the DatasetsSetupCallback calls cleanup on the dataset shard provider on after_worker_group_abort"""
-    callback = DatasetsSetupCallback(train_run_context=create_dummy_run_context())
+    """Test that the DatasetsCallback calls cleanup on the dataset shard provider on after_worker_group_abort"""
+    callback = DatasetsCallback(train_run_context=create_dummy_run_context())
     shard_provider = create_autospec(AnyscaleDatasetShardProvider)
 
     callback._dataset_shard_provider = shard_provider

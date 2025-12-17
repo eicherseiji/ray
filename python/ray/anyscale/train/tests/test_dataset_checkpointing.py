@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 from pyarrow.fs import LocalFileSystem
 import pytest
 
-from ray.anyscale.train._internal.callbacks.datasets import DatasetsSetupCallback
+from ray.anyscale.train._internal.callbacks.datasets import DatasetsCallback
 import ray.data
 import ray.train
 from ray.train import DataConfig, DatasetCheckpointConfig
@@ -211,7 +211,7 @@ def test_default_checkpoint_path(tmp_path):
     )
     fs = LocalFileSystem()
 
-    callback = DatasetsSetupCallback(
+    callback = DatasetsCallback(
         train_run_context=create_dummy_run_context(
             run_config=ray.train.RunConfig(
                 storage_path=str(tmp_path), name="test", storage_filesystem=fs
@@ -243,7 +243,7 @@ def test_override_filesystem(tmp_path):
         id_column="id", checkpoint_path=None, override_filesystem=mock_fs
     )
 
-    callback = DatasetsSetupCallback(
+    callback = DatasetsCallback(
         train_run_context=create_dummy_run_context(
             run_config=ray.train.RunConfig(storage_path=str(tmp_path), name="test"),
             datasets={"train": MagicMock()},

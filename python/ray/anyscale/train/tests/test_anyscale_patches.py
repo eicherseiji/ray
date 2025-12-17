@@ -55,12 +55,12 @@ def test_scaling_policy():
 def test_dataset_callback_patch(num_workers, excluded_resources):
     """Ray Train resources should be excluded from the total resources unless
     an elastic number of workers is enabled."""
-    from ray.train.v2._internal.callbacks import DatasetsSetupCallback  # isort: skip
+    from ray.train.v2._internal.callbacks import DatasetsCallback  # isort: skip
     from ray.anyscale.train._internal.callbacks.datasets import (
-        DatasetsSetupCallback as AnyscaleDatasetsSetupCallback,
+        DatasetsCallback as AnyscaleDatasetsCallback,
     )
 
-    assert DatasetsSetupCallback is AnyscaleDatasetsSetupCallback
+    assert DatasetsCallback is AnyscaleDatasetsCallback
 
     scaling_config = ray.train.ScalingConfig(
         num_workers=num_workers, resources_per_worker={"CPU": 1}
@@ -68,7 +68,7 @@ def test_dataset_callback_patch(num_workers, excluded_resources):
     train_run_context = create_dummy_run_context(
         datasets={}, scaling_config=scaling_config
     )
-    callback = DatasetsSetupCallback(train_run_context=train_run_context)
+    callback = DatasetsCallback(train_run_context=train_run_context)
     assert callback.get_train_total_resources(scaling_config) == excluded_resources
 
 
