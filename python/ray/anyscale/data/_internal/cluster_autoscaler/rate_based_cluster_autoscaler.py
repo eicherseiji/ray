@@ -156,6 +156,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         Args:
             ops: The operators to autoscale.
+            resource_manager: The resource manager.
             execution_id: The execution ID of the dataset. This is used to identify the
                 dataset when requesting resources.
             bottleneck_detector: The detector to identify the bottleneck operator.
@@ -231,6 +232,12 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         streaming executor, and keep the `ray.data._internal.cluster_autoscaler`
         `__init__` file small.
         """
+        # `SupportsClusterAutoscaling` defines the subset of `PhysicalOperator` methods
+        # required for this implementation. We use a protocol rather than
+        # `PhyiscalOperator`s directly because the  `PhysicalOperator` interface is
+        # wide and hard to explicitly stub for testing.
+        assert all(isinstance(op, SupportsClusterAutoscaling) for op in topology)
+
         scalable_ops = [op for op in topology if cls._is_eligible_for_scaling(op)]
         requester_id = f"data-{execution_id}"
         bottleneck_detector = NormalizedThroughputBottleneckDetector(
@@ -251,10 +258,9 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
     def _is_eligible_for_scaling(cls, op: PhysicalOperator) -> bool:
         """Returns true if the operator is eligible for cluster autoscaling."""
         return (
-            isinstance(op, SupportsClusterAutoscaling)
             # There's no point in autoscaling if the operator doesn't require any
             # resources.
-            and op.min_scheduling_resources() != ExecutionResources.zero()
+            op.min_scheduling_resources() != ExecutionResources.zero()
             # We explicitly exempt shuffle operators from autoscaling. Unlike other
             # operators, shuffle operators don't respect Ray Data's resource
             # allocations. They launch more tasks than the cluster can handle, and the
