@@ -9,8 +9,8 @@ import pytest
 import ray
 from ray.data.context import AutoscalingConfig
 from ray.anyscale.data._internal.actor_autoscaler.rayturbo_actor_autoscaler import (
-    DefaultActorPoolResizingPolicy,
     RayTurboActorAutoscaler,
+    RayTurboResizingPolicy,
     _get_scaling_up_factor,
     _normalize_scaling_up_factor,
 )
@@ -431,27 +431,25 @@ class TestActorPoolAutoscaling:
             ),
             actor_pool_util_check_interval_s=0,
             actor_pool_util_avg_window_s=0.1,
-            actor_pool_resizing_policy=DefaultActorPoolResizingPolicy(
-                scaling_up_factor
-            ),
+            actor_pool_resizing_policy=RayTurboResizingPolicy(scaling_up_factor),
         )
 
         # Manually scale up to min_size.
         # Actor pool should be None since there is no running actor.
         actor_pool.scale(ActorPoolScalingRequest(delta=min_size))
-        assert autoscaler._calculate_actor_pool_util(actor_pool) is None
+        assert autoscaler._compute_utilization(actor_pool) == float("inf")
         current_time.increment()
 
         # Move pending actors to running.
         # Actor pool should be 0 since there are running actors now.
         for _ in range(min_size):
             actor_pool.pending_to_running()
-        assert autoscaler._calculate_actor_pool_util(actor_pool) == 0
+        assert autoscaler._compute_utilization(actor_pool) == 0
         current_time.increment()
 
         # Updated the number of used task slots and check the util.
         actor_pool._current_in_flight_tasks = 7
-        util = autoscaler._calculate_actor_pool_util(actor_pool)
+        util = autoscaler._compute_utilization(actor_pool)
         assert util is not None
 
         assert util == pytest.approx(
@@ -469,7 +467,7 @@ class TestActorPoolAutoscaling:
             actor_pool.pending_to_running()
         # Updated the number of used task slots and check the util.
         actor_pool._current_in_flight_tasks = 24
-        util = autoscaler._calculate_actor_pool_util(actor_pool)
+        util = autoscaler._compute_utilization(actor_pool)
         assert util is not None
         assert util == pytest.approx(
             24 / (actor_pool.max_actor_concurrency() * actor_pool.num_running_actors())
@@ -485,7 +483,7 @@ class TestActorPoolAutoscaling:
             actor_pool.pending_to_running()
         # Updated the number of used task slots and check the util.
         actor_pool._current_in_flight_tasks = 3
-        util = autoscaler._calculate_actor_pool_util(actor_pool)
+        util = autoscaler._compute_utilization(actor_pool)
         assert util is not None
         assert util == pytest.approx(
             3 / (actor_pool.max_actor_concurrency() * actor_pool.num_running_actors()),
@@ -497,7 +495,7 @@ class TestActorPoolAutoscaling:
 
         # Check the util again.
         actor_pool._current_in_flight_tasks = 4
-        util = autoscaler._calculate_actor_pool_util(actor_pool)
+        util = autoscaler._compute_utilization(actor_pool)
         assert util is not None
         assert util == pytest.approx(
             util,
@@ -551,7 +549,7 @@ class TestActorPoolAutoscaling:
             ),
             actor_pool_util_check_interval_s=0,
             actor_pool_util_avg_window_s=0.1,
-            actor_pool_resizing_policy=DefaultActorPoolResizingPolicy(
+            actor_pool_resizing_policy=RayTurboResizingPolicy(
                 capacity_based_scaling_config
             ),
         )
@@ -676,9 +674,7 @@ class TestActorPoolAutoscaling:
             ),
             actor_pool_util_check_interval_s=0,
             actor_pool_util_avg_window_s=0.1,
-            actor_pool_resizing_policy=DefaultActorPoolResizingPolicy(
-                scaling_up_factor
-            ),
+            actor_pool_resizing_policy=RayTurboResizingPolicy(scaling_up_factor),
         )
 
         # Manually scale up to min_size and move pending actors to running.
