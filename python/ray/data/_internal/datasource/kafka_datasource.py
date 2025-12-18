@@ -326,6 +326,7 @@ class KafkaDatasource(Datasource):
             parallelism: This argument is deprecated.
             per_task_row_limit: Maximum number of rows per read task.
             data_context: The data context to use to get read tasks. This is not used by this datasource.
+
         Returns:
             List of ReadTask objects, one per partition.
         """

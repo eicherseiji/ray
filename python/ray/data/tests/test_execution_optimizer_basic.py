@@ -1,11 +1,14 @@
 import sys
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
 import pandas as pd
 import pytest
 
 import ray
+
+if TYPE_CHECKING:
+    from ray.data.context import DataContext
 from ray.data._internal.execution.operators.input_data_buffer import InputDataBuffer
 from ray.data._internal.execution.operators.map_operator import MapOperator
 from ray.data._internal.execution.operators.task_pool_map_operator import (

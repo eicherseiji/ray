@@ -27,6 +27,7 @@ from ray.tests.conftest import *  # noqa
 if TYPE_CHECKING:
     from ray.data.context import DataContext
 
+
 # Data source generates random bytes data
 class RandomBytesDatasource(Datasource):
     def __init__(

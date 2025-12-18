@@ -279,6 +279,7 @@ class ClickHouseDatasource(Datasource):
                 being yielded downstream.
             data_context: The data context to use to get read tasks. Not used by this
                 datasource.
+
         Returns:
             A list of read tasks to be executed.
         """
