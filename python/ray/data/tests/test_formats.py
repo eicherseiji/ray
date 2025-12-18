@@ -10,6 +10,7 @@ from fsspec.implementations.local import LocalFileSystem
 
 import ray
 from ray.data.block import BlockAccessor
+from ray.data.datasource import DummyOutputDatasink
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
 from ray.data.tests.conftest import *  # noqa
 from ray.data.tests.mock_http_server import *  # noqa
@@ -223,6 +224,46 @@ def test_read_example_data(ray_start_regular_shared, tmp_path):
             "variety": "Setosa",
         }
     ]
+
+
+def test_write_datasink(ray_start_regular_shared):
+    output = DummyOutputDatasink()
+    ds = ray.data.range(10, override_num_blocks=2)
+    ds.write_datasink(output)
+    assert output.num_ok == 1
+    assert output.num_failed == 0
+    assert ray.get(output.data_sink.get_rows_written.remote()) == 10
+
+    output.enabled = False
+    ds = ray.data.range(10, override_num_blocks=2)
+    with pytest.raises(ValueError):
+        ds.write_datasink(output, ray_remote_args={"max_retries": 0})
+    assert output.num_ok == 1
+    assert output.num_failed == 1
+    assert ray.get(output.data_sink.get_rows_written.remote()) == 10
+
+
+@pytest.mark.skipif(
+    sys.version_info >= (3, 12),
+    reason="Skip due to incompatibility tensorflow with Python 3.12+",
+)
+def test_from_tf(ray_start_regular_shared):
+    import tensorflow as tf
+    import tensorflow_datasets as tfds
+
+    tf_dataset = tfds.load("mnist", split=["train"], as_supervised=True)[0]
+    tf_dataset = tf_dataset.take(8)  # Use subset to make test run faster.
+
+    ray_dataset = ray.data.from_tf(tf_dataset)
+
+    actual_data = extract_values("item", ray_dataset.take_all())
+    expected_data = list(tf_dataset)
+    assert len(actual_data) == len(expected_data)
+    for (expected_features, expected_label), (actual_features, actual_label) in zip(
+        expected_data, actual_data
+    ):
+        tf.debugging.assert_equal(expected_features, actual_features)
+        tf.debugging.assert_equal(expected_label, actual_label)
 
 
 def test_read_s3_file_error(shutdown_only, s3_path):

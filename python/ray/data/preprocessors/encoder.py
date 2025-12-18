@@ -485,6 +485,15 @@ class MultiHotEncoder(SerializablePreprocessorBase):
         )
         return self
 
+    def _encode_list_element(self, element: list, *, column_name: str):
+        ordinal_map = self.stats_[f"unique_values({column_name})"]
+        # If encoding lists, entire column is flattened, hence we map individual
+        # elements inside the list element (of the column)
+        if self.encode_lists:
+            return [ordinal_map.get(x) for x in element]
+
+        return ordinal_map.get(tuple(element))
+
     def _transform_pandas(self, df: pd.DataFrame):
         _validate_df(df, *self.columns)
 
@@ -791,6 +800,7 @@ class Categorizer(SerializablePreprocessorBase):
             post_key_fn=lambda col: col,
             columns=columns_to_get,
         )
+
         return self
 
     def _transform_pandas(self, df: pd.DataFrame):

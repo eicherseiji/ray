@@ -1,0 +1,16 @@
+group: runtime train tests
+depends_on:
+  - forge
+  - mlbuild-multipy
+  - ray-core-build
+  - ray-dashboard-build
+steps:
+  - label: ":bullettrain_front: train: runtime tests"
+    instance_type: medium
+    commands:
+      - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/train/... ml
+        --python-version 3.10
+        --build-name mlbuild-py3.10
+    tags:
+      - ml
+      - ml-turbo

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anyscaleruntime"
+dynamic = ["version"]
+description = "Anyscale Runtime for faster, cheaper and more resilient AI, powered by Ray"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Anyscale Inc.", email = "support@anyscale.com"}
+]
+dependencies = [
+    "ray>=2.52.0"
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "anyscaleruntime.__version__"}
+
+[project.entry-points."mlflow.tracking_store"]
+"file" = "ray.anyscale.lineage.mlflow_lineage.store.tracking:AnyscaleFileStore"
+"http" = "ray.anyscale.lineage.mlflow_lineage.store.tracking:AnyscaleRestStore"
+"https" = "ray.anyscale.lineage.mlflow_lineage.store.tracking:AnyscaleRestStore"
+
+[project.entry-points."mlflow.artifact_repository"]
+"file" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleLocalArtifactRepository"
+"ftp" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleFTPArtifactRepository"
+"gs" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleGCSArtifactRepository"
+"http" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleHTTPArtifactRepository"
+"https" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleHTTPArtifactRepository"
+"mlflow-artifacts" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleMLflowArtifactsRepository"
+"s3" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleS3ArtifactRepository"
+"wasbs" = "ray.anyscale.lineage.mlflow_lineage.store.artifact:AnyscaleAzureBlobArtifactRepository"
+
+[project.entry-points."mlflow.run_context_provider"]
+"unused" = "ray.anyscale.lineage.mlflow_lineage.run_context_provider:AnyscaleRunContextProvider"
+
+[project.entry-points."mlflow.model_registry_store"]
+"file" = "ray.anyscale.lineage.mlflow_lineage.store.model_registry:AnyscaleFileStore"
+"http" = "ray.anyscale.lineage.mlflow_lineage.store.model_registry:AnyscaleRestStore"
+"https" = "ray.anyscale.lineage.mlflow_lineage.store.model_registry:AnyscaleRestStore"
