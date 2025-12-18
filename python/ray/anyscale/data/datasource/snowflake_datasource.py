@@ -39,7 +39,10 @@ class SnowflakeDatasource(Datasource):
         return None
 
     def get_read_tasks(
-        self, parallelism: int, per_task_row_limit: Optional[int] = None
+        self,
+        parallelism: int,
+        per_task_row_limit: Optional[int] = None,
+        data_context: Optional["DataContext"] = None,
     ) -> List[ReadTask]:
         cached = self._cached_tasks.get(parallelism)
         if cached is not None:

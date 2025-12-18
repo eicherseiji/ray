@@ -79,7 +79,11 @@ def plan_list_files_op(
     if shuffle_config is not None:
         transform_fns.append(
             BlockMapTransformFn(
-                partial(shuffle_files, shuffle_config=shuffle_config),
+                partial(
+                    shuffle_files,
+                    shuffle_config=shuffle_config,
+                    execution_idx=data_context._execution_idx,
+                ),
                 # NOTE: Disable block-shaping to produce blocks as is
                 disable_block_shaping=True,
             )
@@ -197,6 +201,7 @@ def shuffle_files(
     blocks: Iterable[Block],
     _: TaskContext,
     shuffle_config: FileShuffleConfig,
+    execution_idx: int,
 ) -> Iterable[Block]:
     builder = DelegatingBlockBuilder()
 
@@ -206,7 +211,7 @@ def shuffle_files(
 
     combined_block = builder.build()
     shuffled_block = BlockAccessor.for_block(combined_block).random_shuffle(
-        shuffle_config.seed
+        shuffle_config.get_seed(execution_idx)
     )
     yield shuffled_block
 
