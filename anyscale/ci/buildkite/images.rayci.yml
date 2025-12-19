@@ -19,7 +19,7 @@ steps:
       - bash anyscale/ci/upload-wheels.sh
     instance_type: medium
     depends_on:
-      - manylinux
+      - manylinux-x86_64
       - forge
     job_env: forge
     tags: docker
