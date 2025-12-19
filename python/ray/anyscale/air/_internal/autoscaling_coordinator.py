@@ -181,21 +181,15 @@ class OngoingRequest:
 
 
 def handle_timeout_errors(
-    failure_counter_attr: str,
     operation_name: str,
-    requester_id_param: str = "requester_id",
     error_msg_suffix: Optional[str] = None,
     on_error_return: Optional[Callable] = None,
 ):
     """Decorator to handle GetTimeoutError with consecutive failure tracking.
 
     Args:
-        failure_counter_attr: Name of the instance attribute that tracks
-            consecutive failures.
         operation_name: Name of the operation for error messages (e.g.,
             "send resource request", "cancel resource request").
-        requester_id_param: Name of the parameter that contains the
-            requester_id.
         error_msg_suffix: Optional suffix to append to the error message.
             If None, uses a default message.
         on_error_return: Optional callable that takes (self, requester_id)
@@ -205,24 +199,20 @@ def handle_timeout_errors(
     Returns:
         A decorator that wraps methods to handle timeout errors.
     """
+    # Generate attribute name from operation_name:
+    # "send resource request" -> "_op_send_resource_request_failed_count"
+    attr_suffix = operation_name.replace(" ", "_")
+    failure_counter_attr = f"_op_{attr_suffix}_failed_count"
 
     def decorator(func):
         @functools.wraps(func)
         def wrapper(self, *args, **kwargs):
-            # Extract requester_id from args or kwargs
-            requester_id = kwargs.get(requester_id_param)
-            if requester_id is None:
-                # Try to get from args by checking function signature
-                import inspect
+            # Extract requester_id from kwargs or first positional arg
+            requester_id = kwargs.get("requester_id")
+            if requester_id is None and args:
+                requester_id = args[0]
 
-                sig = inspect.signature(func)
-                param_names = list(sig.parameters.keys())
-                if requester_id_param in param_names:
-                    param_index = param_names.index(requester_id_param) - 1
-                    if param_index < len(args):
-                        requester_id = args[param_index]
-
-            failure_counter = getattr(self, failure_counter_attr)
+            failure_counter = getattr(self, failure_counter_attr, 0)
 
             try:
                 result = func(self, *args, **kwargs)
@@ -283,9 +273,6 @@ class DefaultAutoscalingCoordinator(AutoscalingCoordinator):
 
     def __init__(self):
         self._cached_allocated_resources: Dict[str, List[ResourceDict]] = {}
-        self._consecutive_failures_request_resources: int = 0
-        self._consecutive_failures_cancel_request: int = 0
-        self._consecutive_failures_get_allocated_resources: int = 0
 
     @functools.cached_property
     def _autoscaling_coordinator(self):
@@ -293,7 +280,6 @@ class DefaultAutoscalingCoordinator(AutoscalingCoordinator):
         return get_or_create_autoscaling_coordinator()
 
     @handle_timeout_errors(
-        failure_counter_attr="_consecutive_failures_request_resources",
         operation_name="send resource request",
         error_msg_suffix=(
             "If this only happens transiently during network partition"
@@ -321,7 +307,6 @@ class DefaultAutoscalingCoordinator(AutoscalingCoordinator):
         )
 
     @handle_timeout_errors(
-        failure_counter_attr="_consecutive_failures_cancel_request",
         operation_name="cancel resource request",
         error_msg_suffix=(
             "If this only happens transiently during network partition"
@@ -338,7 +323,6 @@ class DefaultAutoscalingCoordinator(AutoscalingCoordinator):
         )
 
     @handle_timeout_errors(
-        failure_counter_attr="_consecutive_failures_get_allocated_resources",
         operation_name="get allocated resources",
         error_msg_suffix=(
             "Returning cached value."

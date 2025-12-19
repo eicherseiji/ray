@@ -352,7 +352,8 @@ def test_get_allocated_resources_handles_timeout_error(
         for attempt in range(1, max_failures):
             result = call_method()
             assert result == cached_value
-            assert coordinator._consecutive_failures_get_allocated_resources == attempt
+            failed_count = coordinator._op_get_allocated_resources_failed_count
+            assert failed_count == attempt
 
     # Exception raised after max consecutive failures
     expected_error_msg = (
@@ -367,7 +368,7 @@ def test_get_allocated_resources_handles_timeout_error(
     with patch("ray.get", return_value=new_value):
         result = call_method()
         assert result == new_value
-        assert coordinator._consecutive_failures_get_allocated_resources == 0
+        assert coordinator._op_get_allocated_resources_failed_count == 0
 
 
 def test_cancel_request_handles_timeout_error(teardown_autoscaling_coordinator):
@@ -377,7 +378,7 @@ def test_cancel_request_handles_timeout_error(teardown_autoscaling_coordinator):
     _test_consecutive_failures(
         coordinator=coordinator,
         call_method=lambda: coordinator.cancel_request("test"),
-        counter_attr="_consecutive_failures_cancel_request",
+        counter_attr="_op_cancel_resource_request_failed_count",
         error_msg_prefix="Failed to cancel resource request for test",
     )
 
@@ -391,7 +392,7 @@ def test_request_resources_handles_timeout_error(teardown_autoscaling_coordinato
         call_method=lambda: coordinator.request_resources(
             "test", [{"CPU": 1}], expire_after_s=1
         ),
-        counter_attr="_consecutive_failures_request_resources",
+        counter_attr="_op_send_resource_request_failed_count",
         error_msg_prefix="Failed to send resource request for test",
     )
 
