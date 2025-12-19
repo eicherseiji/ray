@@ -1,4 +1,5 @@
 from typing import List, Callable, Optional
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pyarrow.compute as pc
@@ -27,6 +28,17 @@ from ray.data.tests.test_execution_optimizer_limit_pushdown import (
 )
 from ray.data.tests.util import column_udf
 from ray.tests.conftest import *  # noqa
+from ray.anyscale.data._internal.logical.rules.configure_map_task_memory import (
+    ConfigureMapTaskMemoryWithProfiling,
+)
+from ray.data._internal.execution.interfaces.op_runtime_metrics import (
+    OpRuntimeMetrics,
+)
+from ray.data._internal.execution.operators.input_data_buffer import (
+    InputDataBuffer,
+)
+from ray.data._internal.execution.operators.map_operator import MapOperator
+from ray.data._internal.logical.interfaces.physical_plan import PhysicalPlan
 
 
 @pytest.fixture
@@ -1287,6 +1299,57 @@ def test_limit_pushdown_allows_single_row_files(
     """
     fixture = request.getfixturevalue(fixture_name)
     _test_single_row_file_limit_pushdown(file_type, read_func, fixture)
+
+
+@pytest.mark.parametrize(
+    "average_max_uss, average_bytes_per_output, total_mem, obj_store_mem, "
+    "expected_memory",
+    [
+        # Uses average_max_uss_per_task when available
+        (100, 50, 1000, 300, 142),  # 100 / 0.7 = 142
+        # Falls back to average_bytes_per_output when USS is None
+        (None, 100, 1000, 300, 142),  # 100 / 0.7 = 142
+        # No scaling when total_memory is 0 (cluster not initialized)
+        (100, 50, 0, 0, 100),
+        # Returns None when no metrics available
+        (None, None, 1000, 300, None),
+        # Handles case where object_store_memory equals total_memory
+        (100, 50, 1000, 1000, 100),  # heap_fraction=0, returns unscaled
+    ],
+)
+def test_configure_map_task_memory_with_profiling(
+    average_max_uss,
+    average_bytes_per_output,
+    total_mem,
+    obj_store_mem,
+    expected_memory,
+):
+    """Test estimate_per_task_memory_requirement with profiling."""
+    cluster_resources = {
+        "memory": total_mem,
+        "object_store_memory": obj_store_mem,
+    }
+    input_op = InputDataBuffer(MagicMock(), [])
+    data_context = DataContext()
+    map_op = MapOperator.create(
+        MagicMock(),
+        input_op=input_op,
+        data_context=data_context,
+    )
+    map_op._metrics = MagicMock(
+        spec=OpRuntimeMetrics,
+        average_max_uss_per_task=average_max_uss,
+        average_bytes_per_output=average_bytes_per_output,
+    )
+    plan = PhysicalPlan(map_op, op_map=MagicMock(), context=data_context)
+    rule = ConfigureMapTaskMemoryWithProfiling(
+        get_cluster_resources=lambda: cluster_resources
+    )
+
+    new_plan = rule.apply(plan)
+
+    remote_args = new_plan.dag._get_dynamic_ray_remote_args()
+    assert remote_args.get("memory") == expected_memory
 
 
 if __name__ == "__main__":
