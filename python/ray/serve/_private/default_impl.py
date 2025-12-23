@@ -33,6 +33,7 @@ from ray.serve._private.deployment_scheduler import (
     DefaultDeploymentScheduler,
     DeploymentScheduler,
 )
+from ray.serve._private.event_loop_monitoring import EventLoopMonitor
 from ray.serve._private.grpc_util import gRPCGenericServer
 from ray.serve._private.handle_options import DynamicHandleOptions, InitHandleOptions
 from ray.serve._private.router import CurrentLoopRouter, Router, SingletonThreadRouter
@@ -394,9 +395,16 @@ def create_router(  # noqa: F811
 
     if handle_options._run_router_in_separate_loop:
         router_wrapper_cls = SingletonThreadRouter
-        SingletonThreadRouter._get_singleton_asyncio_loop().set_exception_handler(
-            asyncio_grpc_exception_handler
-        )
+        # Determine the component for the event loop monitor
+        if handle_options._source == DeploymentHandleSource.REPLICA:
+            component = EventLoopMonitor.COMPONENT_REPLICA
+        elif handle_options._source == DeploymentHandleSource.PROXY:
+            component = EventLoopMonitor.COMPONENT_PROXY
+        else:
+            component = EventLoopMonitor.COMPONENT_UNKNOWN
+        SingletonThreadRouter._get_singleton_asyncio_loop(
+            component
+        ).set_exception_handler(asyncio_grpc_exception_handler)
     else:
         try:
             asyncio.get_running_loop()
