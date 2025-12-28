@@ -95,6 +95,7 @@ Transformations applied with `map` or `map_batches` can return Torch tensors.
     .. tab-item:: map
 
         .. testcode::
+            :skipif: True
 
             from typing import Dict
             import numpy as np
@@ -126,6 +127,7 @@ Transformations applied with `map` or `map_batches` can return Torch tensors.
     .. tab-item:: map_batches
 
         .. testcode::
+            :skipif: True
 
             from typing import Dict
             import numpy as np

@@ -4,7 +4,10 @@ import time
 from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple, Union
 
 import ray
-from ray.data._internal.execution.interfaces import NodeIdStr, RefBundle
+from ray.data._internal.execution.interfaces import (
+    NodeIdStr,
+    RefBundle,
+)
 from ray.data._internal.execution.legacy_compat import execute_to_legacy_bundle_iterator
 from ray.data._internal.stats import DatasetStats
 from ray.data.block import Block
@@ -171,6 +174,20 @@ class SplitCoordinator:
                     self._executor, dataset._plan
                 )
                 yield output_iterator
+
+                # HACK: Clear the set of files to restore from after the first epoch
+                # to avoid loading the mid-epoch state on every subsequent epoch.
+                # https://anyscale1.atlassian.net/browse/DATA-1388
+                from ray.data.datasource import PartitionStyle, PathPartitionFilter
+
+                checkpoint_config = self._base_dataset.context.checkpoint_config
+                if checkpoint_config:
+                    checkpoint_config.checkpoint_path_partition_filter = (
+                        PathPartitionFilter.of(
+                            filter_fn=lambda _: False,
+                            style=PartitionStyle.HIVE,
+                        )
+                    )
 
         self._next_epoch = gen_epochs()
         self._output_iterator = None

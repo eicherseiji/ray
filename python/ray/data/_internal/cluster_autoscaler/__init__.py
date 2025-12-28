@@ -11,6 +11,7 @@ from .base_cluster_autoscaler import ClusterAutoscaler
 from .default_autoscaling_coordinator import DefaultAutoscalingCoordinator
 from .default_cluster_autoscaler import DefaultClusterAutoscaler
 from .default_cluster_autoscaler_v2 import DefaultClusterAutoscalerV2
+from ray.data._internal.execution.interfaces import ExecutionOptions
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
@@ -18,27 +19,57 @@ if TYPE_CHECKING:
 
 
 CLUSTER_AUTOSCALER_ENV_KEY = "RAY_DATA_CLUSTER_AUTOSCALER"
-CLUSTER_AUTOSCALER_ENV_DEFAULT_VALUE = "V1"
+CLUSTER_AUTOSCALER_ENV_DEFAULT_VALUE = "RAYTURBO"
 
 
 class ClusterAutoscalerVersion(Enum):
+    RAYTURBO = "RAYTURBO"
+    RAYTURBO_LEGACY = "RAYTURBO_LEGACY"
+    OSS = "OSS"  # Same as V1. Kept for backwards compatibility.
     V2 = "V2"
     V1 = "V1"
 
 
 def create_cluster_autoscaler(
-    topology: "Topology", resource_manager: "ResourceManager", *, execution_id: str
+    topology: "Topology",
+    execution_options: ExecutionOptions,
+    resource_manager: "ResourceManager",
+    *,
+    execution_id: str,
 ) -> ClusterAutoscaler:
     selected_autoscaler = _get_cluster_autoscaler_version()
 
-    if selected_autoscaler == ClusterAutoscalerVersion.V2:
+    if selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO:
+        from ray.anyscale.data._internal.cluster_autoscaler import (
+            RateBasedClusterAutoscaler,
+        )
+
+        return RateBasedClusterAutoscaler.create(
+            topology, execution_options, resource_manager, execution_id=execution_id
+        )
+
+    elif selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO_LEGACY:
+        from ray.anyscale.data._internal.cluster_autoscaler import (
+            LegacyRayTurboClusterAutoscaler,
+        )
+
+        return LegacyRayTurboClusterAutoscaler(
+            topology,
+            resource_manager,
+            execution_id=execution_id,
+        )
+
+    elif selected_autoscaler == ClusterAutoscalerVersion.V2:
         return DefaultClusterAutoscalerV2(
             topology,
             resource_manager,
             execution_id=execution_id,
         )
 
-    elif selected_autoscaler == ClusterAutoscalerVersion.V1:
+    elif (
+        selected_autoscaler == ClusterAutoscalerVersion.V1
+        or selected_autoscaler == ClusterAutoscalerVersion.OSS
+    ):
         return DefaultClusterAutoscaler(
             topology,
             resource_manager,

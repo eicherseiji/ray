@@ -7,6 +7,15 @@ import warnings
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, final
 
+from ray.data.preprocessors.serialization_handlers import (
+    HandlerFormatName,
+    PickleSerializationHandler,
+    SerializationHandlerFactory,
+)
+from ray.data.preprocessors.version_support import (
+    UnknownPreprocessorError,
+    _lookup_class,
+)
 from ray.data.util.data_batch_conversion import BatchFormat
 from ray.util.annotations import DeveloperAPI, PublicAPI
 
@@ -295,11 +304,17 @@ class Preprocessor(abc.ABC):
 
         if transform_type == BatchFormat.PANDAS:
             return ds.map_batches(
-                self._transform_pandas, batch_format=BatchFormat.PANDAS, **kwargs
+                self._transform_pandas,
+                batch_format=BatchFormat.PANDAS,
+                zero_copy_batch=True,
+                **kwargs,
             )
         elif transform_type == BatchFormat.NUMPY:
             return ds.map_batches(
-                self._transform_numpy, batch_format=BatchFormat.NUMPY, **kwargs
+                self._transform_numpy,
+                batch_format=BatchFormat.NUMPY,
+                zero_copy_batch=True,
+                **kwargs,
             )
         else:
             raise ValueError(
@@ -615,10 +630,6 @@ class SerializablePreprocessorBase(Preprocessor, abc.ABC):
         Raises:
             ValueError: If the serialization format is invalid or unsupported
         """
-        from ray.data.preprocessors.serialization_handlers import (
-            HandlerFormatName,
-            SerializationHandlerFactory,
-        )
 
         # Prepare data for CloudPickle format
         data = {
@@ -680,14 +691,6 @@ class SerializablePreprocessorBase(Preprocessor, abc.ABC):
             ValueError: If the serialized data is corrupted or format is unrecognized
             UnknownPreprocessorError: If the preprocessor type is not registered
         """
-        from ray.data.preprocessors.serialization_handlers import (
-            PickleSerializationHandler,
-            SerializationHandlerFactory,
-        )
-        from ray.data.preprocessors.version_support import (
-            UnknownPreprocessorError,
-            _lookup_class,
-        )
 
         try:
             # Use factory to deserialize all formats (auto-detects format)
