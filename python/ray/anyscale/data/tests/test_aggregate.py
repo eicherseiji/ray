@@ -1,37 +1,36 @@
 import itertools
 import sys
-import pytest
-
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
-from ray.data._internal.logical.interfaces import LogicalOperator
-import ray
-
+import pytest
 from pyarrow import compute as pac
-from ray.data._internal.execution.operators.hash_aggregate import (
-    HashAggregateOperator,
-)
-from ray.core.generated import autoscaler_pb2
-from ray.data.context import DataContext
-from ray.data._internal.execution.interfaces import ExecutionResources, PhysicalOperator
+
+import ray
 from ray._private.arrow_utils import get_pyarrow_version
-from ray.air.util.tensor_extensions.arrow import _convert_to_pyarrow_native_array
 from ray.anyscale.data._internal.block import OptimizedTableBlockMixin
 from ray.anyscale.data.aggregate_vectorized import (
     MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS,
 )
-from ray.data.aggregate import (
-    Min,
-    Max,
-    Sum,
-    Mean,
-    Std,
-    Quantile,
-    AbsMax,
-    Unique,
-    Count,
+from ray.core.generated import autoscaler_pb2
+from ray.data._internal.execution.interfaces import ExecutionResources, PhysicalOperator
+from ray.data._internal.execution.operators.hash_aggregate import (
+    HashAggregateOperator,
 )
+from ray.data._internal.logical.interfaces import LogicalOperator
+from ray.data._internal.tensor_extensions.arrow import _convert_to_pyarrow_native_array
+from ray.data.aggregate import (
+    AbsMax,
+    Count,
+    Max,
+    Mean,
+    Min,
+    Quantile,
+    Std,
+    Sum,
+    Unique,
+)
+from ray.data.context import DataContext
 from ray.tests.conftest import *  # noqa  # noqa
 
 
@@ -50,7 +49,6 @@ from ray.tests.conftest import *  # noqa  # noqa
     ],
 )
 @pytest.mark.parametrize("ignore_nulls", [True, False])
-@pytest.mark.skip(reason="This test is blocking RayTurbo CI")
 def test_null_safe_aggregation_protocol(agg_cls, ignore_nulls):
     """This test verifies that all aggregation implementations
     properly implement aggregation protocol
