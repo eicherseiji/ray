@@ -61,7 +61,6 @@ def create_cluster_autoscaler(
 
     elif selected_autoscaler == ClusterAutoscalerVersion.V2:
         return DefaultClusterAutoscalerV2(
-            topology,
             resource_manager,
             execution_id=execution_id,
         )
@@ -72,7 +71,6 @@ def create_cluster_autoscaler(
     ):
         return DefaultClusterAutoscaler(
             topology,
-            resource_manager,
             execution_id=execution_id,
         )
 
