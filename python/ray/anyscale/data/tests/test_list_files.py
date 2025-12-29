@@ -152,6 +152,36 @@ def test_file_indexer_threading_exception_propagation(
         assert nonexistent_path in str(exc_info.value)
 
 
+def test_list_files_operator_throttling_disabled():
+    """Test that the ListFiles operator has throttling disabled."""
+    from unittest.mock import MagicMock
+
+    from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+        ListFiles,
+    )
+    from ray.anyscale.data._internal.planner.plan_list_files_op import (
+        plan_list_files_op,
+    )
+
+    # Create a minimal ListFiles logical operator
+    list_files_op = ListFiles(
+        paths=["/tmp/test"],
+        file_indexer=NonSamplingFileIndexer(ignore_missing_paths=True),
+        file_partitioner=None,
+        filesystem=MagicMock(),
+        file_extensions=None,
+        partition_filter=None,
+        shuffle_config_factory=lambda: None,
+        source_paths=["/tmp/test"],
+    )
+
+    data_context = DataContext.get_current()
+    physical_op = plan_list_files_op(list_files_op, [], data_context)
+
+    # Verify throttling is disabled for ListFiles operator
+    assert physical_op.throttling_disabled() is True
+
+
 if __name__ == "__main__":
     import sys
 

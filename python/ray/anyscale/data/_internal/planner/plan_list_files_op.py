@@ -121,6 +121,8 @@ def plan_list_files_op(
         # Avoid fuse ListFiles with the following ReadFiles.
         supports_fusion=False,
     )
+    # ListFiles is extremely fast and should not be throttled by backpressure.
+    map_operator.throttling_disabled = lambda: True
 
     if (
         load_checkpoint is not None
