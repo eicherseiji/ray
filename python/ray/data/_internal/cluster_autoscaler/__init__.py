@@ -54,7 +54,6 @@ def create_cluster_autoscaler(
         )
 
         return LegacyRayTurboClusterAutoscaler(
-            topology,
             resource_manager,
             execution_id=execution_id,
         )

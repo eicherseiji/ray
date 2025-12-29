@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import ray
-from ray.data.context import AutoscalingConfig
 from ray.anyscale.data._internal.actor_autoscaler.rayturbo_actor_autoscaler import (
     RayTurboActorAutoscaler,
     RayTurboResizingPolicy,
@@ -28,6 +27,7 @@ from ray.data._internal.actor_autoscaler import (
 from ray.data._internal.execution.interfaces import ExecutionResources
 from ray.data._internal.execution.interfaces.physical_operator import PhysicalOperator
 from ray.data._internal.execution.streaming_executor_state import OpState
+from ray.data.context import AutoscalingConfig
 
 
 @pytest.fixture(autouse=True)
@@ -193,7 +193,6 @@ class TestClusterAutoscaling(unittest.TestCase):
     def test_get_node_resource_spec_and_count(self):
         # Test _get_node_resource_spec_and_count
         autoscaler = LegacyRayTurboClusterAutoscaler(
-            topology=MagicMock(),
             resource_manager=MagicMock(),
             execution_id="test_execution_id",
         )
@@ -244,7 +243,6 @@ class TestClusterAutoscaling(unittest.TestCase):
         # Test _try_scale_up_cluster
         scaling_up_factor = 1.5
         autoscaler = LegacyRayTurboClusterAutoscaler(
-            topology=MagicMock(),
             resource_manager=MagicMock(),
             execution_id="test_execution_id",
             cluster_scaling_up_factor=scaling_up_factor,

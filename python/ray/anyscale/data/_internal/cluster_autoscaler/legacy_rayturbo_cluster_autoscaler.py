@@ -18,7 +18,6 @@ from ray.data._internal.execution.interfaces.execution_options import ExecutionR
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
-    from ray.data._internal.execution.streaming_executor_state import Topology
 
 logger = getLogger(__name__)
 
@@ -85,7 +84,6 @@ class LegacyRayTurboClusterAutoscaler(ClusterAutoscaler):
 
     def __init__(
         self,
-        topology: "Topology",
         resource_manager: "ResourceManager",
         execution_id: str,
         cluster_scaling_up_util_threshold: float = DEFAULT_CLUSTER_SCALING_UP_UTIL_THRESHOLD,  # noqa: E501
@@ -93,6 +91,8 @@ class LegacyRayTurboClusterAutoscaler(ClusterAutoscaler):
         cluster_util_avg_window_s: float = DEFAULT_CLUSTER_UTIL_AVG_WINDOW_S,
         cluster_util_check_interval_s: float = DEFAULT_CLUSTER_UTIL_CHECK_INTERVAL_S,
     ):
+        self._resource_manager = resource_manager
+
         # Threshold of cluster utilization to trigger scaling up.
         self._cluster_scaling_up_util_threshold = cluster_scaling_up_util_threshold
         # TODO(hchen): Use proportion-based scaling up factors
@@ -119,7 +119,6 @@ class LegacyRayTurboClusterAutoscaler(ClusterAutoscaler):
         # Send an empty request to register ourselves as soon as possible,
         # so the first `get_total_resources` call can get the allocated resources.
         self._send_resource_request([])
-        super().__init__(topology, resource_manager, execution_id)
 
     def _get_node_resource_spec_and_count(self) -> Dict[_NodeResourceSpec, int]:
         """Get the unique node resource specs and their count in the cluster.
