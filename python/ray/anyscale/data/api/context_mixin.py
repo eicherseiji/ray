@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional, Dict, Union
 
-from ray.anyscale.data.checkpoint.interfaces import CheckpointBackend, CheckpointConfig
+from ray.data.checkpoint import CheckpointBackend, CheckpointConfig
 from ray.data.context import (
     DEFAULT_TARGET_MAX_BLOCK_SIZE,
     DEFAULT_TARGET_MIN_BLOCK_SIZE,

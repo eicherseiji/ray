@@ -18,7 +18,7 @@ import ray
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
-from ray.anyscale.data.checkpoint.checkpoint_filter import (
+from ray.data.checkpoint.checkpoint_filter import (
     BatchBasedCheckpointFilter,
 )
 from ray.anyscale.data.checkpoint.util import (

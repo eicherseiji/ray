@@ -191,6 +191,18 @@ def _register_anyscale_lineage_tracking_callback():
             pass
 
 
+def _patch_anyscale_checkpoint():
+    """Patch OSS CheckpointConfig to add generated_id_column attribute.
+
+    This allows Anyscale code to directly access config.generated_id_column
+    without needing getattr().
+    """
+    from ray.data.checkpoint.interfaces import CheckpointConfig
+
+    if not hasattr(CheckpointConfig, "generated_id_column"):
+        CheckpointConfig.generated_id_column = None
+
+
 def apply_anyscale_patches():
     """Apply Anyscale-specific patches for Ray Data.
 
@@ -224,6 +236,9 @@ def apply_anyscale_patches():
 
     # Register Anyscale lineage tracking callback
     _register_anyscale_lineage_tracking_callback()
+
+    # Patch Anyscale checkpoing
+    _patch_anyscale_checkpoint()
 
     from .api.context_mixin import DataContextMixin
     from .api.dataset_mixin import DatasetMixin

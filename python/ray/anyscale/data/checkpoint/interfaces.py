@@ -1,48 +1,34 @@
 from dataclasses import dataclass
-import os
-import warnings
-from enum import Enum
-from typing import Optional, Tuple
+from typing import Optional
 
 import pyarrow
 
 from ray.data.datasource import PathPartitionFilter
 from ray.util.annotations import PublicAPI
 
+# Import shared classes from OSS
+from ray.data.checkpoint.interfaces import (
+    CheckpointBackend,
+    CheckpointConfig as OSSCheckpointConfig,
+    InvalidCheckpointingConfig,
+    InvalidCheckpointingOperators,
+)
 
-class CheckpointBackend(Enum):
-    """Supported backends for storing and reading checkpoint files.
-
-    Currently, only one type of backend is supported:
-        * Batch-based backends: CLOUD_OBJECT_STORAGE and FILE_STORAGE.
-
-    Their differences are as follows:
-    1. Writing checkpoints:
-       * Batch-based backends write a checkpoint file for each block.
-    2. Loading checkpoints and filtering input data:
-       * Batch-based backends load all checkpoint data into memory prior to
-         dataset execution. The checkpoint data is then passed to each
-         read task to perform filtering.
-
-    """
-
-    CLOUD_OBJECT_STORAGE = "CLOUD_OBJECT_STORAGE"
-    """
-    Batch-based checkpoint backend that uses cloud object storage, such as
-    AWS S3, Google Cloud Storage, etc.
-    """
-
-    FILE_STORAGE = "FILE_STORAGE"
-    """
-    Batch based checkpoint backend that uses file system storage.
-    Note, when using this backend, the checkpoint path must be a network-mounted
-    file system (e.g. `/mnt/cluster_storage/`).
-    """
+# Re-export for backwards compatibility
+__all__ = [
+    "CheckpointBackend",
+    "CheckpointConfig",
+    "TrainingIngestCheckpointConfig",
+    "InvalidCheckpointingConfig",
+    "InvalidCheckpointingOperators",
+]
 
 
 @PublicAPI(stability="beta")
-class CheckpointConfig:
-    """Configuration for checkpointing.
+class CheckpointConfig(OSSCheckpointConfig):
+    """Configuration for checkpointing with generated ID column support.
+
+    Extends OSS CheckpointConfig with the ability to auto-generate row IDs.
 
     Args:
         id_column: Name of the ID column in the input dataset.
@@ -72,9 +58,6 @@ class CheckpointConfig:
             restoration when reading from `checkpoint_path`.
     """
 
-    DEFAULT_CHECKPOINT_PATH_BUCKET_ENV_VAR = "ANYSCALE_ARTIFACT_STORAGE"
-    DEFAULT_CHECKPOINT_PATH_DIR = "ray_data_checkpoint"
-
     def __init__(
         self,
         id_column: Optional[str] = None,
@@ -88,7 +71,6 @@ class CheckpointConfig:
         write_num_threads: int = 3,
         checkpoint_path_partition_filter: Optional[PathPartitionFilter] = None,
     ):
-        self.id_column: Optional[str] = id_column
         self.generated_id_column: Optional[str] = generated_id_column
 
         # Validate that we don't have both `id_column` and `generated_id_column`
@@ -102,86 +84,28 @@ class CheckpointConfig:
             )
 
         # If no `id_column` is provided, use the generated row ID column
-        elif self.id_column is None and generated_id_column is None:
+        elif id_column is None and generated_id_column is None:
             raise InvalidCheckpointingConfig(
                 "Either `id_column` or `generated_id_column` must be provided. "
                 "Use `id_column` when you have an existing ID column in your dataset, "
                 "or use `generated_id_column` when you want to generate row IDs "
                 "automatically."
             )
-        elif self.id_column is None:
-            self.id_column = generated_id_column
+        elif id_column is None:
+            # Use generated_id_column as the id_column
+            id_column = generated_id_column
 
-        if not isinstance(self.id_column, str) or len(self.id_column) == 0:
-            raise InvalidCheckpointingConfig(
-                "Checkpoint ID column must be a non-empty string, "
-                f"but got {self.id_column}"
-            )
-
-        if override_backend is not None:
-            warnings.warn(
-                "`override_backend` is deprecated and will be removed in August 2025.",
-                FutureWarning,
-                stacklevel=2,
-            )
-
-        self.checkpoint_path: str = (
-            checkpoint_path or self._get_default_checkpoint_path()
+        # Call parent __init__ with the resolved id_column
+        super().__init__(
+            id_column=id_column,
+            checkpoint_path=checkpoint_path,
+            delete_checkpoint_on_success=delete_checkpoint_on_success,
+            override_filesystem=override_filesystem,
+            override_backend=override_backend,
+            filter_num_threads=filter_num_threads,
+            write_num_threads=write_num_threads,
+            checkpoint_path_partition_filter=checkpoint_path_partition_filter,
         )
-        inferred_backend, inferred_fs = self._infer_backend_and_fs(
-            self.checkpoint_path,
-            override_filesystem,
-            override_backend,
-        )
-        self.filesystem: "pyarrow.fs.FileSystem" = inferred_fs
-        self.backend: CheckpointBackend = inferred_backend
-        self.delete_checkpoint_on_success: bool = delete_checkpoint_on_success
-        self.filter_num_threads: int = filter_num_threads
-        self.write_num_threads: int = write_num_threads
-        self.checkpoint_path_partition_filter = checkpoint_path_partition_filter
-
-    def _get_default_checkpoint_path(self) -> str:
-        artifact_storage = os.environ.get(self.DEFAULT_CHECKPOINT_PATH_BUCKET_ENV_VAR)
-        if artifact_storage is None:
-            raise InvalidCheckpointingConfig(
-                f"`{self.DEFAULT_CHECKPOINT_PATH_BUCKET_ENV_VAR}` env var is not set, "
-                "please explictly set `CheckpointConfig.checkpoint_path`."
-            )
-        return f"{artifact_storage}/{self.DEFAULT_CHECKPOINT_PATH_DIR}"
-
-    def _infer_backend_and_fs(
-        self,
-        checkpoint_path: str,
-        override_filesystem: Optional["pyarrow.fs.FileSystem"] = None,
-        override_backend: Optional[CheckpointBackend] = None,
-    ) -> Tuple[CheckpointBackend, "pyarrow.fs.FileSystem"]:
-        try:
-            if override_filesystem is not None:
-                assert isinstance(override_filesystem, pyarrow.fs.FileSystem), (
-                    "override_filesystem must be an instance of "
-                    f"`pyarrow.fs.FileSystem`, but got {type(override_filesystem)}"
-                )
-                fs = override_filesystem
-            else:
-                fs, _ = pyarrow.fs.FileSystem.from_uri(checkpoint_path)
-
-            if override_backend is not None:
-                assert isinstance(override_backend, CheckpointBackend), (
-                    "override_backend must be an instance of `CheckpointBackend`, "
-                    f"but got {type(override_backend)}"
-                )
-                backend = override_backend
-            else:
-                if isinstance(fs, pyarrow.fs.LocalFileSystem):
-                    backend = CheckpointBackend.FILE_STORAGE
-                else:
-                    backend = CheckpointBackend.CLOUD_OBJECT_STORAGE
-
-            return backend, fs
-        except Exception as e:
-            raise InvalidCheckpointingConfig(
-                f"Invalid checkpoint path: {checkpoint_path}. "
-            ) from e
 
 
 # TODO: We can pull out a common CheckpointConfig base class.
@@ -229,17 +153,3 @@ class TrainingIngestCheckpointConfig:
                 "Checkpoint ID column must be a non-empty string, "
                 f"but got {self.id_column}"
             )
-
-
-class InvalidCheckpointingConfig(Exception):
-    """Exception which indicates that the checkpointing
-    configuration is invalid."""
-
-    pass
-
-
-class InvalidCheckpointingOperators(Exception):
-    """Exception which indicates that the DAG is not eligible for checkpointing,
-    due to one or more incompatible operators."""
-
-    pass

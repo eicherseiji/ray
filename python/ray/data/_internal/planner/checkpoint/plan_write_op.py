@@ -1,11 +1,6 @@
 import itertools
 from typing import Iterable, List
 
-from ray.anyscale.data.checkpoint.checkpoint_writer import CheckpointWriter
-from ray.anyscale.data.checkpoint.interfaces import (
-    InvalidCheckpointingOperators,
-)
-from ray.data.context import DataContext
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data._internal.execution.operators.map_transformer import (
@@ -13,10 +8,15 @@ from ray.data._internal.execution.operators.map_transformer import (
 )
 from ray.data._internal.logical.operators.write_operator import Write
 from ray.data._internal.planner.plan_write_op import (
-    generate_collect_write_stats_fn,
     _plan_write_op_internal,
+    generate_collect_write_stats_fn,
 )
 from ray.data.block import Block, BlockAccessor
+from ray.data.checkpoint.checkpoint_writer import CheckpointWriter
+from ray.data.checkpoint.interfaces import (
+    InvalidCheckpointingOperators,
+)
+from ray.data.context import DataContext
 from ray.data.datasource.datasink import Datasink
 
 

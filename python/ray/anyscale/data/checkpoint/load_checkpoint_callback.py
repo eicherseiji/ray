@@ -1,53 +1,18 @@
-import logging
-from typing import Optional
-
-from ray.anyscale.data.checkpoint import CheckpointConfig
 from ray.anyscale.data.checkpoint.checkpoint_filter import BatchBasedCheckpointFilter
-from ray.data._internal.execution.execution_callback import (
-    ExecutionCallback,
-    remove_execution_callback,
+from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
+from ray.data.checkpoint.load_checkpoint_callback import (
+    LoadCheckpointCallback as OSSLoadCheckpointCallback,
 )
-from ray.data._internal.execution.streaming_executor import StreamingExecutor
-from ray.data.block import Block
-from ray.types import ObjectRef
-
-logger = logging.getLogger(__name__)
 
 
-class LoadCheckpointCallback(ExecutionCallback):
-    """ExecutionCallback that handles checkpoints."""
+class LoadCheckpointCallback(OSSLoadCheckpointCallback):
+    """Anyscale LoadCheckpointCallback with generated_id_column support."""
 
-    def __init__(self, config: CheckpointConfig):
-        assert config is not None
-        self._config = config
+    def _create_checkpoint_filter(
+        self, config: CheckpointConfig
+    ) -> BatchBasedCheckpointFilter:
+        """Override to use Anyscale BatchBasedCheckpointFilter.
 
-        self._ckpt_filter = BatchBasedCheckpointFilter(config)
-        self._checkpoint_ref: Optional[ObjectRef[Block]] = None
-
-    def before_execution_starts(self, executor: StreamingExecutor):
-        assert self._config is executor._data_context.checkpoint_config
-
-        # Load checkpoint data before execution starts.
-        self._checkpoint_ref = self._ckpt_filter.load_checkpoint()
-
-    def after_execution_succeeds(self, executor: StreamingExecutor):
-        assert self._config is executor._data_context.checkpoint_config
-
-        # Remove the callback from the DataContext.
-        remove_execution_callback(self, executor._data_context)
-        # Delete checkpoint data.
-        try:
-            if self._config.delete_checkpoint_on_success:
-                self._ckpt_filter.delete_checkpoint()
-        except Exception:
-            logger.warning("Failed to delete checkpoint data.", exc_info=True)
-
-    def after_execution_fails(self, executor: StreamingExecutor, error: Exception):
-        assert self._config is executor._data_context.checkpoint_config
-
-        # Remove the callback from the DataContext.
-        remove_execution_callback(self, executor._data_context)
-
-    def load_checkpoint(self) -> ObjectRef[Block]:
-        assert self._checkpoint_ref is not None
-        return self._checkpoint_ref
+        The Anyscale version supports generated_id_column.
+        """
+        return BatchBasedCheckpointFilter(config)
