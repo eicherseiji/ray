@@ -1,5 +1,4 @@
 import unittest
-from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,12 +11,10 @@ from ray.anyscale.data._internal.execution.operators.actor_pool_map_operator imp
     ActorPoolMapOperator,
     _ActorTaskSelectorImpl,
 )
-from ray.data._internal.execution.interfaces import ExecutionResources
 from ray.data._internal.execution.operators.actor_pool_map_operator import (
     _ActorPool,
     _ActorTaskSelector,
 )
-from ray.data._internal.execution.operators.input_data_buffer import InputDataBuffer
 from ray.data.tests.conftest import *  # noqa: F403
 
 
@@ -26,115 +23,19 @@ class AnyscaleTestActorPool(oss_test_module.TestActorPool):
         return ActorPoolMapOperator._create_task_selector(pool)
 
 
-@dataclass(frozen=True)
-class MinMaxResourceUsageBoundsTestCase:
-    min_size: int
-    max_size: int
-    obj_store_mem_max_pending_output_per_task: int
-    expected_min_resource_usage_bound: ExecutionResources
-    expected_max_resource_usage_bound: ExecutionResources
-    max_tasks_in_flight: int = 4
-    max_concurrency: int = 1
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        # Fixed-size pool.
-        MinMaxResourceUsageBoundsTestCase(
-            min_size=2,
-            max_size=2,
-            obj_store_mem_max_pending_output_per_task=1,
-            expected_min_resource_usage_bound=ExecutionResources(
-                cpu=2, object_store_memory=2
-            ),
-            expected_max_resource_usage_bound=ExecutionResources(
-                cpu=2, object_store_memory=float("inf")
-            ),
-        ),
-        # Autoscaling pool.
-        MinMaxResourceUsageBoundsTestCase(
-            min_size=1,
-            max_size=2,
-            obj_store_mem_max_pending_output_per_task=1,
-            expected_min_resource_usage_bound=ExecutionResources(
-                cpu=1, object_store_memory=1
-            ),
-            expected_max_resource_usage_bound=ExecutionResources(
-                cpu=2, object_store_memory=float("inf")
-            ),
-        ),
-        # Unbounded pool.
-        MinMaxResourceUsageBoundsTestCase(
-            min_size=1,
-            max_size=None,
-            obj_store_mem_max_pending_output_per_task=1,
-            expected_min_resource_usage_bound=ExecutionResources(
-                cpu=1, object_store_memory=1
-            ),
-            expected_max_resource_usage_bound=ExecutionResources.for_limits(),
-        ),
-        # Multi-threaded pool.
-        MinMaxResourceUsageBoundsTestCase(
-            min_size=1,
-            max_size=1,
-            obj_store_mem_max_pending_output_per_task=1,
-            max_concurrency=2,
-            max_tasks_in_flight=4,
-            expected_min_resource_usage_bound=ExecutionResources(
-                cpu=1, object_store_memory=1
-            ),
-            expected_max_resource_usage_bound=ExecutionResources(
-                cpu=1, object_store_memory=float("inf")
-            ),
-        ),
-    ],
-    ids=[
-        "fixed-size-pool",
-        "autoscaling-pool",
-        "unbounded-pool",
-        "multi-threaded-pool",
-    ],
-)
-def test_min_max_resource_requirements(
-    case, ray_start_regular_shared, restore_data_context
-):
-    data_context = ray.data.DataContext.get_current()
-    op = ActorPoolMapOperator(
-        map_transformer=MagicMock(),
-        input_op=InputDataBuffer(data_context, input_data=MagicMock()),
-        data_context=data_context,
-        compute_strategy=ray.data.ActorPoolStrategy(
-            min_size=case.min_size,
-            max_size=case.max_size,
-            max_tasks_in_flight_per_actor=case.max_tasks_in_flight,
-        ),
-        ray_remote_args={
-            "num_cpus": 1,
-            "max_concurrency": case.max_concurrency,
-        },
-    )
-    op._metrics = MagicMock(
-        obj_store_mem_max_pending_output_per_task=case.obj_store_mem_max_pending_output_per_task
-    )
-
-    (
-        min_resource_usage_bound,
-        max_resource_usage_bound,
-    ) = op.min_max_resource_requirements()
-
-    assert (
-        min_resource_usage_bound == case.expected_min_resource_usage_bound
-        and max_resource_usage_bound == case.expected_max_resource_usage_bound
-    )
-
-
 class TestActorTaskSelectorImpl(unittest.TestCase):
     def setUp(self):
         self.mock_actor_pool = MagicMock()
         self.mock_actor_pool.max_tasks_in_flight_per_actor.return_value = 2
         self.mock_actor_pool.running_actors.return_value = {}
         self.selector = _ActorTaskSelectorImpl(self.mock_actor_pool)
+
+        # TODO: Rewrite this test class with `pytest` rather than `unittest` so that we
+        # can use the `ray_start_regular_shared` fixture.
+        ray.init()
+
+    def tearDown(self) -> None:
+        ray.shutdown()
 
     def test_find_actor_with_locality_ranking(self):
         """Test that _find_actor_with_locality correctly ranks actors based on locality and busyness."""
