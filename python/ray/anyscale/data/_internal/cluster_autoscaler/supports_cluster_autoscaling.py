@@ -1,4 +1,5 @@
 from typing import List, Optional, Protocol, Tuple, runtime_checkable
+
 from ray.data._internal.execution.interfaces import ExecutionResources, PhysicalOperator
 
 
@@ -54,7 +55,7 @@ class SupportsClusterAutoscaling(Protocol):
         """
         ...
 
-    def completed(self: "PhysicalOperator") -> bool:
+    def has_completed(self: "PhysicalOperator") -> bool:
         """Whether the operator has completed."""
         ...
 

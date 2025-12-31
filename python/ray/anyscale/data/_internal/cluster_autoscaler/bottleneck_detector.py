@@ -1,14 +1,14 @@
 import abc
 import math
-from typing import TYPE_CHECKING, List, Optional, Dict
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import numpy as np
 from numpy.typing import NDArray
-from ray.util.metrics import Gauge
 
 from .supports_cluster_autoscaling import SupportsClusterAutoscaling
 from ray.data._internal.execution.interfaces import ExecutionResources
 from ray.data._internal.execution.resource_manager import ResourceManager
+from ray.util.metrics import Gauge
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
@@ -104,7 +104,7 @@ class NormalizedThroughputBottleneckDetector(BottleneckDetector):
     def _compute_max_normalized_output_rate(
         self, op: SupportsClusterAutoscaling, allocation: Optional[ExecutionResources]
     ):
-        if op.completed():
+        if op.has_completed():
             return None
 
         if op.metrics.num_output_blocks_per_task_s is None or allocation is None:
