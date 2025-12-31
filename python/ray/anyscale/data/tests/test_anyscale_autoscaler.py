@@ -405,7 +405,7 @@ class TestActorPoolAutoscaling:
         op = MagicMock(
             spec=PhysicalOperator,
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
-            completed=MagicMock(return_value=False),
+            has_completed=MagicMock(return_value=False),
             _inputs_complete=False,
             internal_input_queue_num_blocks=MagicMock(return_value=1),
             metrics=op_metrics,
@@ -523,7 +523,7 @@ class TestActorPoolAutoscaling:
         op = MagicMock(
             spec=PhysicalOperator,
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
-            completed=MagicMock(return_value=False),
+            has_completed=MagicMock(return_value=False),
             _inputs_complete=False,
             internal_input_queue_num_blocks=MagicMock(return_value=1),
             metrics=op_metrics,
@@ -649,7 +649,7 @@ class TestActorPoolAutoscaling:
         op = MagicMock(
             spec=PhysicalOperator,
             get_autoscaling_actor_pools=MagicMock(return_value=[actor_pool]),
-            completed=MagicMock(return_value=False),
+            has_completed=MagicMock(return_value=False),
             _inputs_complete=False,
             internal_input_queue_num_blocks=MagicMock(return_value=1),
             metrics=op_metrics,
