@@ -1470,6 +1470,20 @@ py_test(
 )
 
 py_test(
+    name = "test_throughput_based_resource_allocator",
+    size = "medium",
+    srcs = ["tests/test_throughput_based_resource_allocator.py"],
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
     name = "test_streaming_executor_errored_blocks",
     size = "medium",
     srcs = ["tests/test_streaming_executor_errored_blocks.py"],

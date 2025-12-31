@@ -723,6 +723,7 @@ def _debug_dump_topology(topology: Topology, resource_manager: ResourceManager) 
         resource_manager: The resource manager for this topology.
     """
     logger.debug("Execution Progress:")
+
     for i, (op, state) in enumerate(topology.items()):
         logger.debug(
             f"{i}: {state.summary_str(resource_manager, verbose=True)}, "

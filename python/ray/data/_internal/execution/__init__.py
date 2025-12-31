@@ -10,12 +10,13 @@ if TYPE_CHECKING:
 
 
 DEFAULT_USE_OP_RESOURCE_ALLOCATOR_VERSION = os.environ.get(
-    "RAY_DATA_USE_OP_RESOURCE_ALLOCATOR_VERSION", "V1"
+    "RAY_DATA_USE_OP_RESOURCE_ALLOCATOR_VERSION", "V2"
 )
 
 
 class OpResourceAllocatorVersion(str, enum.Enum):
     V1 = "V1"  # ReservationOpResourceAllocator
+    V2 = "V2"  # ThroughputBasedResourceAllocator
 
 
 def create_resource_allocator(
@@ -29,7 +30,14 @@ def create_resource_allocator(
         # will be soon deprecated and removed.
         return None
 
-    if DEFAULT_USE_OP_RESOURCE_ALLOCATOR_VERSION == OpResourceAllocatorVersion.V1:
+    if DEFAULT_USE_OP_RESOURCE_ALLOCATOR_VERSION == OpResourceAllocatorVersion.V2:
+        from .throughput_based_resource_allocator import (
+            ThroughputBasedResourceAllocator,
+        )
+
+        return ThroughputBasedResourceAllocator(resource_manager)
+
+    elif DEFAULT_USE_OP_RESOURCE_ALLOCATOR_VERSION == OpResourceAllocatorVersion.V1:
         from .resource_manager import ReservationOpResourceAllocator
 
         return ReservationOpResourceAllocator(
@@ -39,8 +47,7 @@ def create_resource_allocator(
 
     else:
         raise ValueError(
-            "Resource allocator version of "
-            f"'{DEFAULT_USE_OP_RESOURCE_ALLOCATOR_VERSION}' is not supported"
+            f"Resource allocator version of '{DEFAULT_USE_OP_RESOURCE_ALLOCATOR_VERSION}' is not supported"
         )
 
 
