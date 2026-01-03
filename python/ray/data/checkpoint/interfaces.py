@@ -5,26 +5,27 @@ from typing import TYPE_CHECKING, Optional, Tuple
 
 import pyarrow
 
-from ray.util.annotations import PublicAPI
+from ray.util.annotations import DeveloperAPI, PublicAPI
 
 if TYPE_CHECKING:
     from ray.data.datasource import PathPartitionFilter
 
 
+@PublicAPI(stability="alpha")
 class CheckpointBackend(Enum):
     """Supported backends for storing and reading checkpoint files.
 
     Currently, only one type of backend is supported:
-        * Batch-based backends: CLOUD_OBJECT_STORAGE and FILE_STORAGE.
+
+    * Batch-based backends: CLOUD_OBJECT_STORAGE and FILE_STORAGE.
 
     Their differences are as follows:
-    1. Writing checkpoints:
-       * Batch-based backends write a checkpoint file for each block.
-    2. Loading checkpoints and filtering input data:
-       * Batch-based backends load all checkpoint data into memory prior to
-         dataset execution. The checkpoint data is then passed to each
-         read task to perform filtering.
 
+    1. Writing checkpoints: Batch-based backends write a checkpoint file
+       for each block.
+    2. Loading checkpoints and filtering input data: Batch-based backends
+       load all checkpoint data into memory prior to dataset execution.
+       The checkpoint data is then passed to each read task to perform filtering.
     """
 
     CLOUD_OBJECT_STORAGE = "CLOUD_OBJECT_STORAGE"
@@ -157,6 +158,7 @@ class CheckpointConfig:
             ) from e
 
 
+@DeveloperAPI
 class InvalidCheckpointingConfig(Exception):
     """Exception which indicates that the checkpointing
     configuration is invalid."""
@@ -164,6 +166,7 @@ class InvalidCheckpointingConfig(Exception):
     pass
 
 
+@DeveloperAPI
 class InvalidCheckpointingOperators(Exception):
     """Exception which indicates that the DAG is not eligible for checkpointing,
     due to one or more incompatible operators."""
