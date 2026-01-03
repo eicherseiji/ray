@@ -16,3 +16,8 @@ __all__ = [
 
 
 # DO NOT ADD ANYTHING AFTER THIS LINE.
+
+# Append Anyscale proprietary APIs and apply patches
+from ray.anyscale.train._internal.callbacks.datasets import (  # noqa: E501, F811, isort: skip
+    DatasetsCallback,
+)

@@ -732,6 +732,7 @@
 
   variations:
     - __suffix__: gce
+      frequency: manual
     - __suffix__: aws
       env: aws
       cluster:

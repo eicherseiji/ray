@@ -212,6 +212,7 @@ class StreamingExecutor(Executor, threading.Thread):
         )
         self._cluster_autoscaler = create_cluster_autoscaler(
             self._topology,
+            self._options,
             self._resource_manager,
             execution_id=self._dataset_id,
         )
@@ -727,6 +728,7 @@ def _debug_dump_topology(topology: Topology, resource_manager: ResourceManager) 
         resource_manager: The resource manager for this topology.
     """
     logger.debug("Execution Progress:")
+
     for i, (op, state) in enumerate(topology.items()):
         logger.debug(
             f"{i}: {state.summary_str(resource_manager, verbose=True)}, "
