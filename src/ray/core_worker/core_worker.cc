@@ -442,6 +442,7 @@ CoreWorker::CoreWorker(
           /*timestamp=*/absl::GetCurrentTimeNanos(),
           /*is_actor_task_event=*/false,
           options_.session_name,
+          GetCurrentNodeId(),
           std::make_shared<const TaskSpecification>(std::move(spec)));
       task_event_buffer_->AddTaskEvent(std::move(task_event));
     }
@@ -583,7 +584,8 @@ void CoreWorker::Disconnect(
         rpc::TaskStatus::FINISHED,
         /*timestamp=*/absl::GetCurrentTimeNanos(),
         /*is_actor_task_event=*/worker_context_->GetCurrentActorID().IsNil(),
-        options_.session_name);
+        options_.session_name,
+        GetCurrentNodeId());
     task_event_buffer_->AddTaskEvent(std::move(task_event));
   }
 
