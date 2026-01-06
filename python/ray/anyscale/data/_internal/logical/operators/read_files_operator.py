@@ -97,6 +97,7 @@ class ReadFiles(
             input_op=input_dependency,
             ray_remote_args=ray_remote_args,
             compute=TaskPoolStrategy(concurrency),
+            can_modify_num_rows=not reader.produces_one_row_per_file(),
         )
 
         self.reader = reader
