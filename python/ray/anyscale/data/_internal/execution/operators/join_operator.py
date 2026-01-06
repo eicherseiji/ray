@@ -2,16 +2,14 @@ from ray._private.arrow_utils import get_pyarrow_version
 from ray.data._internal.arrow_ops.transform_pyarrow import (
     MIN_PYARROW_VERSION_RUN_END_ENCODED_TYPES,
 )
-from ray.data._internal.execution.interfaces.physical_operator import PhysicalOperator
 from ray.data._internal.execution.operators.join import (
-    JoinOperator,
     JoiningShuffleAggregation,
 )
 from ray.data._internal.util import _check_import
 
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, List, Optional, Tuple, TYPE_CHECKING, Iterator
 
 from ray.data.context import DataContext
 from ray.data._internal.logical.operators.join_operator import JoinType
@@ -19,6 +17,8 @@ from ray.data.block import Block
 
 if TYPE_CHECKING:
     import pyarrow as pa
+    import polars as pl
+
 
 _JOIN_TYPE_TO_POLARS_JOIN_TYPE_MAP = {
     JoinType.INNER: "inner",
@@ -79,9 +79,9 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
             f"supported: {join_types})"  # noqa: C416
         )
 
-    def finalize(self, partition_id: int) -> Block:
+    def finalize(self, partition_id: int) -> Iterator[Block]:
         assert (
-            self.data_context.use_polars_join
+            self._data_context.use_polars_join
         ), "use_polars_join must be set to True in the DataContext"
 
         _check_import(self, module="pyarrow", package="pyarrow")
@@ -133,15 +133,13 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
                 f"(overlapping columns: {sorted(collisions)})"
             )
 
-        if left_cols_suffix or right_cols_suffix:
-            if left_cols_suffix:
-                left_df = left_df.rename(
-                    {c: f"{c}{left_cols_suffix}" for c in collisions}
-                )
-            if right_cols_suffix:
-                right_df = right_df.rename(
-                    {c: f"{c}{right_cols_suffix}" for c in collisions}
-                )
+        if left_cols_suffix:
+            left_df = left_df.rename({c: f"{c}{left_cols_suffix}" for c in collisions})
+
+        if right_cols_suffix:
+            right_df = right_df.rename(
+                {c: f"{c}{right_cols_suffix}" for c in collisions}
+            )
 
         right_suffix = right_cols_suffix or "_right"
         joined = left_df.join(
@@ -164,13 +162,9 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
                 joined = joined.drop(duplicate_columns)
 
         # Determine execution engine
-        gpu_engine = None
-        if (
-            hasattr(self.data_context, "use_polars_gpu_join")
-            and self.data_context.use_polars_gpu_join
-            and hasattr(self.data_context, "get_polars_gpu_engine")
-        ):
-            gpu_engine = self.data_context.get_polars_gpu_engine()
+        gpu_engine = _get_polars_gpu_engine(self._data_context)
+
+        batches: Optional[Iterator[pl.DataFrame]] = None
 
         # Execute with appropriate engine
         if gpu_engine is not None:
@@ -179,39 +173,30 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
 
                 with pl.Config() as cfg:
                     cfg.set_verbose(True)
-                    supported = joined.collect(engine=gpu_engine).to_arrow()
-            except (NotImplementedError, ImportError) as e:
-                # Handle specific GPU execution failures
-                if (
-                    hasattr(self.data_context, "polars_gpu_raise_on_fail")
-                    and self.data_context.polars_gpu_raise_on_fail
-                ):
-                    raise
-                # Log the specific GPU failure and fall back to CPU
-                logger.debug(f"GPU join not supported, falling back to CPU: {e}")
-                # Fall back to CPU - this is the only place CPU execution happens for GPU case
-                supported = joined.collect().to_arrow()
+                    batches = joined.collect_batches(engine=gpu_engine)
             except Exception as e:
-                # Handle other unexpected failures
-                if (
-                    hasattr(self.data_context, "polars_gpu_raise_on_fail")
-                    and self.data_context.polars_gpu_raise_on_fail
-                ):
+                # Handle specific GPU execution failures
+                if self._data_context.polars_gpu_raise_on_fail:
                     raise
-                logger.debug(f"GPU join failed unexpectedly, falling back to CPU: {e}")
-                supported = joined.collect().to_arrow()
-        else:
-            # Direct CPU execution when GPU is not enabled
-            supported = joined.collect().to_arrow()
+
+                if isinstance(e, (NotImplementedError, ImportError)):
+                    error_message = "not supported"
+                else:
+                    error_message = "failed"
+
+                # Log the specific GPU failure and fall back to CPU
+                logger.debug(f"GPU join {error_message}, falling back to CPU: {e}")
+
+        if batches is None:
+            batches = joined.collect_batches(engine="streaming")
 
         # Add back unsupported columns (join type logic is in should_index_* variables)
-        supported = self._postprocess(
-            supported,
-            preprocess_result_l.unsupported_projection,
-            preprocess_result_r.unsupported_projection,
-        )
-
-        return supported
+        for batch in batches:
+            yield self._postprocess(
+                batch.to_arrow(),
+                preprocess_result_l.unsupported_projection,
+                preprocess_result_r.unsupported_projection,
+            )
 
     def _is_pa_join_not_supported(self, type: "pa.DataType") -> bool:
         """
@@ -234,34 +219,148 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
         )
 
 
-class AnyscaleJoinOperator(JoinOperator):
-    # This operator uses Polars for joins.
-    def __init__(
-        self,
-        data_context: DataContext,
-        left_input_op: PhysicalOperator,
-        right_input_op: PhysicalOperator,
-        left_key_columns: Tuple[str],
-        right_key_columns: Tuple[str],
-        join_type: JoinType,
-        *,
-        num_partitions: int,
-        left_columns_suffix: Optional[str] = None,
-        right_columns_suffix: Optional[str] = None,
-        partition_size_hint: Optional[int] = None,
-        aggregator_ray_remote_args_override: Optional[Dict[str, Any]] = None,
+def validate_polars_gpu_config(self) -> bool:
+    """Validate Polars GPU join configuration and system requirements.
+
+    Performs comprehensive validation of GPU join configuration including:
+    - Checking if GPU joins are enabled
+    - Verifying that regular Polars joins are enabled (prerequisite)
+    - Testing GPU availability with configured parameters
+    - Validating system requirements (GPU hardware, CUDA, packages)
+
+    Returns:
+        bool: True if configuration is valid and GPU is available, False otherwise.
+
+    Raises:
+        RuntimeError: If GPU joins are enabled but GPU support is not available
+                     or system requirements are not met.
+    """
+    if not self.use_polars_gpu_join:
+        return True
+
+    if not self.use_polars_join:
+        return False
+
+    # Test GPU availability with the configured parameters
+    if not _check_polars_gpu_availability(
+        device_id=self.polars_gpu_device_id,
+        raise_on_fail=self.polars_gpu_raise_on_fail,
     ):
-        super().__init__(
-            data_context=data_context,
-            left_input_op=left_input_op,
-            right_input_op=right_input_op,
-            left_key_columns=left_key_columns,
-            right_key_columns=right_key_columns,
-            join_type=join_type,
-            num_partitions=num_partitions,
-            left_columns_suffix=left_columns_suffix,
-            right_columns_suffix=right_columns_suffix,
-            partition_size_hint=partition_size_hint,
-            aggregator_ray_remote_args_override=aggregator_ray_remote_args_override,
-            shuffle_aggregation_type=JoiningShuffleAggregationWithPolars,
+        error_msg = (
+            "GPU joins are enabled but Polars GPU support is not available. "
+            "Please ensure you have:\n"
+            "1. NVIDIA Volta™ or higher GPU with compute capability 7.0+\n"
+            "2. CUDA 12 installed (CUDA 11 support ends with RAPIDS v25.06)\n"
+            "3. polars[gpu] package installed: pip install polars[gpu]\n"
+            "4. Linux or Windows Subsystem for Linux 2 (WSL2)\n"
+            "5. Sufficient GPU memory available"
         )
+        if self.polars_gpu_device_id is not None:
+            error_msg += f"\n6. GPU device {self.polars_gpu_device_id} is accessible"
+
+        raise RuntimeError(error_msg)
+
+    return True
+
+
+def _get_polars_gpu_engine(data_context: "DataContext") -> Optional["pl.GPUEngine"]:
+    """Get configured Polars GPU engine object with current settings.
+
+    Creates a Polars GPUEngine instance configured with the current context settings
+    including device ID and error handling behavior. Automatically validates that
+    polars[gpu] dependencies are available.
+
+    Returns:
+        pl.GPUEngine: Configured GPU engine with current context settings,
+                     or None if GPU joins are disabled or dependencies unavailable.
+    """
+    if not data_context.use_polars_gpu_join:
+        return None
+
+    try:
+        _check_polars_gpu_import()
+        import polars as pl
+
+        kwargs = {"raise_on_fail": data_context.polars_gpu_raise_on_fail}
+        if data_context.polars_gpu_device_id is not None:
+            kwargs["device"] = data_context.polars_gpu_device_id
+
+        return pl.GPUEngine(**kwargs)
+
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+def _check_polars_gpu_import(obj: Any) -> None:
+    """Check if Polars GPU dependencies are available.
+
+    Args:
+        obj: The object that has the dependency.
+
+    Raises:
+        ImportError: If polars[gpu] is not installed.
+    """
+    _check_import(obj, module="polars", package="polars[gpu]")
+
+    # Additional check for GPU-specific functionality
+    try:
+        import polars as pl
+
+        # Try to create a GPUEngine to verify GPU support is available
+        pl.GPUEngine()
+    except Exception:
+        raise ImportError(
+            "Polars GPU support not available. Ensure you have:\n"
+            "1. NVIDIA Volta™ or higher GPU with compute capability 7.0+\n"
+            "2. CUDA 12 installed (CUDA 11 support ends with RAPIDS v25.06)\n"
+            "3. polars[gpu] package installed: pip install polars[gpu]\n"
+            "4. Linux or Windows Subsystem for Linux 2 (WSL2)"
+        )
+
+
+def _check_polars_gpu_availability(
+    device_id: Optional[int] = None, raise_on_fail: bool = False
+) -> bool:
+    """Check if Polars GPU support is available.
+
+    Args:
+        device_id: Optional GPU device ID to test
+        raise_on_fail: Whether to raise exceptions instead of falling back
+
+    Returns:
+        bool: True if GPU support is available, False otherwise.
+    """
+    try:
+        # Check if polars[gpu] is properly installed
+        _check_polars_gpu_import(_check_polars_gpu_availability)
+
+        import polars as pl
+
+        # Create a simple test query
+        test_df = pl.DataFrame({"test": [1.0, 2.0, 3.0]}).lazy()
+        test_query = test_df.select(pl.col("test") * 2)
+
+        # Configure GPU engine based on parameters
+        if device_id is not None:
+            gpu_engine = pl.GPUEngine(device=device_id, raise_on_fail=raise_on_fail)
+        else:
+            gpu_engine = pl.GPUEngine(raise_on_fail=raise_on_fail)
+
+        # Test GPU execution
+        result = test_query.collect(engine=gpu_engine)
+
+        # Verify we got expected results
+        expected_values = [2.0, 4.0, 6.0]
+        actual_values = result["test"].to_list()
+
+        if actual_values != expected_values:
+            return False
+
+        return True
+
+    except ImportError:
+        return False
+    except Exception:
+        return False

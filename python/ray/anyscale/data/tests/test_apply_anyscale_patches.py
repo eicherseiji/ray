@@ -47,8 +47,6 @@ def test__patch_class_with_dataclass_mixin(ray_start_regular_shared):
     assert hasattr(ctx, "use_polars_gpu_join")
     assert hasattr(ctx, "polars_gpu_device_id")
     assert hasattr(ctx, "polars_gpu_raise_on_fail")
-    assert hasattr(ctx, "validate_polars_gpu_config")
-    assert hasattr(ctx, "get_polars_gpu_engine")
 
     # Test default values
     assert ctx.use_polars_gpu_join is False

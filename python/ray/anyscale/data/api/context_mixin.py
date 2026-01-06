@@ -8,10 +8,9 @@ from ray.data.context import (
     env_bool,
 )
 from ray._private.ray_constants import env_integer
-from ray.data._internal.util import _check_import
 
 if TYPE_CHECKING:
-    import polars as pl
+    pass
 
 DEFAULT_NUM_BLOCKS_PER_READ_TASK = 8
 
@@ -31,79 +30,6 @@ DEFAULT_POLARS_GPU_DEVICE_ID = env_integer("RAY_TURBO_POLARS_GPU_DEVICE_ID", Non
 
 # Default error handling behavior for GPU failures (False = fallback to CPU)
 DEFAULT_POLARS_GPU_RAISE_ON_FAIL = env_bool("RAY_TURBO_POLARS_GPU_RAISE_ON_FAIL", False)
-
-
-def _check_polars_gpu_import(obj: Any) -> None:
-    """Check if Polars GPU dependencies are available.
-
-    Args:
-        obj: The object that has the dependency.
-
-    Raises:
-        ImportError: If polars[gpu] is not installed.
-    """
-    _check_import(obj, module="polars", package="polars[gpu]")
-
-    # Additional check for GPU-specific functionality
-    try:
-        import polars as pl
-
-        # Try to create a GPUEngine to verify GPU support is available
-        pl.GPUEngine()
-    except Exception:
-        raise ImportError(
-            "Polars GPU support not available. Ensure you have:\n"
-            "1. NVIDIA Volta™ or higher GPU with compute capability 7.0+\n"
-            "2. CUDA 12 installed (CUDA 11 support ends with RAPIDS v25.06)\n"
-            "3. polars[gpu] package installed: pip install polars[gpu]\n"
-            "4. Linux or Windows Subsystem for Linux 2 (WSL2)"
-        )
-
-
-def _check_polars_gpu_availability(
-    device_id: Optional[int] = None, raise_on_fail: bool = False
-) -> bool:
-    """Check if Polars GPU support is available.
-
-    Args:
-        device_id: Optional GPU device ID to test
-        raise_on_fail: Whether to raise exceptions instead of falling back
-
-    Returns:
-        bool: True if GPU support is available, False otherwise.
-    """
-    try:
-        # Check if polars[gpu] is properly installed
-        _check_polars_gpu_import(_check_polars_gpu_availability)
-
-        import polars as pl
-
-        # Create a simple test query
-        test_df = pl.DataFrame({"test": [1.0, 2.0, 3.0]}).lazy()
-        test_query = test_df.select(pl.col("test") * 2)
-
-        # Configure GPU engine based on parameters
-        if device_id is not None:
-            gpu_engine = pl.GPUEngine(device=device_id, raise_on_fail=raise_on_fail)
-        else:
-            gpu_engine = pl.GPUEngine(raise_on_fail=raise_on_fail)
-
-        # Test GPU execution
-        result = test_query.collect(engine=gpu_engine)
-
-        # Verify we got expected results
-        expected_values = [2.0, 4.0, 6.0]
-        actual_values = result["test"].to_list()
-
-        if actual_values != expected_values:
-            return False
-
-        return True
-
-    except ImportError:
-        return False
-    except Exception:
-        return False
 
 
 @dataclass
@@ -181,77 +107,3 @@ class DataContextMixin:
             raise TypeError(
                 "checkpoint_config must be a CheckpointConfig instance, a dict, or None."
             )
-
-    def validate_polars_gpu_config(self) -> bool:
-        """Validate Polars GPU join configuration and system requirements.
-
-        Performs comprehensive validation of GPU join configuration including:
-        - Checking if GPU joins are enabled
-        - Verifying that regular Polars joins are enabled (prerequisite)
-        - Testing GPU availability with configured parameters
-        - Validating system requirements (GPU hardware, CUDA, packages)
-
-        Returns:
-            bool: True if configuration is valid and GPU is available, False otherwise.
-
-        Raises:
-            RuntimeError: If GPU joins are enabled but GPU support is not available
-                         or system requirements are not met.
-        """
-        if not self.use_polars_gpu_join:
-            return True
-
-        if not self.use_polars_join:
-            return False
-
-        # Test GPU availability with the configured parameters
-        if not _check_polars_gpu_availability(
-            device_id=self.polars_gpu_device_id,
-            raise_on_fail=self.polars_gpu_raise_on_fail,
-        ):
-            error_msg = (
-                "GPU joins are enabled but Polars GPU support is not available. "
-                "Please ensure you have:\n"
-                "1. NVIDIA Volta™ or higher GPU with compute capability 7.0+\n"
-                "2. CUDA 12 installed (CUDA 11 support ends with RAPIDS v25.06)\n"
-                "3. polars[gpu] package installed: pip install polars[gpu]\n"
-                "4. Linux or Windows Subsystem for Linux 2 (WSL2)\n"
-                "5. Sufficient GPU memory available"
-            )
-            if self.polars_gpu_device_id is not None:
-                error_msg += (
-                    f"\n6. GPU device {self.polars_gpu_device_id} is accessible"
-                )
-
-            raise RuntimeError(error_msg)
-
-        return True
-
-    def get_polars_gpu_engine(self) -> Optional["pl.GPUEngine"]:
-        """Get configured Polars GPU engine object with current settings.
-
-        Creates a Polars GPUEngine instance configured with the current context settings
-        including device ID and error handling behavior. Automatically validates that
-        polars[gpu] dependencies are available.
-
-        Returns:
-            pl.GPUEngine: Configured GPU engine with current context settings,
-                         or None if GPU joins are disabled or dependencies unavailable.
-        """
-        if not self.use_polars_gpu_join:
-            return None
-
-        try:
-            _check_polars_gpu_import(self)
-            import polars as pl
-
-            kwargs = {"raise_on_fail": self.polars_gpu_raise_on_fail}
-            if self.polars_gpu_device_id is not None:
-                kwargs["device"] = self.polars_gpu_device_id
-
-            return pl.GPUEngine(**kwargs)
-
-        except ImportError:
-            return None
-        except Exception:
-            return None
