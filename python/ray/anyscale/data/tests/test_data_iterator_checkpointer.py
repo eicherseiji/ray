@@ -17,6 +17,7 @@ from ray.train import DatasetCheckpointConfig
 
 from ray._common.test_utils import wait_for_condition
 from ray.tests.conftest import *  # noqa
+from ray.data import FileShuffleConfig
 
 
 def _create_batch(row_ids: List[int]) -> Batch:
@@ -539,6 +540,61 @@ def test_iter_batches_with_checkpointing(ray_start_10_cpus, tmp_path, reinit_ite
         assert (
             read_checkpoint_files_for_state_dict(ds_iter.state_dict(), tmp_path) == []
         )
+
+
+def test_data_context_execution_idx_from_checkpoint(ray_start_10_cpus, tmp_path):
+    """Test that data_context._execution_idx is set from checkpoint state dict.
+
+    When restoring from a checkpoint, the epoch_idx from the state dict should
+    be used for file shuffling. This ensures deterministic shuffling across
+    restorations at the same epoch.
+    """
+
+    parquet_path = tmp_path / "parquet"
+    parquet_path.mkdir()
+    num_files = 10
+    for i in range(num_files):
+        file_path = parquet_path / f"file_{i}.parquet"
+        pq.write_table(pa.table({"id": [i]}), file_path)
+
+    shuffle_config = FileShuffleConfig(seed=42)
+
+    ctx = ray.data.DataContext.get_current()
+    ctx._execution_idx = 0
+    ds_epoch_0 = ray.data.read_parquet(str(parquet_path), shuffle=shuffle_config)
+    epoch_0_order = [row["id"] for row in ds_epoch_0.take_all()]
+
+    ctx._execution_idx = 5
+    ds_epoch_5 = ray.data.read_parquet(str(parquet_path), shuffle=shuffle_config)
+    epoch_5_order = [row["id"] for row in ds_epoch_5.take_all()]
+
+    assert (
+        epoch_0_order != epoch_5_order
+    ), "Shuffle order should differ between epochs when reseed_after_epoch=True"
+
+    checkpointer = RowIDBasedDataIteratorCheckpointer(
+        checkpoint_config=DatasetCheckpointConfig(
+            checkpoint_path=str(tmp_path / "checkpoints"), id_column="id"
+        ),
+        state_dict=RowIDBasedStateDict(
+            epoch_idx=5,
+            checkpoint_idx=3,
+            root_checkpoint_path=str(tmp_path / "checkpoints"),
+            id_column="id",
+        ),
+    )
+    state_dict = checkpointer.state_dict()
+    assert (
+        state_dict["epoch_idx"] == 5
+    ), "Checkpoint state dict should contain the restored epoch_idx"
+
+    ctx._execution_idx = state_dict["epoch_idx"]
+    ds_epoch_5_again = ray.data.read_parquet(str(parquet_path), shuffle=shuffle_config)
+    epoch_5_order_again = [row["id"] for row in ds_epoch_5_again.take_all()]
+
+    assert (
+        epoch_5_order == epoch_5_order_again
+    ), "Shuffle order should be deterministic for the same epoch_idx"
 
 
 if __name__ == "__main__":

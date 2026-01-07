@@ -284,6 +284,8 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
                 checkpoint_config.checkpoint_path
             )
 
+        # TODO(xgui): _epoch_idx should not be tracked here, instead it should be retrieved from the base dataset.
+        # https://anyscale1.atlassian.net/browse/DATA-1696
         self._epoch_idx = 0
         self._latest_committed_checkpoint_idx = -1
         self._epoch_running = False

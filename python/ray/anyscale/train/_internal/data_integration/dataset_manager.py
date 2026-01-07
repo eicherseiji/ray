@@ -126,6 +126,7 @@ class DatasetManager:
             )
 
         state_dict = None
+        epoch_idx = base_dataset.context._execution_idx
         if not dataset_info.state_dict:
             logger.info(
                 "Dataset checkpointing is enabled, but no dataset state passed "
@@ -136,11 +137,13 @@ class DatasetManager:
             )
         else:
             state_dict = RowIDBasedStateDict.from_dict(dataset_info.state_dict)
+            epoch_idx = state_dict.epoch_idx
 
         train_ingest_checkpoint_config = data_config.dataset_checkpoint_configs[
             dataset_name
         ]
 
+        base_dataset.context._execution_idx = epoch_idx
         base_dataset.context.checkpoint_config = (
             self._build_restoration_checkpoint_config(
                 train_ingest_checkpoint_config, state_dict

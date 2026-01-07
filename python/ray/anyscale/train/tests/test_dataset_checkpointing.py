@@ -1,6 +1,10 @@
+import json
 from unittest.mock import MagicMock
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 from pyarrow.fs import LocalFileSystem
+from ray.data.datasource import FileShuffleConfig
 import pytest
 
 from ray.anyscale.train._internal.callbacks.datasets import DatasetsCallback
@@ -272,6 +276,190 @@ def test_data_config_validation():
         DataConfig(
             datasets_to_split=["train"],
             dataset_checkpoint_configs={"train": MagicMock(), "val": MagicMock()},
+        )
+
+
+def test_execution_idx_restored_from_checkpoint(ray_start_4_cpus, tmp_path):
+    """Test that data_context._execution_idx is correctly restored from checkpoint.
+
+    This test verifies that when a training job fails and restores from a checkpoint,
+    the execution_idx is correctly restored so that data ordering is preserved.
+
+    We run two trainings for 3 epochs each:
+    - Training 1: No failures (baseline)
+    - Training 2: Fails mid-epoch 1, then fails at end of epoch 2
+
+    Both trainings should produce the same data order per epoch.
+    """
+
+    num_epochs = 3
+    world_size = 1
+    num_batches = 10
+    batch_size = 10
+    total_rows = num_batches * batch_size
+
+    parquet_path = tmp_path / "parquet_data"
+    parquet_path.mkdir()
+    for i in range(total_rows):
+        file_path = parquet_path / f"file_{i:03d}.parquet"
+        pq.write_table(pa.table({"id": [i]}), file_path)
+
+    # Set preserve_order to ensure deterministic data ordering
+    ctx = ray.data.DataContext.get_current()
+    ctx.execution_options.preserve_order = True
+
+    ds = ray.data.read_parquet(str(parquet_path), shuffle=FileShuffleConfig(seed=42))
+
+    def run_training(
+        name: str,
+        fail_mid_epoch: int = None,
+        fail_end_epoch: int = None,
+    ) -> dict:
+        """Run a training and return the data order for each epoch."""
+        data_checkpoint_path = tmp_path / f"{name}_data_checkpoints"
+        train_checkpoint_path = tmp_path / f"{name}_train_checkpoints"
+        data_order_path = tmp_path / f"{name}_data_order.json"
+
+        def train_fn(config):
+            rank = ray.train.get_context().get_world_rank()
+
+            data_state_dict = None
+            is_mid_epoch_restore = False
+            start_epoch = 0
+
+            checkpoint = ray.train.get_checkpoint()
+            if checkpoint:
+                checkpoint_data = load_dict_checkpoint(checkpoint)
+                data_state_dict = checkpoint_data.get("data_state")
+
+                # The data iterator's state_dict already contains epoch_idx and checkpoint_idx
+                # checkpoint_idx >= 0 means mid-epoch, checkpoint_idx == -1 means epoch boundary
+                if data_state_dict:
+                    start_epoch = data_state_dict["epoch_idx"]
+                    is_mid_epoch_restore = data_state_dict["checkpoint_idx"] >= 0
+
+            ds_iter = ray.train.get_dataset_shard(
+                "train", state_dict=data_state_dict if rank == 0 else None
+            )
+
+            data_order_file = config["data_order_path"]
+            if data_order_file.exists():
+                all_epoch_data = json.loads(data_order_file.read_text())
+            else:
+                all_epoch_data = {}
+
+            for epoch in range(start_epoch, config["num_epochs"]):
+                epoch_key = str(epoch)
+
+                # If restoring mid-epoch, start with existing partial data
+                if is_mid_epoch_restore and epoch_key in all_epoch_data:
+                    epoch_data = list(all_epoch_data[epoch_key])
+                else:
+                    epoch_data = []
+
+                for batch in ds_iter.iter_batches(batch_size=config["batch_size"]):
+                    epoch_data.extend(batch["id"].tolist())
+
+                    # Create checkpoint mid-epoch (after half the rows)
+                    if len(epoch_data) == config["total_rows"] // 2:
+                        iter_state_dict = ds_iter.state_dict()
+
+                        # Just save data_state - it already contains epoch_idx and checkpoint_idx
+                        with create_dict_checkpoint(
+                            {"data_state": iter_state_dict}
+                        ) as ckpt:
+                            ray.train.report({}, checkpoint=ckpt if rank == 0 else None)
+
+                        # Fail mid-epoch if configured
+                        if (
+                            config["fail_mid_epoch"] == epoch
+                            and not is_mid_epoch_restore
+                        ):
+                            all_epoch_data[epoch_key] = epoch_data
+                            data_order_file.write_text(json.dumps(all_epoch_data))
+                            raise RuntimeError(f"Injected mid-epoch {epoch} failure")
+
+                # End of epoch - save data order
+                all_epoch_data[epoch_key] = epoch_data
+                data_order_file.write_text(json.dumps(all_epoch_data))
+
+                iter_state_dict = ds_iter.state_dict()
+                with create_dict_checkpoint({"data_state": iter_state_dict}) as ckpt:
+                    ray.train.report({}, checkpoint=ckpt if rank == 0 else None)
+
+                # Fail at end of epoch if configured
+                if config["fail_end_epoch"] == epoch and not is_mid_epoch_restore:
+                    raise RuntimeError(f"Injected end-of-epoch {epoch} failure")
+
+                # Reset flag after first epoch completes successfully
+                is_mid_epoch_restore = False
+
+        trainer = DataParallelTrainer(
+            train_fn,
+            train_loop_config={
+                "num_epochs": num_epochs,
+                "total_rows": total_rows,
+                "batch_size": batch_size,
+                "fail_mid_epoch": fail_mid_epoch,
+                "fail_end_epoch": fail_end_epoch,
+                "data_order_path": data_order_path,
+            },
+            scaling_config=ray.train.ScalingConfig(num_workers=world_size),
+            datasets={"train": ds},
+            run_config=ray.train.RunConfig(
+                storage_path=str(train_checkpoint_path),
+                failure_config=ray.train.FailureConfig(max_failures=2),
+            ),
+            dataset_config=ray.train.DataConfig(
+                dataset_checkpoint_configs={
+                    "train": DatasetCheckpointConfig(
+                        checkpoint_path=str(data_checkpoint_path),
+                        id_column="id",
+                    )
+                }
+            ),
+        )
+        trainer.fit()
+
+        # Return the data order
+        return json.loads(data_order_path.read_text())
+
+    # Run training 1: no failures (baseline)
+    baseline_data_order = run_training("baseline")
+
+    # Run training 2: fail mid-epoch 1, then fail at end of epoch 2
+    failure_data_order = run_training(
+        "with_failures",
+        fail_mid_epoch=1,
+        fail_end_epoch=2,
+    )
+
+    # Verify both trainings produced the same data for each epoch
+    for epoch in range(num_epochs):
+        epoch_key = str(epoch)
+        assert epoch_key in baseline_data_order, f"Epoch {epoch} missing from baseline"
+        assert (
+            epoch_key in failure_data_order
+        ), f"Epoch {epoch} missing from failure run"
+
+        baseline_data = baseline_data_order[epoch_key]
+        failure_data = failure_data_order[epoch_key]
+
+        # Both runs should have the same number of rows per epoch
+        assert len(baseline_data) == len(failure_data) == total_rows, (
+            f"Row count mismatch at epoch {epoch}:\n"
+            f"  Baseline: {len(baseline_data)}\n"
+            f"  With failures: {len(failure_data)}\n"
+            f"  Expected: {total_rows}"
+        )
+
+        # Both runs should see the same SET of data in each epoch
+        baseline_set = set(baseline_data)
+        failure_set = set(failure_data)
+        assert baseline_set == failure_set, (
+            f"Data set mismatch at epoch {epoch}:\n"
+            f"  Missing in failure: {baseline_set - failure_set}\n"
+            f"  Extra in failure: {failure_set - baseline_set}"
         )
 
 
