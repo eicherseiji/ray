@@ -55,6 +55,7 @@ def train_fn(config: dict):
             print("Finished epoch: ", epoch)
 
 
+@pytest.mark.timeout(300)  # Default timeout of 180s is not sufficient for CI
 def test_elastic_training(monkeypatch, tmp_path, cluster):
     """End to end test for elastic training.
 

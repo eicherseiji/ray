@@ -7,7 +7,6 @@ import ray.data
 from ray.data import DataContext
 from ray.data._internal.iterator.stream_split_iterator import (
     SplitCoordinator,
-    _DatasetWrapper,
 )
 
 from ray.anyscale.train._internal.callbacks.datasets import (
@@ -122,7 +121,7 @@ def test_data_executor_shutdown():
     NUM_SPLITS = 1
     dataset = ray.data.range(100)
     coordinator = SplitCoordinator.options(name="test_split_coordinator").remote(
-        _DatasetWrapper(dataset), NUM_SPLITS, None
+        dataset, NUM_SPLITS, None
     )
 
     # Trigger executor creation and resource allocation
