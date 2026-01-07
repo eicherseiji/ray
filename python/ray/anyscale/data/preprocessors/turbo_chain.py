@@ -1,6 +1,9 @@
 import logging
 from typing import TYPE_CHECKING
 
+import ray
+
+from ray.air.util.data_batch_conversion import BatchFormat
 from ray.anyscale.data.preprocessors.dag import _build_aggregation_dag
 from ray.data.preprocessor import Preprocessor
 from ray.anyscale.data.preprocessors.turbo_preprocessor import TurboPreprocessor
@@ -72,7 +75,13 @@ class Chain(_OriginalChain, TurboPreprocessor):
             # Run aggregations for fittable preprocessors
             if ready_aggregation_nodes:
                 aggregates = [n.agg_fn for n in ready_aggregation_nodes]
-                stats = ds.aggregate(*aggregates)
+
+                agg_ds = ds.groupby(None).aggregate(*aggregates)
+                arrow_refs = agg_ds.to_arrow_refs()
+                if not arrow_refs:
+                    raise ValueError("Aggregation returned no results")
+                arrow_table = ray.get(arrow_refs[0]) if arrow_refs else None
+
                 preprocessors = {n.preprocessor for n in ready_aggregation_nodes}
                 logger.info(
                     f"Running {len(aggregates)} aggregations for {len(preprocessors)} preprocessors: {preprocessors}"
@@ -81,8 +90,17 @@ class Chain(_OriginalChain, TurboPreprocessor):
                 for node in ready_aggregation_nodes:
                     p = node.preprocessor
                     stat_key = node.agg_fn.name
-                    # Use aggregator's name as key, apply post-processing to value
-                    p.stats_[stat_key] = node.post_process_fn(stats[stat_key])
+                    # Aggregation returns single row - extract the first element
+                    agg_result = arrow_table.column(stat_key)[0]
+
+                    # Convert to appropriate format based on batch_format
+                    if node.batch_format == BatchFormat.ARROW:
+                        # Pass Arrow scalar (e.g., ListScalar) for Arrow-optimized post-processing
+                        p.stats_[stat_key] = node.post_process_fn(agg_result)
+                    else:
+                        # Convert to Python for pandas-style post-processing
+                        p.stats_[stat_key] = node.post_process_fn(agg_result.as_py())
+
                     node.completed = True
                     pending_nodes.remove(node)
 

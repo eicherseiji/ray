@@ -25,6 +25,7 @@ _OriginalCategorizer = preprocessors_module.Categorizer
 @SerializablePreprocessor(version=1, identifier="io.ray.preprocessors.ordinal_encoder")
 class OrdinalEncoder(_OriginalOrdinalEncoder, TurboPreprocessor):
     def _fit(self, ds):
+        batch_format = self.preferred_batch_format()
         self.stat_computation_plan.add_aggregator(
             aggregator_fn=lambda col: UniqueVectorized(
                 on=col,
@@ -35,8 +36,9 @@ class OrdinalEncoder(_OriginalOrdinalEncoder, TurboPreprocessor):
                 ),
                 alias_name=f"unique_values({col})",
             ),
-            post_process_fn=unique_post_fn(),
+            post_process_fn=unique_post_fn(batch_format=batch_format),
             columns=self.columns,
+            batch_format=batch_format,
         )
         return self
 

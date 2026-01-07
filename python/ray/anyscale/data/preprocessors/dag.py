@@ -1,6 +1,7 @@
 from collections import defaultdict
-from typing import List, Set, Callable, Sequence
+from typing import List, Optional, Set, Callable, Sequence
 
+from ray.air.util.data_batch_conversion import BatchFormat
 from ray.data.preprocessor import Preprocessor
 from ray.data.aggregate import AggregateFnV2
 
@@ -44,6 +45,7 @@ class _AggregationNode(_DAGNode):
         agg_fn: The aggregation function (AggregateFnV2) to compute stats.
         post_process_fn: Function applied to the aggregation result.
         column: The column to aggregate.
+        batch_format: The batch format for aggregation results.
     """
 
     def __init__(
@@ -52,11 +54,13 @@ class _AggregationNode(_DAGNode):
         agg_fn: AggregateFnV2,
         post_process_fn: Callable,
         column: str,
+        batch_format: Optional[BatchFormat] = None,
     ):
         super().__init__(preprocessor)
         self.agg_fn: AggregateFnV2 = agg_fn
         self.post_process_fn: Callable = post_process_fn
         self.column: str = column
+        self.batch_format: Optional[BatchFormat] = batch_format
 
 
 class _PlaceholderNode(_DAGNode):
@@ -111,6 +115,7 @@ def _build_aggregation_dag(
                 agg_fn=agg_spec.stat_fn,
                 post_process_fn=agg_spec.post_process_fn,
                 column=agg_spec.column,
+                batch_format=agg_spec.batch_format,
             )
             pre_to_nodes[p].append(node)
             all_nodes.append(node)
