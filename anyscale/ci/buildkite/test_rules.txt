@@ -13,9 +13,9 @@
 #
 #   ;  # Semicolon to separate rules
 #
-# These rules run before upstream ones.
 
-! gotools core-turbo ml-turbo data-turbo core-turbo safetensors lineage anyscaleruntime
+! gotools core-turbo ml-turbo data-turbo safetensors lineage anyscaleruntime
+! tools ml serve data train linux_wheels python docker
 
 anyscale/ci/buildkite/test_rules.txt
 @ tools
@@ -52,14 +52,14 @@ anyscaleruntime/
 @ anyscaleruntime
 ;
 
-anyscale/ci/buildkite/core.rayci.yml
-python/ray/anyscale/
-@ python core-turbo linux_wheels
-;
-
 anyscale/ci/buildkite/safetensors.rayci.yml
 python/ray/anyscale/safetensors/
 @ safetensors
+;
+
+anyscale/ci/buildkite/core.rayci.yml
+python/ray/anyscale/
+@ python core-turbo linux_wheels
 ;
 
 anyscale/

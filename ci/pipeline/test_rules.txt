@@ -20,6 +20,12 @@
 ! linux_wheels macos_wheels docker doc python_dependencies tools
 ! release_tests spark_on_ray
 
+anyscale/
+anyscaleruntime/
+python/ray/anyscale/
+# prevent default in this file; tags are handled in the anyscale specific test rules file
+;
+
 python/ray/air/
 @ ml train tune data linux_wheels
 ;
@@ -256,4 +262,10 @@ setup_hooks.sh
 .prettierrc.toml
 .fossa.yml
 # pass
+;
+
+*
+@ ml tune train data serve
+@ core_cpp cpp java python doc
+@ linux_wheels macos_wheels dashboard tools release_tests
 ;
