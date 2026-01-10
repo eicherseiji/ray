@@ -1023,16 +1023,15 @@ class HAProxyManager(ProxyActorInterface):
                     # grpc backends for now since they aren't supported yet.
                     if backend.lower().startswith("grpc"):
                         continue
-
                     all_backends.add(backend)
                     for server in servers.values():
                         if server.is_up:
                             ready_backends.add(backend)
-
                 ready_to_serve = all_backends == ready_backends
             except Exception:
                 pass
-            await asyncio.sleep(0.2)
+            if not ready_to_serve:
+                await asyncio.sleep(0.2)
 
     def _is_draining(self) -> bool:
         """Whether is haproxy is in the draining status or not."""

@@ -72,7 +72,9 @@ class AnyscaleServeController(ServeController):
             grpc_options=grpc_options,
         )
 
-        self._last_broadcasted_target_groups: List[TargetGroup] = []
+        # Initialize to None (not []) to ensure the first broadcast always happens,
+        # even if target_groups is empty (e.g., route_prefix=None deployments).
+        self._last_broadcasted_target_groups: Optional[List[TargetGroup]] = None
 
     def _log_throughput_opt_message(self) -> None:
         msg = "Throughput optimized Ray Serve enabled with the following configurations:\n"
