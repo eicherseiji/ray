@@ -2,14 +2,15 @@ from ray._private.arrow_utils import get_pyarrow_version
 from ray.data._internal.arrow_ops.transform_pyarrow import (
     MIN_PYARROW_VERSION_RUN_END_ENCODED_TYPES,
 )
+from ray.data._internal.execution.operators.hash_shuffle import _combine
 from ray.data._internal.execution.operators.join import (
-    JoiningShuffleAggregation,
+    JoiningAggregation,
 )
 from ray.data._internal.util import _check_import
 
 
 import logging
-from typing import Any, List, Optional, Tuple, TYPE_CHECKING, Iterator
+from typing import Any, List, Optional, Tuple, TYPE_CHECKING, Iterator, Dict
 
 from ray.data.context import DataContext
 from ray.data._internal.logical.operators.join_operator import JoinType
@@ -33,7 +34,7 @@ _JOIN_TYPE_TO_POLARS_JOIN_TYPE_MAP = {
 logger = logging.getLogger(__name__)
 
 
-class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
+class JoiningAggregationWithPolars(JoiningAggregation):
     """Aggregation performing distributed joining of the 2 sequences,
     by utilising hash-based shuffling.
 
@@ -54,32 +55,32 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
     def __init__(
         self,
         *,
-        aggregator_id: int,
         join_type: JoinType,
         left_key_col_names: Tuple[str],
         right_key_col_names: Tuple[str],
-        target_partition_ids: List[int],
         data_context: DataContext,
         left_columns_suffix: Optional[str] = None,
         right_columns_suffix: Optional[str] = None,
     ):
         super().__init__(
-            aggregator_id=aggregator_id,
             join_type=join_type,
             left_key_col_names=left_key_col_names,
             right_key_col_names=right_key_col_names,
-            target_partition_ids=target_partition_ids,
             data_context=data_context,
             left_columns_suffix=left_columns_suffix,
             right_columns_suffix=right_columns_suffix,
         )
+
         join_types = list(JoinType)
+
         assert join_type in join_types, (
             f"Join type is not currently supported (got: {join_type}; "  # noqa: C416
             f"supported: {join_types})"  # noqa: C416
         )
 
-    def finalize(self, partition_id: int) -> Iterator[Block]:
+        self._data_context = data_context
+
+    def finalize(self, partition_shards_map: Dict[int, List[Block]]) -> Iterator[Block]:
         assert (
             self._data_context.use_polars_join
         ), "use_polars_join must be set to True in the DataContext"
@@ -89,12 +90,18 @@ class JoiningShuffleAggregationWithPolars(JoiningShuffleAggregation):
 
         import polars as pl
 
+        left_partition_shards = partition_shards_map[0]
+        right_partition_shards = partition_shards_map[1]
+
+        left_table = _combine(left_partition_shards)
+        right_table = _combine(right_partition_shards)
+
         left_on, right_on = list(self._left_key_col_names), list(
             self._right_key_col_names
         )
 
         preprocess_result_l, preprocess_result_r = self._preprocess(
-            left_on, right_on, partition_id
+            left_table, right_table, left_on, right_on
         )
 
         left_df: pl.LazyFrame = pl.from_arrow(

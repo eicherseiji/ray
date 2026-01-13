@@ -67,7 +67,7 @@ def plan_join_op(
     if data_context.use_polars_join:
         from ray.anyscale.data._internal.execution.operators.join_operator import (
             validate_polars_gpu_config,
-            JoiningShuffleAggregationWithPolars,
+            JoiningAggregationWithPolars,
         )
 
         # Validate GPU configuration if GPU joins are enabled
@@ -86,7 +86,7 @@ def plan_join_op(
             num_partitions=logical_op._num_outputs,
             partition_size_hint=logical_op._partition_size_hint,
             aggregator_ray_remote_args_override=logical_op._aggregator_ray_remote_args,
-            shuffle_aggregation_type=JoiningShuffleAggregationWithPolars,
+            shuffle_aggregation_type=JoiningAggregationWithPolars,
         )
 
     return JoinOperator(
