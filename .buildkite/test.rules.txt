@@ -74,7 +74,7 @@ ci/docker/min.build.wanda.yaml
 
 rllib/
 python/ray/rllib/
-ray_ci/rllib.tests.yml
+ci/ray_ci/rllib.tests.yml
 .buildkite/rllib.rayci.yml
 @ rllib rllib_gpu rllib_directly
 ;
@@ -238,15 +238,15 @@ ci/ci.sh
 @ tools
 ;
 
+src/ray/core_worker/experimental*.h
+src/ray/core_worker/experimental*.cc
+@ cgraphs_direct_transport
+;
+
 src/
 @ core_cpp cpp
 @ java python linux_wheels macos_wheels
 @ dashboard release_tests
-;
-
-src/ray/core_worker/experimental*.h
-src/ray/core_worker/experimental*.cc
-@ cgraphs_direct_transport
 ;
 
 .github/

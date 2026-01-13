@@ -1,0 +1,112 @@
+# Unit tests for pipeline.rules.txt (OSS Ray CI rules)
+#
+# Format: file_path: tag1 tag2 tag3
+
+# === Anyscale paths (pass rule - no tags from this file) ===
+anyscale/ci/config-premerge.yaml:
+python/ray/anyscale/util.py:
+anyscaleruntime/main.py:
+
+# === OSS Ray Air ===
+python/ray/air/trainer.py: ml train tune data linux_wheels
+
+# === OSS Ray LLM ===
+python/ray/llm/model.py: llm
+doc/source/llm/guide.rst: llm
+
+# === OSS Ray Data ===
+python/ray/data/dataset.py: data ml train
+.buildkite/data.rayci.yml: data ml train
+
+# === OSS Ray Workflow ===
+python/ray/workflow/workflow.py: workflow
+
+# === OSS Ray Tune ===
+python/ray/tune/tuner.py: ml train tune linux_wheels
+
+# === OSS Ray Train ===
+python/ray/train/trainer.py: ml train linux_wheels
+
+# === OSS ML configs ===
+.buildkite/ml.rayci.yml: ml train tune
+
+# === OSS RLlib ===
+rllib/algorithms/ppo.py: rllib rllib_gpu rllib_directly
+python/ray/rllib/policy.py: rllib rllib_gpu rllib_directly
+
+# === OSS Ray Serve ===
+python/ray/serve/api.py: serve linux_wheels java
+
+# === OSS Ray Dashboard ===
+python/ray/dashboard/dashboard.py: dashboard linux_wheels python
+
+# === Python requirements ===
+python/setup.py: ml tune train serve workflow data python dashboard linux_wheels macos_wheels java python_dependencies
+
+# === Python DAG/channels ===
+python/ray/dag/dag.py: python cgraphs_direct_transport
+python/ray/experimental/channel/channel.py: python cgraphs_direct_transport
+
+# === Python utilities ===
+python/ray/util/client/client.py: python ray_client
+python/ray/util/dask/dask.py: python dask
+python/ray/util/spark/spark.py: python spark_on_ray
+python/ray/runtime_env/env.py: python runtime_env_container
+
+# === Python fallback ===
+python/ray/core.py: ml tune train data python dashboard linux_wheels macos_wheels java
+
+# === Core config ===
+.buildkite/core.rayci.yml: python core_cpp
+
+# === Java ===
+java/Main.java: java
+
+# === C++ ===
+cpp/main.cc: cpp
+
+# === Docker ===
+docker/Dockerfile: docker linux_wheels
+
+# === Docs ===
+.readthedocs.yaml: doc
+doc/guide.rst: doc
+
+# === Doc test (pass rule) ===
+ci/docker/doctest.build.Dockerfile:
+
+# === Release tools ===
+release/ray_release/main.py: tools
+release/requirements_test.txt: tools
+
+# === Release tests ===
+release/test.py: release_tests
+
+# === Skip rules (pass) ===
+doc/readme.md:
+examples/readme.md:
+.github/workflows/ci.yml:
+
+# === CI tooling ===
+ci/lint/lint.py: tools
+.buildkite/lint.rayci.yml: tools
+
+# === macOS ===
+.buildkite/macos.rayci.yml: macos_wheels
+ci/ray_ci/macos/macos_ci.sh: macos_wheels
+
+# === CI/build tooling ===
+ci/pipeline/pipeline.py: tools
+ci/ray_ci/ray_ci.py: tools
+.buildkite/base.rayci.yml: docker linux_wheels tools
+
+# === Source code ===
+src/ray/main.cc: core_cpp cpp java python linux_wheels macos_wheels dashboard release_tests
+src/ray/core_worker/experimental_test.cc: cgraphs_direct_transport
+
+# === Root files (pass rule) ===
+README.rst:
+LICENSE:
+
+# === Default fallback (unmatched files get all tags) ===
+some/random/file.txt: ml tune train data serve core_cpp cpp java python doc linux_wheels macos_wheels dashboard tools release_tests

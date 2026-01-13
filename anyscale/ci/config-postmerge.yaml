@@ -33,10 +33,6 @@ env:
   RAYCI_STAGE: "postmerge"
 build_env_keys:
   - RAY_RELEASE_BUILD
-test_rules_files:
-  - anyscale/ci/buildkite/test_rules_always.txt
-  - anyscale/ci/buildkite/test_rules.txt
-  - ci/pipeline/test_rules.txt
 hook_env_keys:
   - RAYCI_CHECKOUT_DIR
 skip_tags:

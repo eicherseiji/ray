@@ -16,6 +16,3 @@ hook_env_keys:
   - RAYCI_CHECKOUT_DIR
 skip_tags:
   - disabled
-test_rules_files:
-  - anyscale/ci/buildkite/test_rules_always.txt
-  - ci/pipeline/test_rules.txt

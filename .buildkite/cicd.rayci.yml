@@ -1,23 +1,13 @@
 group: reef tests
 steps:
-  - label: ":test_tube: test-rules: premerge/postmerge"
-    key: test-rules-premerge-postmerge
+  - label: ":test_tube: test-rules"
+    key: test-rules
     commands:
-      - export RAYCI_TEST_RULE_FILES=anyscale/ci/buildkite/test_rules_always.txt,anyscale/ci/buildkite/test_rules.txt,ci/pipeline/test_rules.txt &&
-        curl -sfL "https://raw.githubusercontent.com/ray-project/rayci/stable/run_rayci.sh" | bash -s -- test-rules
-        anyscale/ci/buildkite/test_rules_test.txt
+      - curl -sfL "https://raw.githubusercontent.com/ray-project/rayci/stable/run_rayci.sh" | bash -s -- test-rules
     instance_type: small
-    depends_on: forge
-    tags: tools
-  - label: ":test_tube: test-rules: macos"
-    key: test-rules-macos
-    commands:
-      - export RAYCI_TEST_RULE_FILES=anyscale/ci/buildkite/test_rules_always.txt,ci/pipeline/test_rules.txt &&
-        curl -sfL "https://raw.githubusercontent.com/ray-project/rayci/stable/run_rayci.sh" | bash -s -- test-rules
-        .buildkite/macos/test_rules_macos_test.txt
-    instance_type: small
-    depends_on: forge
-    tags: tools
+    tags:
+      - tools
+      - always
   - label: ":coral: reef: ci+release tooling tests"
     key: reef-tests
     commands:

@@ -17,7 +17,7 @@
 ! gotools core-turbo ml-turbo data-turbo safetensors lineage anyscaleruntime
 ! tools ml serve data train linux_wheels python docker
 
-anyscale/ci/buildkite/test_rules.txt
+.buildkite/turbo.rules.txt
 @ tools
 ;
 
@@ -64,4 +64,8 @@ python/ray/anyscale/
 
 anyscale/
 @ docker tools
+;
+
+*
+# skip
 ;
