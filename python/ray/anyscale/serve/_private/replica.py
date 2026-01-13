@@ -715,7 +715,7 @@ class AnyscaleReplica(ReplicaBase):
 
     @contextmanager
     def _wrap_request(
-        self, request_metadata: RequestMetadata
+        self, request_metadata: RequestMetadata, ray_trace_ctx: Optional[Any] = None
     ) -> Generator[StatusCodeCallback, None, None]:
         """Context manager that wraps user method calls.
 
@@ -734,6 +734,7 @@ class AnyscaleReplica(ReplicaBase):
                     grpc_context=request_metadata.grpc_context,
                     cancel_on_parent_request_cancel=self._ingress
                     and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+                    _ray_trace_ctx=ray_trace_ctx,
                 )
             )
             with self._handle_errors_and_metrics(
