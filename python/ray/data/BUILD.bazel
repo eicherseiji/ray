@@ -79,6 +79,19 @@ py_test_module_list(
     ],
 )
 
+py_test_module_list(
+    size = "small",
+    files = glob(["tests/anyscale/test_*.py"]),
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
 py_test(
     name = "test_formats",
     size = "medium",
@@ -1529,6 +1542,20 @@ py_test(
     name = "test_resource_manager",
     size = "medium",
     srcs = ["tests/test_resource_manager.py"],
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
+    name = "test_throughput_based_resource_allocator",
+    size = "medium",
+    srcs = ["tests/test_throughput_based_resource_allocator.py"],
     tags = [
         "exclusive",
         "team:data",

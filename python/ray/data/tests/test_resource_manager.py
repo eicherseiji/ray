@@ -14,6 +14,7 @@ from ray.data._internal.execution.interfaces.execution_options import (
 )
 from ray.data._internal.execution.operators.input_data_buffer import InputDataBuffer
 from ray.data._internal.execution.operators.join import JoinOperator
+from ray.data._internal.execution.operators.limit_operator import LimitOperator
 from ray.data._internal.execution.operators.map_operator import MapOperator
 from ray.data._internal.execution.operators.union_operator import UnionOperator
 from ray.data._internal.execution.resource_manager import (
@@ -23,7 +24,7 @@ from ray.data._internal.execution.streaming_executor_state import (
     build_streaming_topology,
 )
 from ray.data._internal.execution.util import make_ref_bundles
-from ray.data.context import MAX_SAFE_BLOCK_SIZE_FACTOR, DataContext
+from ray.data.context import DataContext
 from ray.data.tests.conftest import *  # noqa
 
 
@@ -283,9 +284,10 @@ class TestResourceManager:
             assert op_usage.gpu == 0
             assert op_usage.object_store_memory == expected_mem
             if op != o1:
+                # _mem_op_internal only includes pending_task_outputs
                 assert (
                     resource_manager._mem_op_internal[op]
-                    == mock_pending_task_outputs[op] + mock_internal_outqueue[op]
+                    == mock_pending_task_outputs[op]
                 )
                 assert (
                     resource_manager._mem_op_outputs[op]
@@ -331,19 +333,16 @@ class TestResourceManager:
         assert resource_manager.get_op_usage(o2).object_store_memory == 0
         assert resource_manager.get_op_usage(o3).object_store_memory == 0
 
-        # Operators estimate pending task outputs using the target max block size
-        # multiplied by MAX_SAFE_BLOCK_SIZE_FACTOR (1.5) during no-sample phase.
-        # In this case, the target max block size is 2, MAX_SAFE_BLOCK_SIZE_FACTOR
-        # is 1.5, and there is at most 1 block in the streaming generator buffer,
-        # so the estimated usage is 2 * 1.5 * 1 = 3.
+        # During no-sample phase, obj_store_mem_pending_task_outputs returns None,
+        # which is treated as 0 in resource calculations.
         o2.metrics.on_input_dequeued(input)
         o2.metrics.on_task_submitted(0, input)
         resource_manager.update_usages()
-        # target_max_block_size * factor * max_blocks
-        expected_usage = 2 * MAX_SAFE_BLOCK_SIZE_FACTOR * 1
         assert resource_manager.get_op_usage(o1).object_store_memory == 0
+        # No sample available yet, so pending task outputs is None (treated as 0)
+        assert o2.metrics.obj_store_mem_pending_task_outputs is None
         op2_usage = resource_manager.get_op_usage(o2).object_store_memory
-        assert op2_usage == expected_usage
+        assert op2_usage == 0
         assert resource_manager.get_op_usage(o3).object_store_memory == 0
 
         # When the task finishes, we move the data from the streaming generator to the
@@ -371,18 +370,16 @@ class TestResourceManager:
         assert resource_manager.get_op_usage(o3).object_store_memory == 0
 
         # Task inputs count toward the previous operator's object store memory
-        # usage, and task outputs count toward the current operator's object
-        # store memory usage. During no-sample phase, pending outputs are
-        # estimated using target_max_block_size * MAX_SAFE_BLOCK_SIZE_FACTOR.
+        # usage. During no-sample phase, pending task outputs returns None.
         o3.metrics.on_input_dequeued(input)
         o3.metrics.on_task_submitted(0, input)
         resource_manager.update_usages()
         assert resource_manager.get_op_usage(o1).object_store_memory == 0
         assert resource_manager.get_op_usage(o2).object_store_memory == 1
-        # target_max_block_size (2) * factor (1.5) * max_blocks (1) = 3
-        expected_o3_usage = 2 * MAX_SAFE_BLOCK_SIZE_FACTOR * 1
+        # No sample available yet, so pending task outputs is None (treated as 0)
+        assert o3.metrics.obj_store_mem_pending_task_outputs is None
         op3_usage = resource_manager.get_op_usage(o3).object_store_memory
-        assert op3_usage == expected_o3_usage
+        assert op3_usage == 0
 
         # Task inputs no longer count once the task is finished.
         o3.metrics.on_output_queued(input)
@@ -391,6 +388,98 @@ class TestResourceManager:
         assert resource_manager.get_op_usage(o1).object_store_memory == 0
         assert resource_manager.get_op_usage(o2).object_store_memory == 0
         assert resource_manager.get_op_usage(o3).object_store_memory == 1
+
+    def test_get_completed_ops_usage(self, restore_data_context):
+        """Test that _get_completed_ops_usage returns total usage of completed ops."""
+        o1 = InputDataBuffer(DataContext.get_current(), [])
+        o2 = mock_map_op(o1)
+        o3 = LimitOperator(1, o2, DataContext.get_current())
+        o4 = mock_map_op(o3)
+        o5 = mock_map_op(o4)
+
+        o1.mark_execution_finished()
+        o2.mark_execution_finished()
+
+        topo = build_streaming_topology(o5, ExecutionOptions())
+
+        op_usages = {
+            o1: ExecutionResources.zero(),
+            o2: ExecutionResources(cpu=2, object_store_memory=50),
+            o3: ExecutionResources(cpu=1, object_store_memory=25),
+            o4: ExecutionResources.zero(),
+            o5: ExecutionResources.zero(),
+        }
+
+        resource_manager = ResourceManager(
+            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
+        )
+        resource_manager.get_op_usage = MagicMock(side_effect=lambda op: op_usages[op])
+
+        # o2 is completed and o3 is downstream ineligible (LimitOperator)
+        # Total usage should be o2 + o3
+        completed_ops_usage = resource_manager._get_completed_ops_usage()
+        assert completed_ops_usage == ExecutionResources(cpu=3, object_store_memory=75)
+
+    def test_get_completed_ops_usage_complex_graph(self, restore_data_context):
+        """
+        o1 (InputDataBuffer)
+                |
+                v
+                o2 (MapOperator, completed)
+                |
+                v
+                o3 (LimitOperator)
+                |
+                v                    o4 (InputDataBuffer)
+                |                    |
+                |                    v
+                |                    o5 (MapOperator, completed)
+                |                    |
+                v                    v
+                o6 (UnionOperator) <--
+                |
+                v
+                o8 (JoinOperator) <-- o7 (InputDataBuffer, completed)
+        """
+        o1 = InputDataBuffer(DataContext.get_current(), [])
+        o2 = mock_map_op(o1)
+        o3 = LimitOperator(1, o2, DataContext.get_current())
+        o4 = InputDataBuffer(DataContext.get_current(), [])
+        o5 = mock_map_op(o4)
+        o6 = mock_union_op([o3, o5])
+        o7 = InputDataBuffer(DataContext.get_current(), [])
+        o8 = mock_join_op(o7, o6)
+
+        o1.mark_execution_finished()
+        o2.mark_execution_finished()
+        o4.mark_execution_finished()
+        o5.mark_execution_finished()
+        o7.mark_execution_finished()
+
+        topo = build_streaming_topology(o8, ExecutionOptions())
+
+        op_usages = {
+            o1: ExecutionResources.zero(),
+            o2: ExecutionResources(cpu=2, object_store_memory=150),
+            o3: ExecutionResources(cpu=2, object_store_memory=50),
+            o4: ExecutionResources.zero(),
+            o5: ExecutionResources(cpu=3, object_store_memory=100),
+            o6: ExecutionResources.zero(),
+            o7: ExecutionResources(cpu=1, object_store_memory=100),
+            o8: ExecutionResources.zero(),
+        }
+
+        resource_manager = ResourceManager(
+            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
+        )
+        resource_manager.get_op_usage = MagicMock(side_effect=lambda op: op_usages[op])
+
+        # Completed ops: o2, o5, o7
+        # Downstream ineligible: o3 (LimitOperator after o2)
+        # Total usage should be o2 + o3 + o5 + o7
+        completed_ops_usage = resource_manager._get_completed_ops_usage()
+
+        assert completed_ops_usage == ExecutionResources(cpu=8, object_store_memory=400)
 
 
 if __name__ == "__main__":
