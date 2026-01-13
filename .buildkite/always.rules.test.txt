@@ -7,5 +7,5 @@
 # Any file gets always lint tags
 some/random/file.txt: always lint
 python/ray/actor.py: always lint
-anyscale/go/go.mod: always lint
 doc/source/index.rst: always lint
+anyscale/go/go.mod: always lint
