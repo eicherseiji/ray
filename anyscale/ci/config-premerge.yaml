@@ -38,8 +38,9 @@ hook_env_keys:
 skip_tags:
   - disabled
   - skip-on-premerge
-  - java
   - oss
+  - java
+  - spark_on_ray
   - gpu
   # RLlib tests are too flaky; and not much activity on rayturbo.
   # The efforts are also deprioritized.
