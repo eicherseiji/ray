@@ -10,3 +10,11 @@ def get_serve_dashboard_config() -> DashboardConfig:
 
 
 # Anyscale overrides
+
+
+def get_serve_dashboard_config() -> DashboardConfig:  # noqa: F811
+    from ray.dashboard.modules.metrics.dashboards.serve_dashboard_panels_anyscale import (
+        serve_dashboard_config,
+    )
+
+    return serve_dashboard_config
