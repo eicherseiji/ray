@@ -13,6 +13,9 @@ def _get_wheel_names(ray_version: str) -> List[str]:
         for host_type in HOST_TYPES:
             wheel_name = f"ray-{ray_version}-{python_version}-manylinux2014_{host_type}"
             wheel_names.append(wheel_name)
+
+    for host_type in HOST_TYPES:
+        wheel_names.append(f"ray_cpp-{ray_version}-py3-none-manylinux2014_{host_type}")
     return wheel_names
 
 

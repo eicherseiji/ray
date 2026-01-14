@@ -13,10 +13,13 @@ from anyscale.ci.ray_wheels_lib import (
 
 
 def test_get_wheel_names():
-    ray_version = "1.11.0"
-    wheel_names = _get_wheel_names(ray_version)
+    ray_version_want = "1.11.0"
+    wheel_names = _get_wheel_names(ray_version_want)
 
-    assert len(wheel_names) == len(PYTHON_VERSIONS) * len(HOST_TYPES)
+    # ray wheels + ray_cpp wheel
+    # ray wheels: len(PYTHON_VERSIONS) * len(HOST_TYPES)
+    # ray_cpp wheel: len(HOST_TYPES)
+    assert len(wheel_names) == (len(PYTHON_VERSIONS) + 1) * len(HOST_TYPES)
 
     platforms = [f"manylinux2014_{host_type}" for host_type in HOST_TYPES]
 
@@ -31,10 +34,16 @@ def test_get_wheel_names():
         ) = wheel_name.split("-")
         platform = platform.split(".")[0]  # Remove the .whl suffix
 
-        assert ray_type == "ray"
-        assert ray_version == ray_version
-        assert f"{python_version}-{python_version2}" in PYTHON_VERSIONS
-        assert platform in platforms
+        assert ray_type in ["ray", "ray_cpp"]
+
+        if ray_type == "ray":
+            assert ray_version == ray_version_want
+            assert f"{python_version}-{python_version2}" in PYTHON_VERSIONS
+            assert platform in platforms
+        else:
+            assert ray_version == ray_version_want
+            assert f"{python_version}-{python_version2}" == "py3-none"
+            assert platform in platforms
 
 
 @pytest.fixture

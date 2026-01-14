@@ -70,7 +70,7 @@ else
 fi
 
 WHEEL_FILE="ray-${RAY_VERSION}-${WHEEL_PYTHON_CODE}-manylinux2014_${HOSTTYPE}.whl"
-CPP_WHEEL_FILE="ray_cpp-${RAY_VERSION}-${WHEEL_PYTHON_CODE}-manylinux2014_${HOSTTYPE}.whl"
+CPP_WHEEL_FILE="ray_cpp-${RAY_VERSION}-py3-none-manylinux2014_${HOSTTYPE}.whl"
 
 if [[ "${IS_SLIM}" == "1" ]]; then
     if [[ "${IMG_TYPE}" == "cpu" ]]; then
