@@ -988,8 +988,10 @@ class TestReservationOpResourceAllocator:
         assert allocator._op_budgets[o6] == ExecutionResources(
             cpu=6, object_store_memory=600
         )
+        # object_store_memory budget is unlimited, since join is a materializing
+        # operator
         assert allocator._op_budgets[o8] == ExecutionResources(
-            cpu=6, object_store_memory=600
+            cpu=6, object_store_memory=float("inf")
         )
 
         # Test when resources are used.
@@ -1016,8 +1018,10 @@ class TestReservationOpResourceAllocator:
         assert allocator._op_budgets[o6] == ExecutionResources(
             cpu=4, object_store_memory=350
         )
+        # object_store_memory budget is unlimited, since join is a materializing
+        # operator
         assert allocator._op_budgets[o8] == ExecutionResources(
-            cpu=4, object_store_memory=500
+            cpu=4, object_store_memory=float("inf")
         )
 
         # Test when completed ops update the usage.
@@ -1054,9 +1058,10 @@ class TestReservationOpResourceAllocator:
         assert allocator._op_budgets[o6] == ExecutionResources(
             cpu=5.5, object_store_memory=381
         )
-        # object_store_memory budget = 163 + (850 - 87) / 2 = 545 (rounded up)
+        # object_store_memory budget is unlimited, since join is a materializing
+        # operator
         assert allocator._op_budgets[o8] == ExecutionResources(
-            cpu=5.5, object_store_memory=545
+            cpu=5.5, object_store_memory=float("inf")
         )
 
 

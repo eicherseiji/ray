@@ -12,6 +12,9 @@ from ray.data._internal.execution.interfaces.execution_options import (
     ExecutionOptions,
     ExecutionResources,
 )
+from ray.data._internal.execution.operators.base_physical_operator import (
+    AllToAllOperator,
+)
 from ray.data._internal.execution.operators.input_data_buffer import InputDataBuffer
 from ray.data._internal.execution.operators.join import JoinOperator
 from ray.data._internal.execution.operators.limit_operator import LimitOperator
@@ -96,6 +99,18 @@ def mock_join_op(
         op.incremental_resource_usage = MagicMock(
             return_value=incremental_resource_usage
         )
+    return op
+
+
+def mock_all_to_all_op(input_op, name="MockShuffle"):
+    """Create a mock AllToAllOperator (shuffle) for testing."""
+    op = AllToAllOperator(
+        bulk_fn=MagicMock(),
+        input_op=input_op,
+        data_context=DataContext.get_current(),
+        name=name,
+    )
+    op.start(ExecutionOptions())
     return op
 
 
@@ -480,6 +495,62 @@ class TestResourceManager:
         completed_ops_usage = resource_manager._get_completed_ops_usage()
 
         assert completed_ops_usage == ExecutionResources(cpu=8, object_store_memory=400)
+
+    def test_is_blocking_materializing_op(self, restore_data_context):
+        """Test _is_blocking_materializing_op correctly identifies blocking materializing ops.
+
+        Cases tested:
+        1. Operator itself is a blocking materializing op (AllToAllOperator) -> True
+        2. Operator has downstream ineligible blocking materializing op -> True
+        3. Operator with no downstream blocking materializing ops -> False
+
+        Note: AllToAllOperator.throttling_disabled() returns True, making it
+        ineligible for resource allocation. This means shuffle operators are
+        always in the "downstream ineligible" chain from eligible operators.
+        """
+        # Build pipeline: o1 -> o2 -> o3 (limit) -> o4 (shuffle) -> o5
+        o1 = InputDataBuffer(DataContext.get_current(), [])
+        o2 = mock_map_op(o1, name="Map1")
+        o3 = LimitOperator(1, o2, DataContext.get_current())
+        o4 = mock_all_to_all_op(o3, name="Sort")
+        o5 = mock_map_op(o4, name="Map2")
+
+        topo = build_streaming_topology(o5, ExecutionOptions())
+
+        resource_manager = ResourceManager(
+            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
+        )
+
+        # Case 1: Shuffle operator itself is blocking materializing
+        assert resource_manager._is_blocking_materializing_op(o4) is True
+
+        # Case 2: Map operator before shuffle (o2) should return True because
+        # its downstream ineligible chain includes:
+        # - o3 (LimitOperator - ineligible, not in eligible types)
+        # - o4 (AllToAllOperator - ineligible because throttling_disabled=True)
+        # Since o4 is a blocking materializing op, the check returns True
+        assert resource_manager._is_blocking_materializing_op(o2) is True
+
+        # o3 (LimitOperator) also returns True because its downstream ineligible
+        # chain includes o4 (shuffle)
+        assert resource_manager._is_blocking_materializing_op(o3) is True
+
+        # Case 3: o5 (Map after shuffle) has no downstream ops -> False
+        assert resource_manager._is_blocking_materializing_op(o5) is False
+
+        # Case 4: Extend pipeline with ops that have no blocking materializing downstream
+        # o5 -> o6 (limit) -> o7
+        o6 = LimitOperator(1, o5, DataContext.get_current())
+        o7 = mock_map_op(o6, name="Map3")
+
+        topo2 = build_streaming_topology(o7, ExecutionOptions())
+        resource_manager2 = ResourceManager(
+            topo2, ExecutionOptions(), MagicMock(), DataContext.get_current()
+        )
+
+        # o5's downstream (o6, o7) has no blocking materializing ops
+        assert resource_manager2._is_blocking_materializing_op(o5) is False
+        assert resource_manager2._is_blocking_materializing_op(o7) is False
 
 
 if __name__ == "__main__":

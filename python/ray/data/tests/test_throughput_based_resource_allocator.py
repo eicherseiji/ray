@@ -10,6 +10,9 @@ from ray.data._internal.execution.interfaces.execution_options import ExecutionO
 from ray.data._internal.execution.operators.base_physical_operator import (
     AllToAllOperator,
 )
+from ray.data._internal.execution.operators.hash_shuffle import (
+    HashShuffleOperator,
+)
 from ray.data._internal.execution.operators.input_data_buffer import InputDataBuffer
 from ray.data._internal.execution.operators.limit_operator import LimitOperator
 from ray.data._internal.execution.operators.map_operator import MapOperator
@@ -25,26 +28,44 @@ from ray.data._internal.execution.util import make_ref_bundles
 from ray.data._internal.util import GiB, MiB
 from ray.data.context import DataContext
 from ray.data.tests.conftest import *  # noqa
+from ray.data.tests.conftest import mock_all_to_all_op
 from ray.data.tests.test_resource_manager import mock_map_op, mock_union_op
 
 
 def mock_shuffle_op(input_op, name="MockShuffle"):
-    """Create a mock AllToAllOperator (shuffle) for testing."""
-    op = AllToAllOperator(
-        bulk_fn=MagicMock(),
-        input_op=input_op,
-        data_context=DataContext.get_current(),
-        name=name,
-    )
-    op.start(ExecutionOptions())
+    """Create a mock HashShuffleOperator for testing.
+
+    Creates a HashShuffleOperator which is eligible for resource allocation
+    (throttling_disabled=False) and is a blocking materializing operator.
+    """
+    mock_logical_op = MagicMock()
+    mock_logical_op.estimated_num_outputs.return_value = 10
+    mock_logical_op.infer_metadata.return_value.size_bytes = 1000
+    input_op._logical_operators = [mock_logical_op]
+
+    with patch.object(HashShuffleOperator, "start"):
+        with patch(
+            "ray.data._internal.execution.operators.hash_shuffle._get_total_cluster_resources"
+        ) as mock:
+            mock.return_value = ExecutionResources(cpu=1)
+            op = HashShuffleOperator(
+                input_op=input_op,
+                data_context=DataContext.get_current(),
+                key_columns=("key",),
+                num_partitions=1,
+            )
+
     return op
 
 
 def create_mock_resource_manager(topology=None):
-    """Create a mock ResourceManager for testing."""
-    mock_rm = Mock()
-    mock_rm._topology = topology if topology is not None else {}
-    return mock_rm
+    """Create a ResourceManager with minimal dependencies for testing."""
+    return ResourceManager(
+        topology=topology if topology is not None else {},
+        options=ExecutionOptions(),
+        get_total_resources=MagicMock(),
+        data_context=DataContext.get_current(),
+    )
 
 
 def create_mock_operator(
@@ -62,6 +83,11 @@ def create_mock_operator(
     # Set provided parameters
     mock_op.get_max_concurrency_limit.return_value = max_concurrency
     mock_op.metrics = metrics
+
+    # Bind real class methods for _is_blocking_materializing_op to work correctly
+    mock_op.output_dependencies = []
+    mock_op.throttling_disabled = lambda: op_class.throttling_disabled(mock_op)
+    mock_op.has_execution_finished.return_value = False
 
     return mock_op
 
@@ -136,13 +162,9 @@ class TestThroughputBasedResourceAllocator:
         total_obj_store = 1 * GiB
         total_weights = 2000.0 + 4000.0 + 8000.0
 
-        expected_read_obj_store = (
-            math.ceil(total_obj_store * 2000.0 / total_weights) + 1
-        )
-        expected_map_obj_store = math.ceil(total_obj_store * 4000.0 / total_weights) + 1
-        expected_write_obj_store = (
-            math.ceil(total_obj_store * 8000.0 / total_weights) + 1
-        )
+        expected_read_obj_store = math.ceil(total_obj_store * 2000.0 / total_weights)
+        expected_map_obj_store = math.ceil(total_obj_store * 4000.0 / total_weights)
+        expected_write_obj_store = math.ceil(total_obj_store * 8000.0 / total_weights)
 
         # Assert exact allocations for each operator
         assert op_allocations == {
@@ -231,8 +253,8 @@ class TestThroughputBasedResourceAllocator:
         total_obj_store = 1 * GiB
         total_weights = 2000.0 + 4000.0
 
-        expected_cpu_obj_store = math.ceil(total_obj_store * 2000.0 / total_weights) + 1
-        expected_gpu_obj_store = math.ceil(total_obj_store * 4000.0 / total_weights) + 1
+        expected_cpu_obj_store = math.ceil(total_obj_store * 2000.0 / total_weights)
+        expected_gpu_obj_store = math.ceil(total_obj_store * 4000.0 / total_weights)
 
         assert op_allocations == {
             cpu_op: ExecutionResources(
@@ -249,8 +271,8 @@ class TestThroughputBasedResourceAllocator:
             ),
         }
 
-    def test_allocate_water_filling_with_shuffle_operator(self):
-        """Test allocation when last operator is a shuffle with exact outputs"""
+    def test_allocate_water_filling_with_pending_shuffle_operator(self):
+        """Test water-filling allocation with 1 running and 1 pending operators."""
         allocator = ThroughputBasedResourceAllocator(create_mock_resource_manager())
 
         # Standard operator configuration
@@ -292,22 +314,32 @@ class TestThroughputBasedResourceAllocator:
             eligible_ops, productivity_rates, op_expansion_ratios, limits
         )
 
-        # Assert exact whole outputs
+        # With 2 ops and baseline ratios [0.5, 0.5]:
+        # - Only map_op has productivity > 0, so running_ops = [map_op]
+        # - total_allocatable_fraction = 0.5 (first baseline ratio)
+        # - allocatable_limits = limits * 0.5
         assert allocatable_limits == ExecutionResources(
-            cpu=10.0, gpu=2.0, object_store_memory=1 * GiB, memory=4 * GiB
+            cpu=5.0, gpu=1.0, object_store_memory=0.5 * GiB, memory=2 * GiB
         )
 
-        assert target_rate == 1000.0
+        # target_rate = 5.0 CPU / 0.01 = 500 MiB/s
+        assert target_rate == 500.0
 
+        # map_op gets productivity-based allocation from allocatable resources
+        # shuffle_op gets baseline reservation from remaining resources (limits * 0.5)
         assert op_allocations == {
             map_op: ExecutionResources(
-                cpu=10.0, gpu=0.0, memory=float("inf"), object_store_memory=1 * GiB + 1
-            ),
-            shuffle_op: ExecutionResources(
-                cpu=float("inf"),
+                cpu=5.0,  # 500 * 0.01 = 5.0
                 gpu=0.0,
                 memory=float("inf"),
-                object_store_memory=sys.maxsize,
+                object_store_memory=0.5 * GiB,  # All allocatable obj store
+            ),
+            shuffle_op: ExecutionResources(
+                cpu=5.0,  # Reserved: limits.cpu * 0.5
+                gpu=1.0,  # Reserved: limits.gpu * 0.5
+                memory=float("inf"),
+                # Blocking materializing ops get unlimited OS budget
+                object_store_memory=float("inf"),
             ),
         }
 
@@ -415,8 +447,7 @@ class TestThroughputBasedResourceAllocator:
                 cpu=5.0,  # 250.0 * 0.02 = 5.0 (all available CPU)
                 gpu=0.0,
                 memory=float("inf"),
-                object_store_memory=0.5 * GiB
-                + 1,  # All allocatable object store memory
+                object_store_memory=0.5 * GiB,  # All allocatable object store memory
             ),
             # Not started operators get baseline reservations from reserved resources
             op2: ExecutionResources(
@@ -605,9 +636,9 @@ class TestThroughputBasedResourceAllocator:
         total_obj_store = 4 * GiB
         total_weights = 500.0 + 500.0 + 1000.0  # 2000
 
-        compress_obj_store = math.ceil(total_obj_store * 500.0 / total_weights) + 1
-        neutral_obj_store = math.ceil(total_obj_store * 500.0 / total_weights) + 1
-        expand_obj_store = math.ceil(total_obj_store * 1000.0 / total_weights) + 1
+        compress_obj_store = math.ceil(total_obj_store * 500.0 / total_weights)
+        neutral_obj_store = math.ceil(total_obj_store * 500.0 / total_weights)
+        expand_obj_store = math.ceil(total_obj_store * 1000.0 / total_weights)
 
         # Object store allocation should be proportional to expansion ratios
         assert op_allocations == {
@@ -775,10 +806,14 @@ class TestThroughputBasedResourceAllocator:
         assert alpha_expand == pytest.approx(0.02, rel=1e-6)
         assert beta_expand == 0.0
 
-    def test_update_productivity_coefficients_skips_shuffle(self):
-        """Test that _update_productivity_coefficients skips shuffle operators in normalization"""
-        # Pipeline: A > Shuffle > B
-        # Shuffle should be skipped in normalization
+    def test_update_productivity_coefficients_with_shuffle(self):
+        """Test that _update_productivity_coefficients calculates shuffle productivity
+        appropriately.
+
+        Note: Operators downstream from a shuffle cannot run until the shuffle
+        completes, so only ops up to and including shuffle are eligible.
+        """
+        # Pipeline: A > Shuffle (> B not eligible until shuffle completes)
 
         allocator = ThroughputBasedResourceAllocator(create_mock_resource_manager())
 
@@ -795,9 +830,9 @@ class TestThroughputBasedResourceAllocator:
         )
         op_a.incremental_resource_usage.return_value = ExecutionResources(memory=1000)
 
-        # Shuffle operator (should be skipped)
+        # Shuffle operator with real metrics (non-zero task time and CPU allocation)
         metrics_shuffle = Mock()
-        metrics_shuffle.average_task_completion_excl_backpressure_time_s = 0.0
+        metrics_shuffle.average_task_completion_excl_backpressure_time_s = 8.0
         metrics_shuffle.average_rows_inputs_per_task = 100
         metrics_shuffle.average_rows_outputs_per_task = 100
         metrics_shuffle.average_bytes_inputs_per_task = 1000 * MiB
@@ -807,13 +842,13 @@ class TestThroughputBasedResourceAllocator:
             "Shuffle", AllToAllOperator, metrics=metrics_shuffle
         )
         op_shuffle.per_task_resource_allocation.return_value = ExecutionResources(
-            cpu=0.0, gpu=0.0
+            cpu=1.0, gpu=0.0
         )
         op_shuffle.incremental_resource_usage.return_value = ExecutionResources(
-            memory=0
+            memory=500
         )
 
-        # Operator B - contracts 2:1
+        # Operator B - downstream from shuffle, cannot run until shuffle completes
         metrics_b = Mock()
         metrics_b.average_task_completion_excl_backpressure_time_s = 5.0
         metrics_b.average_rows_inputs_per_task = 100
@@ -827,7 +862,9 @@ class TestThroughputBasedResourceAllocator:
         )
         op_b.incremental_resource_usage.return_value = ExecutionResources(memory=500)
 
-        eligible_ops = [op_a, op_shuffle, op_b]
+        # Only ops up to and including shuffle are eligible while shuffle is running.
+        # B cannot run until shuffle completes.
+        eligible_ops = [op_a, op_shuffle]
 
         # Compute expansion ratios (required by _update_productivity_coefficients)
         op_expansion_ratios = {
@@ -837,26 +874,232 @@ class TestThroughputBasedResourceAllocator:
         # Call _update_productivity_coefficients
         allocator._update_productivity_coefficients(eligible_ops, op_expansion_ratios)
 
-        # Expected for A: normalized_bytes = 1000 MiB * 0.5 (B ratio) = 500 MiB (shuffle skipped in normalization)
-        #   temporal_prod = 10.0s / 500 MiB = 0.02 s/byte
-        #   alpha = 0.02 s/byte * 2.0 CPU = 0.04 CPU-s/byte
+        # With no downstream ops beyond shuffle:
+        # - Shuffle expansion ratio: 1000/1000 = 1.0
+        # - A expansion ratio: 1000/1000 = 1.0
+        #
+        # Expected for A: normalized_bytes = 1000 MiB * 1.0 (shuffle ratio) = 1000 MiB
+        #   temporal_prod = 10.0s / 1000 MiB = 0.01 s/MiB
+        #   alpha = 0.01 s/MiB * 2.0 CPU = 0.02 CPU-s/MiB
         alpha_a, beta_a, gamma_a = allocator._op_productivity[op_a]
-        assert alpha_a == pytest.approx(0.04, rel=1e-6)
+        assert alpha_a == pytest.approx(0.02, rel=1e-6)
         assert beta_a == 0.0
 
-        # Shuffle gets productivity of 0
+        # Shuffle gets non-zero productivity:
+        # normalized_bytes = 1000 MiB * 1.0 (no downstream) = 1000 MiB
+        # temporal_prod = 8.0s / 1000 MiB = 0.008 s/MiB
+        # alpha = 0.008 s/MiB * 1.0 CPU = 0.008 CPU-s/MiB
         alpha_shuffle, beta_shuffle, gamma_shuffle = allocator._op_productivity[
             op_shuffle
         ]
-        assert alpha_shuffle == 0.0
+        assert alpha_shuffle == pytest.approx(0.008, rel=1e-6)
         assert beta_shuffle == 0.0
 
-        # Expected for B: normalized_bytes = 500 MiB * 1.0 (no downstream) = 500 MiB
-        #   temporal_prod = 5.0s / 500 MiB = 0.01 s/byte
-        #   alpha = 0.01 s/byte * 1.0 CPU = 0.01 CPU-s/byte
-        alpha_b, beta_b, gamma_b = allocator._op_productivity[op_b]
-        assert alpha_b == pytest.approx(0.01, rel=1e-6)
-        assert beta_b == 0.0
+        # B is not in eligible_ops (downstream from pending shuffle),
+        # so it should have 0 productivity
+        assert op_b not in allocator._op_productivity
+
+    @pytest.mark.parametrize("shuffle_alpha", [0, 0.01])
+    def test_shuffle_only_stage_allocation(self, shuffle_alpha, restore_data_context):
+        """Test _allocate_water_filling when only a shuffle op remains (all map ops completed).
+
+        When only shuffle operators remain in the eligible list (all map operators completed),
+        the shuffle gets full baseline reservation since it has no productivity-based allocation.
+        """
+        # Create a realistic pipeline: InputDataBuffer -> MapOp -> MapOp
+        o1 = InputDataBuffer(DataContext.get_current(), [])
+        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o3 = mock_map_op(o2, incremental_resource_usage=ExecutionResources(1, 0, 10))
+
+        topo = build_streaming_topology(o3, ExecutionOptions())
+
+        resource_manager = ResourceManager(
+            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
+        )
+        resource_manager.get_op_usage = MagicMock(
+            return_value=ExecutionResources.zero()
+        )
+
+        allocator = resource_manager._op_resource_allocator
+        assert isinstance(allocator, ThroughputBasedResourceAllocator)
+
+        # Test the scenario where only shuffle ops remain in the eligible list
+        # This happens when all map operators have completed, leaving only shuffles
+        metrics = Mock()
+        metrics.average_bytes_inputs_per_task = 1000
+        metrics.average_bytes_outputs_per_task = 1000
+        metrics.average_rows_inputs_per_task = 10
+        metrics.average_rows_outputs_per_task = 10
+
+        shuffle_op = create_mock_operator("Shuffle", AllToAllOperator, metrics=metrics)
+
+        eligible_ops = [shuffle_op]
+        op_expansion_ratios = {shuffle_op: 1.0}
+        productivity_rates = {shuffle_op: (shuffle_alpha, 0.0, 0.0)}
+        limits = ExecutionResources(cpu=10, object_store_memory=1000)
+
+        (
+            allocatable_limits,
+            target_rate,
+            op_allocations,
+        ) = allocator._allocate_water_filling(
+            eligible_ops, productivity_rates, op_expansion_ratios, limits
+        )
+
+        # If productivity is 0
+        #   - No running ops (all have zero productivity), so total_allocatable_fraction = 0
+        #       - allocatable_limits = limits.scale(0) = 0 resources
+        #       - target_rate = 0
+        #   - Baseline reservation is limits.scale(1.0) = full limits
+        if shuffle_alpha == 0.0:
+            expected_target_rate = 0
+            expected_allocatable_limits = ExecutionResources(
+                cpu=0.0, gpu=0.0, object_store_memory=0, memory=0
+            )
+        else:
+            expected_target_rate = 1000
+            expected_allocatable_limits = limits
+
+        assert allocatable_limits == expected_allocatable_limits
+        assert target_rate == expected_target_rate
+
+        # Blocking materializing ops get unlimited OS budget
+        assert op_allocations[shuffle_op] == ExecutionResources(
+            cpu=10.0,
+            gpu=0.0,
+            object_store_memory=float("inf"),
+            memory=float("inf"),
+        )
+
+    def test_allocate_water_filling_running_shuffle_operator(
+        self, restore_data_context
+    ):
+        """Test that shuffle operators get productivity-based allocation."""
+        # Create a minimal ResourceManager to get an allocator instance
+        o1 = InputDataBuffer(DataContext.get_current(), [])
+        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        topo = build_streaming_topology(o2, ExecutionOptions())
+
+        resource_manager = ResourceManager(
+            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
+        )
+        allocator = resource_manager._op_resource_allocator
+
+        map_metrics = Mock()
+        map_metrics.average_bytes_inputs_per_task = 1000
+        map_metrics.average_rows_inputs_per_task = 10
+        map_metrics.average_bytes_outputs_per_task = 2000  # 2x expansion
+        map_metrics.average_rows_outputs_per_task = 20
+
+        # Shuffle doesn't expand data - it just redistributes
+        shuffle_metrics = Mock()
+        shuffle_metrics.average_bytes_inputs_per_task = 2000
+        shuffle_metrics.average_rows_inputs_per_task = 20
+        shuffle_metrics.average_bytes_outputs_per_task = 2000  # 1x (no expansion)
+        shuffle_metrics.average_rows_outputs_per_task = 20
+
+        map_op = create_mock_operator("Map", MapOperator, metrics=map_metrics)
+        shuffle = create_mock_operator(
+            "Shuffle", AllToAllOperator, metrics=shuffle_metrics
+        )
+
+        eligible_ops = [map_op, shuffle]
+        op_expansion_ratios = {
+            op: _estimate_byte_expansion_ratio(op) for op in eligible_ops
+        }
+        # Both operators have non-zero productivity (shuffle now reports metrics)
+        productivity_rates = {
+            map_op: (0.01, 0.0, 0.0),
+            shuffle: (0.02, 0.0, 0.0),  # Shuffle with non-zero productivity
+        }
+        limits = ExecutionResources(cpu=10, object_store_memory=1000)
+
+        (
+            allocatable_limits,
+            target_rate,
+            op_allocations,
+        ) = allocator._allocate_water_filling(
+            eligible_ops, productivity_rates, op_expansion_ratios, limits
+        )
+
+        # With both ops having productivity, all resources are allocatable
+        assert allocatable_limits == ExecutionResources(
+            cpu=10.0, gpu=0.0, object_store_memory=1000, memory=0
+        )
+
+        # Target rate = 10.0 CPU / (0.01 + 0.02) = 333.33 MiB/s
+        assert target_rate == pytest.approx(333.33, rel=0.01)
+
+        # CPU allocation: map_op gets 333.33 * 0.01 = 3.33 CPU
+        #                 shuffle gets 333.33 * 0.02 = 6.67 CPU
+        # Object store allocation using cumulative algorithm:
+        # map_op has 2x expansion (1000 -> 2000), shuffle has 1x (2000 -> 2000)
+        # Cumulative weights: map_op = 1000 * 2 = 2000, shuffle = 2000 * 1 = 2000
+        # Total weights = 4000
+        total_obj_store = 1000
+        total_weights = 2000.0 + 2000.0
+
+        assert op_allocations[map_op] == ExecutionResources(
+            cpu=target_rate * productivity_rates[map_op][0],
+            gpu=0.0,
+            object_store_memory=math.ceil(total_obj_store * 2000.0 / total_weights),
+            memory=float("inf"),
+        )
+
+        # Blocking materializing ops get unlimited OS budget
+        assert op_allocations[shuffle] == ExecutionResources(
+            cpu=target_rate * productivity_rates[shuffle][0],
+            gpu=0.0,
+            object_store_memory=float("inf"),
+            memory=float("inf"),
+        )
+
+    def test_shuffle_boundary_excludes_downstream_ops(self, restore_data_context):
+        """Test that operators after a pending shuffle are excluded from budget allocation.
+
+        The shuffle boundary logic ensures that operators downstream of a pending shuffle
+        don't receive resource allocation until the shuffle completes. This prevents
+        resource hoarding by upstream ops when shuffle is the bottleneck.
+
+        Pipeline: InputDataBuffer -> MapBefore -> ShuffleOp -> MapAfter
+        - When shuffle is pending: only MapBefore and ShuffleOp are eligible
+        - After shuffle completes: MapAfter becomes eligible
+        """
+        # Build pipeline: InputDataBuffer -> MapBefore -> ShuffleOp -> MapAfter
+        o1 = InputDataBuffer(DataContext.get_current(), [])
+        map_before = mock_map_op(o1, name="MapBefore")
+        shuffle_op = mock_shuffle_op(map_before, name="Shuffle")
+        map_after = mock_map_op(shuffle_op, name="MapAfter")
+
+        topo = build_streaming_topology(map_after, ExecutionOptions())
+
+        resource_manager = ResourceManager(
+            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
+        )
+
+        allocator = resource_manager._op_resource_allocator
+        assert isinstance(allocator, ThroughputBasedResourceAllocator)
+
+        # Test 1: With pending shuffle (completed() returns False),
+        # only ops at or before shuffle should be eligible
+        assert not shuffle_op.has_completed()  # Shuffle is pending by default
+
+        eligible_ops = allocator._get_eligible_ops()
+
+        # map_after should NOT be in eligible ops (it's after the pending shuffle)
+        assert [map_before, shuffle_op] == eligible_ops
+
+        # Test 2: After shuffle completes, downstream ops should become eligible
+        # Mark shuffle as completed (removes the boundary)
+        shuffle_op.has_completed = MagicMock(return_value=True)
+        # Mark upstream ops as finished execution (they're no longer eligible)
+        map_before.has_execution_finished = MagicMock(return_value=True)
+        shuffle_op.has_execution_finished = MagicMock(return_value=True)
+
+        eligible_ops_after = allocator._get_eligible_ops()
+
+        # Only map_after should be eligible now
+        assert [map_after] == eligible_ops_after
 
     def test_allocate_object_store(self):
         """Test _allocate_object_store method directly with new cumulative algorithm"""
@@ -925,9 +1168,9 @@ class TestThroughputBasedResourceAllocator:
 
         total_weights = 500.0 + 500.0 + 1000.0
 
-        expected_compress = math.ceil(total_object_store * 500.0 / total_weights) + 1
-        expected_neutral = math.ceil(total_object_store * 500.0 / total_weights) + 1
-        expected_expand = math.ceil(total_object_store * 1000.0 / total_weights) + 1
+        expected_compress = math.ceil(total_object_store * 500.0 / total_weights)
+        expected_neutral = math.ceil(total_object_store * 500.0 / total_weights)
+        expected_expand = math.ceil(total_object_store * 1000.0 / total_weights)
 
         assert len(allocations) == 3
         assert allocations[compress_op] == expected_compress
@@ -967,8 +1210,8 @@ class TestThroughputBasedResourceAllocator:
         )
 
         # With no outputs, weights should be 0, triggering fair split fallback
-        # Each operator gets total_object_store / 3 + 1
-        expected_fair_share = math.ceil(total_object_store / 3) + 1
+        # Each operator gets total_object_store / 3
+        expected_fair_share = math.ceil(total_object_store / 3)
 
         assert len(fallback_allocations) == 3
         assert fallback_allocations[op1] == expected_fair_share
@@ -992,9 +1235,9 @@ class TestThroughputBasedResourceAllocator:
         )
 
         # Single operator: base = 1000, weight = 1000 * (500/1000) = 500
-        # Gets total_object_store * (500/500) + 1 = total_object_store + 1
+        # Gets total_object_store * (500/500) = total_object_store
         assert len(single_allocations) == 1
-        assert single_allocations[single_op] == total_object_store + 1
+        assert single_allocations[single_op] == total_object_store
 
         # Test case 5: Verify cumulative multiplication with all expansions
         # Pipeline: A (100 -> 200) -> B (200 -> 600) -> C (600 -> 1200)
@@ -1038,9 +1281,9 @@ class TestThroughputBasedResourceAllocator:
         # Total: 200 + 600 + 1200 = 2000
         total_exp_weights = 200.0 + 600.0 + 1200.0
 
-        expected_a = math.ceil(total_object_store * 200.0 / total_exp_weights) + 1
-        expected_b = math.ceil(total_object_store * 600.0 / total_exp_weights) + 1
-        expected_c = math.ceil(total_object_store * 1200.0 / total_exp_weights) + 1
+        expected_a = math.ceil(total_object_store * 200.0 / total_exp_weights)
+        expected_b = math.ceil(total_object_store * 600.0 / total_exp_weights)
+        expected_c = math.ceil(total_object_store * 1200.0 / total_exp_weights)
 
         assert expansion_allocations[op_a] == expected_a
         assert expansion_allocations[op_b] == expected_b
@@ -1093,7 +1336,7 @@ class TestThroughputBasedResourceAllocator:
         assert sum(ratios_5) == 1.0
 
 
-class TestThroughputBasedResourceAllocatorIntegration:
+class TestThroughputBasedResourceAllocatorE2E:
     """Integration tests for ``ThroughputBasedResourceAllocator`` with ``ResourceManager``."""
 
     @pytest.fixture(scope="function", autouse=True)
@@ -1234,14 +1477,14 @@ class TestThroughputBasedResourceAllocatorIntegration:
         assert allocation == ExecutionResources(
             cpu=10.0,
             gpu=0.0,
-            object_store_memory=1001,  # 1000 + 1 (liveness byte)
+            object_store_memory=1000,
             memory=float("inf"),
         )
 
         # Simulate tasks being submitted
         o2_metrics.num_tasks_submitted = 1
 
-        # Budget = Allocation when usage is zero
+        # Budget == Allocation when usage is zero
         assert allocator.get_budget(o2) == allocation
         assert allocator.can_submit_new_task(o2)
 
@@ -1270,9 +1513,9 @@ class TestThroughputBasedResourceAllocatorIntegration:
 
         allocator.update_budgets(limits=global_limits)
 
-        # Budget = allocation (1001) - usage (1000) = 1 byte remaining (liveness byte)
+        # Budget = allocation (1000) - usage (1000) = 0
         assert allocator.get_budget(o2) == ExecutionResources(
-            cpu=0, gpu=0, object_store_memory=1, memory=float("inf")
+            cpu=0, gpu=0, object_store_memory=0, memory=float("inf")
         )
 
         assert not allocator.can_submit_new_task(o2)
@@ -1474,8 +1717,10 @@ class TestThroughputBasedResourceAllocatorIntegration:
         """Test max_task_output_bytes_to_read returns correct values."""
         o1 = InputDataBuffer(DataContext.get_current(), [])
         o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        # Shuffle operator gets infinite object store budget
+        o3 = mock_shuffle_op(o2, name="Shuffle")
 
-        topo = build_streaming_topology(o2, ExecutionOptions())
+        topo = build_streaming_topology(o3, ExecutionOptions())
 
         resource_manager = ResourceManager(
             topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
@@ -1498,10 +1743,51 @@ class TestThroughputBasedResourceAllocatorIntegration:
         topo[o2].output_queue._num_blocks = 0
         assert allocator.max_task_output_bytes_to_read(o2) is None
 
-        # When output queue has blocks, should return the object store budget
-        # Single operator gets all object store memory (1000)
+        # o2's downstream hash-shuffle is *eligible*, hence it gets finite budget
         topo[o2].output_queue._num_blocks = 5
-        assert allocator.max_task_output_bytes_to_read(o2) == 1000
+        assert allocator.max_task_output_bytes_to_read(o2) == 500
+
+        # Shuffle operator itself is blocking materializing, gets infinite budget
+        topo[o3].output_queue._num_blocks = 5
+        assert allocator.max_task_output_bytes_to_read(o3) == sys.maxsize
+
+    def test_all_to_all_downstream_gets_infinite_budget(self, restore_data_context):
+        """Test that operators before an AllToAllOperator get infinite object store budget.
+
+        AllToAllOperator has throttling_disabled=True, making it ineligible and
+        since it's also a blocking, materializing op, means that first eligible
+        upstream operator gets infinite object store budget.
+        """
+        o1 = InputDataBuffer(DataContext.get_current(), [])
+        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o3 = mock_all_to_all_op(o2, name="Sort")
+        o4 = mock_map_op(o3, incremental_resource_usage=ExecutionResources(1, 0, 10))
+
+        topo = build_streaming_topology(o4, ExecutionOptions())
+
+        resource_manager = ResourceManager(
+            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
+        )
+        resource_manager.get_op_usage = MagicMock(
+            return_value=ExecutionResources.zero()
+        )
+
+        allocator = resource_manager._op_resource_allocator
+
+        global_limits = ExecutionResources(cpu=10, object_store_memory=1000)
+        allocator.update_budgets(limits=global_limits)
+
+        # o2 has downstream ineligible `AllToAllOperator`
+        # so it gets infinite object store budget
+        topo[o2].output_queue._num_blocks = 5
+        assert allocator.max_task_output_bytes_to_read(o2) == sys.maxsize
+
+        # o3 (AllToAllOperator) is ineligible (throttling_disabled=True),
+        # so it's not in the budgets and returns None
+        assert allocator.max_task_output_bytes_to_read(o3) is None
+
+        # o4 is excluded from eligible ops (after pending blocking materializing op)
+        assert allocator.max_task_output_bytes_to_read(o4) is None
 
     def test_complex_graph_union(self, restore_data_context):
         """Test allocator with union operator (multiple inputs)."""
@@ -1587,152 +1873,6 @@ class TestThroughputBasedResourceAllocatorIntegration:
         # Still-active operators should still have budgets
         assert allocator.get_budget(o3) is not None
         assert allocator.get_budget(o4) is not None
-
-    def test_shuffle_operator_gets_unlimited_allocation(self, restore_data_context):
-        """Test that shuffle operators get unlimited resource allocation."""
-        # Create a minimal ResourceManager to get an allocator instance
-        o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
-        topo = build_streaming_topology(o2, ExecutionOptions())
-
-        resource_manager = ResourceManager(
-            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
-        )
-        allocator = resource_manager._op_resource_allocator
-
-        # Directly test the water-filling method with shuffle at the end
-        metrics = Mock()
-        metrics.average_bytes_inputs_per_task = 1000
-        metrics.average_rows_inputs_per_task = 10
-        metrics.average_bytes_outputs_per_task = 2000
-        metrics.average_rows_outputs_per_task = 20
-
-        map_op = create_mock_operator("Map", MapOperator, metrics=metrics)
-        shuffle = create_mock_operator("Shuffle", AllToAllOperator, metrics=metrics)
-
-        eligible_ops = [map_op, shuffle]
-        op_expansion_ratios = {
-            op: _estimate_byte_expansion_ratio(op) for op in eligible_ops
-        }
-        productivity_rates = {
-            map_op: (0.01, 0.0, 0.0),
-            shuffle: (0.0, 0.0, 0.0),  # Shuffle has zero productivity
-        }
-        limits = ExecutionResources(cpu=10, object_store_memory=1000)
-
-        _, _, op_allocations = allocator._allocate_water_filling(
-            eligible_ops, productivity_rates, op_expansion_ratios, limits
-        )
-
-        # Shuffle should get unlimited resources
-        assert op_allocations[shuffle] == ExecutionResources(
-            cpu=float("inf"),
-            gpu=0.0,
-            object_store_memory=sys.maxsize,
-            memory=float("inf"),
-        )
-
-    def test_shuffle_only_stage_allocation(self, restore_data_context):
-        """Test _allocate_water_filling when only a shuffle op remains (all map ops completed)."""
-        # Create a realistic pipeline: InputDataBuffer -> MapOp -> MapOp
-        o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
-        o3 = mock_map_op(o2, incremental_resource_usage=ExecutionResources(1, 0, 10))
-
-        topo = build_streaming_topology(o3, ExecutionOptions())
-
-        resource_manager = ResourceManager(
-            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
-        )
-        resource_manager.get_op_usage = MagicMock(
-            return_value=ExecutionResources.zero()
-        )
-
-        allocator = resource_manager._op_resource_allocator
-        assert isinstance(allocator, ThroughputBasedResourceAllocator)
-
-        # Test the scenario where only shuffle ops remain in the eligible list
-        # This happens when all map operators have completed, leaving only shuffles
-        metrics = Mock()
-        metrics.average_bytes_inputs_per_task = 1000
-        metrics.average_bytes_outputs_per_task = 1000
-        metrics.average_rows_inputs_per_task = 10
-        metrics.average_rows_outputs_per_task = 10
-
-        shuffle_op = create_mock_operator("Shuffle", AllToAllOperator, metrics=metrics)
-
-        eligible_ops = [shuffle_op]
-        op_expansion_ratios = {shuffle_op: 1.0}
-        productivity_rates = {
-            shuffle_op: (0.0, 0.0, 0.0)
-        }  # Shuffle has zero productivity
-        limits = ExecutionResources(cpu=10, object_store_memory=1000)
-
-        (
-            allocatable_limits,
-            target_rate,
-            op_allocations,
-        ) = allocator._allocate_water_filling(
-            eligible_ops, productivity_rates, op_expansion_ratios, limits
-        )
-
-        # Target rate is 0 since no non-shuffle ops contribute to throughput
-        assert target_rate == 0
-
-        # Shuffle gets unlimited allocation since it's the only op type remaining
-        assert op_allocations[shuffle_op] == ExecutionResources(
-            cpu=float("inf"),
-            gpu=0.0,
-            object_store_memory=sys.maxsize,
-            memory=float("inf"),
-        )
-
-    def test_shuffle_boundary_excludes_downstream_ops(self, restore_data_context):
-        """Test that operators after a pending shuffle are excluded from budget allocation.
-
-        The shuffle boundary logic ensures that operators downstream of a pending shuffle
-        don't receive resource allocation until the shuffle completes. This prevents
-        resource hoarding by upstream ops when shuffle is the bottleneck.
-
-        Pipeline: InputDataBuffer -> MapBefore -> ShuffleOp -> MapAfter
-        - When shuffle is pending: only MapBefore and ShuffleOp are eligible
-        - After shuffle completes: MapAfter becomes eligible
-        """
-        # Build pipeline: InputDataBuffer -> MapBefore -> ShuffleOp -> MapAfter
-        o1 = InputDataBuffer(DataContext.get_current(), [])
-        map_before = mock_map_op(o1, name="MapBefore")
-        shuffle_op = mock_shuffle_op(map_before, name="Shuffle")
-        map_after = mock_map_op(shuffle_op, name="MapAfter")
-
-        topo = build_streaming_topology(map_after, ExecutionOptions())
-
-        resource_manager = ResourceManager(
-            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
-        )
-
-        allocator = resource_manager._op_resource_allocator
-        assert isinstance(allocator, ThroughputBasedResourceAllocator)
-
-        # Test 1: With pending shuffle (completed() returns False),
-        # only ops at or before shuffle should be eligible
-        assert not shuffle_op.has_completed()  # Shuffle is pending by default
-
-        eligible_ops = allocator._get_eligible_ops()
-
-        # map_after should NOT be in eligible ops (it's after the pending shuffle)
-        assert [map_before, shuffle_op] == eligible_ops
-
-        # Test 2: After shuffle completes, downstream ops should become eligible
-        # Mark shuffle as completed (removes the boundary)
-        shuffle_op.completed = MagicMock(return_value=True)
-        # Mark upstream ops as finished execution (they're no longer eligible)
-        map_before.has_execution_finished = MagicMock(return_value=True)
-        shuffle_op.has_execution_finished = MagicMock(return_value=True)
-
-        eligible_ops_after = allocator._get_eligible_ops()
-
-        # Only map_after should be eligible now
-        assert [map_after] == eligible_ops_after
 
 
 if __name__ == "__main__":

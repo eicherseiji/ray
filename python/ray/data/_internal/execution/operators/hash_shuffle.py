@@ -453,13 +453,8 @@ class HashShuffleProgressBarMixin(SubProgressBarMixin):
     def get_sub_progress_bar_names(self) -> Optional[List[str]]:
         self._validate_sub_progress_bar_names()
 
-        # shuffle
         self.shuffle_bar = None
-        self.shuffle_metrics = OpRuntimeMetrics(self)
-
-        # reduce
         self.reduce_bar = None
-        self.reduce_metrics = OpRuntimeMetrics(self)
 
         return [self.shuffle_name, self.reduce_name]
 
@@ -662,6 +657,9 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
         self._output_blocks_stats: List[BlockStats] = list()
         self._shuffled_blocks_stats: List[BlockStats] = list()
 
+        self._shuffle_metrics = OpRuntimeMetrics(self)
+        self._reduce_metrics = OpRuntimeMetrics(self)
+
         # Incremental individual partition metadata accumulated separately for
         # individual input sequences during shuffling. Maps
         #
@@ -691,7 +689,7 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
     def _add_input_inner(self, input_bundle: RefBundle, input_index: int) -> None:
 
         # TODO move to base class
-        self.shuffle_metrics.on_input_received(input_bundle)
+        self._shuffle_metrics.on_input_received(input_bundle)
         self._do_add_input_inner(input_bundle, input_index)
 
     def _do_add_input_inner(self, input_bundle: RefBundle, input_index: int):
@@ -780,11 +778,11 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
                 # NOTE: schema doesn't matter because we are creating a ref bundle
                 # for metrics recording purposes
                 out_bundle = RefBundle(blocks, schema=None, owns_blocks=False)
-                self.shuffle_metrics.on_output_taken(input_bundle)
-                self.shuffle_metrics.on_task_output_generated(
+                self._shuffle_metrics.on_output_taken(input_bundle)
+                self._shuffle_metrics.on_task_output_generated(
                     cur_shuffle_task_idx, out_bundle
                 )
-                self.shuffle_metrics.on_task_finished(cur_shuffle_task_idx, None)
+                self._shuffle_metrics.on_task_finished(cur_shuffle_task_idx, None)
 
                 # Update Shuffle progress bar
                 self.shuffle_bar.update(increment=input_block_metadata.num_rows or 0)
@@ -808,7 +806,7 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
                 )
 
             #  Update Shuffle Metrics on task submission
-            self.shuffle_metrics.on_task_submitted(
+            self._shuffle_metrics.on_task_submitted(
                 cur_shuffle_task_idx,
                 RefBundle(
                     [(block_ref, block_metadata)], schema=None, owns_blocks=False
@@ -820,7 +818,7 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
             _, _, num_rows = estimate_total_num_of_blocks(
                 cur_shuffle_task_idx + 1,
                 self.upstream_op_num_outputs(),
-                self.shuffle_metrics,
+                self._shuffle_metrics,
                 total_num_tasks=None,
             )
             self.shuffle_bar.update(total=num_rows)
@@ -833,8 +831,8 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
         bundle: RefBundle = self._output_queue.popleft()
 
         # TODO move to base class
-        self.reduce_metrics.on_output_dequeued(bundle)
-        self.reduce_metrics.on_output_taken(bundle)
+        self._reduce_metrics.on_output_dequeued(bundle)
+        self._reduce_metrics.on_output_taken(bundle)
 
         self._output_blocks_stats.extend(to_stats(bundle.metadata))
 
@@ -883,14 +881,14 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
             self._output_queue.append(bundle)
 
             # Update Finalize Metrics on task output generated
-            self.reduce_metrics.on_output_queued(bundle)
-            self.reduce_metrics.on_task_output_generated(
+            self._reduce_metrics.on_output_queued(bundle)
+            self._reduce_metrics.on_task_output_generated(
                 task_index=partition_id, output=bundle
             )
             _, num_outputs, num_rows = estimate_total_num_of_blocks(
                 partition_id + 1,
                 self.upstream_op_num_outputs(),
-                self.reduce_metrics,
+                self._reduce_metrics,
                 total_num_tasks=self._num_partitions,
             )
             self._estimated_num_output_bundles = num_outputs
@@ -906,7 +904,7 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
                 self._finalizing_tasks.pop(partition_id)
 
                 # Update Finalize Metrics on task completion
-                self.reduce_metrics.on_task_finished(
+                self._reduce_metrics.on_task_finished(
                     task_index=partition_id, exception=exc
                 )
 
@@ -1008,7 +1006,7 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
             # NOTE: This is empty because the input is directly forwarded from the
             # output of the shuffling stage, which we don't return.
             empty_bundle = RefBundle([], schema=None, owns_blocks=False)
-            self.reduce_metrics.on_task_submitted(
+            self._reduce_metrics.on_task_submitted(
                 partition_id, empty_bundle, task_id=data_task.get_task_id()
             )
 
@@ -1021,15 +1019,17 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
         self._shuffling_tasks.clear()
         self._finalizing_tasks.clear()
 
+    @property
+    def metrics(self) -> OpRuntimeMetrics:
+        # TODO figure out a better way to combine w/ finalization metrics
+        self._shuffle_metrics._extra_metrics = self._extra_metrics()
+        return self._shuffle_metrics
+
     def _extra_metrics(self):
-        shuffle_name = f"{self._name}_shuffle"
         finalize_name = f"{self._name}_finalize"
 
-        self.shuffle_metrics.as_dict()
-
         return {
-            shuffle_name: self.shuffle_metrics.as_dict(),
-            finalize_name: self.reduce_metrics.as_dict(),
+            finalize_name: self._reduce_metrics.as_dict(),
         }
 
     def get_stats(self):
@@ -1060,6 +1060,13 @@ class HashShufflingOperatorBase(PhysicalOperator, HashShuffleProgressBarMixin):
                 self._aggregator_pool.num_aggregators
                 * self._aggregator_pool._aggregator_ray_remote_args["num_cpus"]
             ),
+            object_store_memory=0,
+            gpu=0,
+        )
+
+    def per_task_resource_allocation(self) -> ExecutionResources:
+        return ExecutionResources(
+            cpu=self._DEFAULT_SHUFFLE_BLOCK_NUM_CPUS,
             object_store_memory=0,
             gpu=0,
         )

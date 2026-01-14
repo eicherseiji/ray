@@ -17,11 +17,12 @@ import sys
 import time
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+import numpy as np
+
 from ray.data import ExecutionResources
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.resource_manager import (
     OpResourceAllocator,
-    _is_shuffle_op,
 )
 from ray.data._internal.util import GiB, MiB
 
@@ -34,7 +35,8 @@ if TYPE_CHECKING:
 class ThroughputBasedResourceAllocator(OpResourceAllocator):
 
     _DEFAULT_EWMA_FACTOR = 0.9
-    _ALLOCATION_REFRESH_THRESHOLD_S = 0.5
+    _ALLOCATION_PERIOD_S = 0.5
+    _DUMP_DEBUG_STATE_PERIOD_S = 5
 
     """
     Water-filling resource allocator that equalizes throughput across operators.
@@ -63,6 +65,7 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         self._ema_factor = self._DEFAULT_EWMA_FACTOR
 
         self._last_allocated_at = 0
+        self._last_logged_state_at = 0
 
     def can_submit_new_task(self, op: PhysicalOperator) -> bool:
         if op not in self._op_budgets:
@@ -110,7 +113,11 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         if self._topology[op].output_queue.num_blocks == 0:
             return None
 
-        remaining_budget = round(self._op_budgets[op].object_store_memory)
+        remaining_budget = (
+            round(self._op_budgets[op].object_store_memory)
+            if not np.isinf(self._op_budgets[op].object_store_memory)
+            else sys.maxsize
+        )
 
         # Allow unblocking if downstream is starved
         if (
@@ -133,8 +140,7 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         # NOTE: Refresh allocations no more frequently than configured
         if (
             set(eligible_ops) != set(self._op_allocations.keys())
-            or time.perf_counter() - self._last_allocated_at
-            > self._ALLOCATION_REFRESH_THRESHOLD_S
+            or time.perf_counter() - self._last_allocated_at > self._ALLOCATION_PERIOD_S
         ):
             # Compute expansion ratios for operators:
             #   - Bytes: output bytes per task / input bytes per task
@@ -163,41 +169,12 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
             self._op_allocations = op_allocations
             self._last_allocated_at = time.perf_counter()
 
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("=== Water-Filling Allocator: Allocation Complete ===")
-                logger.debug(f"Total limits: {limits}")
-                logger.debug(f"Allocatable limits: {allocatable_limits}")
-                logger.debug(f"Target rate: {self._target_rate:.2f} MiB/s")
-
-            for op in eligible_ops:
-                rows_expansion_ratio = (
-                    op.metrics.average_rows_outputs_per_task or 0
-                ) / (op.metrics.average_rows_inputs_per_task or 1)
-                bytes_expansion_ratio = op_byte_expansion_ratios.get(op)
-
-                alpha, beta, gamma_heap = self._op_productivity[op]
-                allocation = self._op_allocations.get(op, ExecutionResources.zero())
-                budget = self._op_budgets.get(op, ExecutionResources.zero())
-
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"  {op}:")
-                    logger.debug(
-                        f"    Row expansion ratio: {rows_expansion_ratio=:.2e} ({op.metrics.average_rows_outputs_per_task} / {op.metrics.average_rows_inputs_per_task})"
-                    )
-                    logger.debug(
-                        f"    Bytes expansion ratio: {bytes_expansion_ratio=:.2e} ({op.metrics.average_bytes_outputs_per_task} / {op.metrics.average_bytes_inputs_per_task})"
-                    )
-                    logger.debug(
-                        f"    Productivity: {alpha=:.2e} {beta=:.2e} {gamma_heap=:.2e}"
-                    )
-                    logger.debug(
-                        f"    Allocation: CPU={allocation.cpu:.1f} GPU={allocation.gpu:.1f} "
-                        f"Mem={allocation.memory / GiB:.1f}GB ObjStore={allocation.object_store_memory / GiB:.1f}GB"
-                    )
-                    logger.debug(
-                        f"    Budget: CPU={budget.cpu:.1f} GPU={budget.gpu:.1f} "
-                        f"Mem={budget.memory / GiB:.1f}GB OS={budget.object_store_memory / GiB:.1f}GB"
-                    )
+            self._try_dump_debug_state(
+                total_limits=limits,
+                allocatable_limits=allocatable_limits,
+                eligible_ops=eligible_ops,
+                op_byte_expansion_ratios=op_byte_expansion_ratios,
+            )
 
         # Clear budgets to remove stale entries for ops that are no longer eligible
         self._op_budgets = {}
@@ -237,32 +214,6 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
 
         if not eligible_ops:
             return limits, 0, op_allocations
-
-        # We're explicitly exempting shuffle operator at the end of the stage from the pool
-        # of operators considered for resource allocation:
-        #
-        #   - No operations downstream from the shuffle op could start executing until
-        #     shuffle completes (group of concurrently executing operators preceding
-        #     shuffle is called a "stage")
-        #   - Shuffle op (for the most part) is just materializing the data from upstream
-        #   - Shuffle op won't produce outputs, until all upstream operators are complete
-        #
-        # Shuffle ops essentially serve as sinks and hence do not require corresponding
-        # resource allocation and hence are exempted from it.
-        if _is_shuffle_op(eligible_ops[-1]):
-            shuffle_op = eligible_ops[-1]
-            eligible_ops = eligible_ops[:-1]
-
-            op_allocations = {
-                shuffle_op: ExecutionResources(
-                    cpu=float("+inf"),
-                    gpu=0,
-                    memory=float("+inf"),
-                    object_store_memory=sys.maxsize,
-                )
-            }
-        else:
-            eligible_ops = eligible_ops
 
         if not eligible_ops:
             return limits, 0, op_allocations
@@ -375,7 +326,6 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
                 # ratio (decreasing exponentially) to be able to launch its first
                 # set of tasks
 
-                # TODO avoid allocating gpus to non-gpu ops (and vice versa)
                 op_reserved_resources = limits.scale(
                     baseline_op_reservation_ratios[idx]
                 )
@@ -391,7 +341,14 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
                 cpu=cpu_alloc,
                 gpu=gpu_alloc,
                 memory=memory_alloc,
-                object_store_memory=object_store_alloc,
+                object_store_memory=(
+                    # NOTE: For blocking materializing operators we're making OS
+                    #       budget unlimited to avoid back-pressuring these
+                    #       unnecessarily.
+                    object_store_alloc
+                    if not self._resource_manager._is_blocking_materializing_op(op)
+                    else float("+inf")
+                ),
             )
 
         return allocatable_resource_limits, target_throughput, op_allocations
@@ -507,11 +464,6 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
 
         Returns a tuple of CPU-s/MiB, GPU-s/MiB, and heap-memory-s/MiB productivity rates.
         """
-        # NOTE: We're not estimating shuffle operator productivity as it's not
-        #       producing any output until the whole shuffle operation completes
-        if _is_shuffle_op(op):
-            return 0, 0, 0
-
         per_task_resource_allocation = op.per_task_resource_allocation()
 
         temporal_productivity = cls._estimate_temporal_productivity(
@@ -667,8 +619,8 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
             total_weights = len(allocatable_ops)
 
         allocations = {
-            # NOTE: For liveness purposes we always allocate at least 1 byte
-            op: math.ceil(total_object_store_bytes * w / total_weights) + 1
+            # NOTE: For liveness purposes we allocate at least 1 byte
+            op: math.ceil(total_object_store_bytes * w / total_weights) or 1
             for op, w in zip(allocatable_ops, weights)
         }
 
@@ -683,6 +635,55 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         assert len(allocations) == len(allocatable_ops)
 
         return allocations
+
+    def _try_dump_debug_state(
+        self,
+        *,
+        total_limits: ExecutionResources,
+        allocatable_limits: ExecutionResources,
+        eligible_ops: list[PhysicalOperator],
+        op_byte_expansion_ratios: Dict[PhysicalOperator, Optional[float]],
+    ):
+        if (
+            not logger.isEnabledFor(logging.DEBUG)
+            or time.perf_counter() - self._last_logged_state_at
+            < self._DUMP_DEBUG_STATE_PERIOD_S
+        ):
+            return
+
+        logger.debug("=== Water-Filling Allocator: Allocation Complete ===")
+        logger.debug(f"Total limits: {total_limits}")
+        logger.debug(f"Allocatable limits: {allocatable_limits}")
+        logger.debug(f"Target rate: {self._target_rate:.2f} MiB/s")
+
+        for op in eligible_ops:
+            rows_expansion_ratio = (op.metrics.average_rows_outputs_per_task or 0) / (
+                op.metrics.average_rows_inputs_per_task or 1
+            )
+            bytes_expansion_ratio = op_byte_expansion_ratios.get(op)
+
+            alpha, beta, gamma_heap = self._op_productivity[op]
+            allocation = self._op_allocations.get(op, ExecutionResources.zero())
+            budget = self._op_budgets.get(op, ExecutionResources.zero())
+
+            logger.debug(f"  {op}:")
+            logger.debug(
+                f"    Row expansion ratio: {rows_expansion_ratio=:.2e} ({op.metrics.average_rows_outputs_per_task} / {op.metrics.average_rows_inputs_per_task})"
+            )
+            logger.debug(
+                f"    Bytes expansion ratio: {bytes_expansion_ratio=:.2e} ({op.metrics.average_bytes_outputs_per_task} / {op.metrics.average_bytes_inputs_per_task})"
+            )
+            logger.debug(
+                f"    Productivity: {alpha=:.2e} {beta=:.2e} {gamma_heap=:.2e}"
+            )
+            logger.debug(
+                f"    Allocation: CPU={allocation.cpu:.1f} GPU={allocation.gpu:.1f} "
+                f"Mem={allocation.memory / GiB:.1f}GB ObjStore={allocation.object_store_memory / GiB:.1f}GB"
+            )
+            logger.debug(
+                f"    Budget: CPU={budget.cpu:.1f} GPU={budget.gpu:.1f} "
+                f"Mem={budget.memory / GiB:.1f}GB OS={budget.object_store_memory / GiB:.1f}GB"
+            )
 
 
 def _get_baseline_allocatable_ratios(
