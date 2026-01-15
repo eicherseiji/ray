@@ -249,7 +249,11 @@ DEFAULT_ACTOR_POOL_MAX_UPSCALING_DELTA: int = env_integer(
 
 
 DEFAULT_ENABLE_DYNAMIC_OUTPUT_QUEUE_SIZE_BACKPRESSURE: bool = env_bool(
-    "RAY_DATA_ENABLE_DYNAMIC_OUTPUT_QUEUE_SIZE_BACKPRESSURE", True
+    "RAY_DATA_ENABLE_DYNAMIC_OUTPUT_QUEUE_SIZE_BACKPRESSURE", False
+)
+
+DEFAULT_DOWNSTREAM_CAPACITY_OUTPUTS_RATIO: int = env_float(
+    "RAY_DATA_DOWNSTREAM_CAPACITY_OUTPUTS_RATIO", 25.0
 )
 
 
@@ -368,8 +372,9 @@ class DataContext:
         large_args_threshold: Size in bytes after which point task arguments are
             considered large. Choose a value so that the data transfer overhead is
             significant in comparison to task scheduling (i.e., low tens of ms).
-        use_polars: Whether to use Polars for tabular dataset sorts, groupbys, and
+        use_polars_sort: Whether to use Polars for tabular dataset sorts, groupbys, and
             aggregations.
+        use_polars_join: Whether to use Polars for join operations.
         eager_free: Whether to eagerly free memory.
         decoding_size_estimation: Whether to estimate in-memory decoding data size for
             data source.
@@ -486,6 +491,12 @@ class DataContext:
         downstream_capacity_backpressure_ratio: Ratio for downstream capacity
             backpressure control. A higher ratio causes backpressure to kick-in
             later. If `None`, this backpressure policy is disabled.
+        downstream_capacity_backpressure_max_queued_bundles: Maximum number of queued
+            bundles before applying backpressure. If `None`, no limit is applied.
+        downstream_capacity_outputs_ratio: Ratio for downstream capacity outputs
+            backpressure control. A lower ratio means fewer outputs will be taken
+            causing less build up in operator inqueues. If `None`, this type of
+            backpressure is disabled.
         enable_dynamic_output_queue_size_backpressure: Whether to cap the concurrency
             of an operator based on its and downstream operators' queue size.
         enforce_schemas: Whether to enforce schema consistency across dataset operations.
@@ -630,6 +641,8 @@ class DataContext:
     downstream_capacity_backpressure_ratio: Optional[
         float
     ] = DEFAULT_DOWNSTREAM_CAPACITY_BACKPRESSURE_RATIO
+    downstream_capacity_backpressure_max_queued_bundles: int = None
+    downstream_capacity_outputs_ratio: float = DEFAULT_DOWNSTREAM_CAPACITY_OUTPUTS_RATIO
 
     enable_dynamic_output_queue_size_backpressure: bool = (
         DEFAULT_ENABLE_DYNAMIC_OUTPUT_QUEUE_SIZE_BACKPRESSURE

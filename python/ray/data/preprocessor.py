@@ -7,6 +7,9 @@ import warnings
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, final
 
+from ray.data.preprocessors.version_support import (
+    _lookup_class,
+)
 from ray.data.util.data_batch_conversion import BatchFormat
 from ray.util.annotations import DeveloperAPI, PublicAPI
 
@@ -742,7 +745,6 @@ class SerializablePreprocessorBase(Preprocessor, abc.ABC):
         )
         from ray.data.preprocessors.version_support import (
             UnknownPreprocessorError,
-            _lookup_class,
         )
 
         try:

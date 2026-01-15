@@ -1,0 +1,12 @@
+group: lineage tests
+depends_on:
+  - forge
+  - rayturbobuild
+steps:
+  - label: "unit tests"
+    instance_type: medium
+    commands:
+      - bazel run //ci/ray_ci:test_in_docker -- //python/ray/anyscale/lineage/... lineage
+        --python-version 3.10 --build-name rayturbobuild
+    tags:
+      - lineage
