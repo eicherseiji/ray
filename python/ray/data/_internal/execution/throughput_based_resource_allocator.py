@@ -109,10 +109,6 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         if op not in self._op_budgets:
             return None
 
-        # Do not throttle, when output queue is empty
-        if self._topology[op].output_queue.num_blocks == 0:
-            return None
-
         remaining_budget = (
             round(self._op_budgets[op].object_store_memory)
             if not np.isinf(self._op_budgets[op].object_store_memory)
@@ -181,7 +177,9 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
 
         # Budget = Allocation - Current usage
         for op in eligible_ops:
-            current_usage = self._resource_manager.get_op_usage(op)
+            current_usage = self._resource_manager.get_op_usage(
+                op, include_ineligible_downstream=True
+            )
             allocation = self._op_allocations[op]
 
             self._op_budgets[op] = allocation.subtract(current_usage).max(
@@ -433,9 +431,7 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         normalized_output_mibs = normalized_output_bytes / MiB
 
         # Calculate temporal productivity using normalized MiB
-        avg_task_dur_s = (
-            op.metrics.average_task_completion_excl_backpressure_time_s or 0
-        )
+        avg_task_dur_s = op.metrics.average_total_task_completion_time_s or 0
 
         # Temporal productivity is measured in seconds / MiB, representing
         # how many seconds it takes current operator to produce 1 MiB of output
@@ -495,13 +491,23 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
             )
 
             # Update normalization factor with the current op bytes expansion ratio
-            bytes_expansion_ratio = op_byte_expansion_ratios[op]
-
-            # In pipeline A -> B -> C, normalized MiB of the operator A is defined as:
             #
-            #   output_mib_A_norm = output_mib_A * bytes_expansion_ratio_B * bytes_expansion_ratio_C
-            #   bytes_expansion_ratio_B = output_bytes_B / input_bytes_B (dimensionless)
-            #   bytes_expansion_ratio_C = output_bytes_C / input_bytes_C (dimensionless)
+            # NOTE: In cases when operators haven't produced any outputs yet, their
+            #       byte expansion ratio will be null. However to make sure that
+            #       lack of output of the downstream isn't affecting upstream operators'
+            #       productivities, we fallback to 1.
+            bytes_expansion_ratio = op_byte_expansion_ratios[op] or 1.0
+
+            # In pipeline A -> B -> C, normalized output of the operator A is defined as:
+            #
+            #   A output_normalized = (
+            #       A output_bytes * B bytes_expansion_ratio * C bytes_expansion_ratio
+            #   )
+            #
+            #   where
+            #
+            #   B bytes_expansion_ratio = B output_bytes / B input_bytes
+            #   C bytes_expansion_ratio = C output_bytes / C input_bytes
             #
             # In other words we express how many MiB output by operator A translate
             # into MiB at the pipeline sink.
@@ -660,7 +666,8 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
             rows_expansion_ratio = (op.metrics.average_rows_outputs_per_task or 0) / (
                 op.metrics.average_rows_inputs_per_task or 1
             )
-            bytes_expansion_ratio = op_byte_expansion_ratios.get(op)
+
+            bytes_expansion_ratio = op_byte_expansion_ratios.get(op) or 0
 
             alpha, beta, gamma_heap = self._op_productivity[op]
             allocation = self._op_allocations.get(op, ExecutionResources.zero())
@@ -723,8 +730,11 @@ def _estimate_byte_expansion_ratio(op: PhysicalOperator) -> Optional[float]:
     This represents how many output bytes a single input byte is expanded into.
     """
 
+    if op.metrics.average_bytes_outputs_per_task is None:
+        return None
+
     return (
-        (op.metrics.average_bytes_outputs_per_task or 0)
+        op.metrics.average_bytes_outputs_per_task
         /
         # NOTE: In some cases tasks could legitimately produce 0 output bytes (for ex,
         #       filtering tasks). In that case we simply fall back to 1 to avoid

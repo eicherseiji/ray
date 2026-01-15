@@ -671,7 +671,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Operator A
         metrics_a = Mock()
-        metrics_a.average_task_completion_excl_backpressure_time_s = 10.0
+        metrics_a.average_total_task_completion_time_s = 10.0
         metrics_a.average_rows_inputs_per_task = 100
         metrics_a.average_rows_outputs_per_task = 100
         metrics_a.average_bytes_inputs_per_task = 1000 * MiB
@@ -685,7 +685,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Operator B (contracts 2:1)
         metrics_b = Mock()
-        metrics_b.average_task_completion_excl_backpressure_time_s = 5.0
+        metrics_b.average_total_task_completion_time_s = 5.0
         metrics_b.average_rows_inputs_per_task = 100
         metrics_b.average_rows_outputs_per_task = 50
         metrics_b.average_bytes_inputs_per_task = 1000 * MiB
@@ -699,7 +699,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Operator C (contracts 2:1)
         metrics_c = Mock()
-        metrics_c.average_task_completion_excl_backpressure_time_s = 2.5
+        metrics_c.average_total_task_completion_time_s = 2.5
         metrics_c.average_rows_inputs_per_task = 50
         metrics_c.average_rows_outputs_per_task = 25
         metrics_c.average_bytes_inputs_per_task = 500 * MiB
@@ -752,7 +752,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Filter operator - contracts 10:1
         metrics_filter = Mock()
-        metrics_filter.average_task_completion_excl_backpressure_time_s = 8.0
+        metrics_filter.average_total_task_completion_time_s = 8.0
         metrics_filter.average_rows_inputs_per_task = 100
         metrics_filter.average_rows_outputs_per_task = 10
         metrics_filter.average_bytes_inputs_per_task = 1000 * MiB
@@ -768,7 +768,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Expand operator - expands 1:2
         metrics_expand = Mock()
-        metrics_expand.average_task_completion_excl_backpressure_time_s = 4.0
+        metrics_expand.average_total_task_completion_time_s = 4.0
         metrics_expand.average_rows_inputs_per_task = 10
         metrics_expand.average_rows_outputs_per_task = 20
         metrics_expand.average_bytes_inputs_per_task = 100 * MiB
@@ -806,6 +806,87 @@ class TestThroughputBasedResourceAllocator:
         assert alpha_expand == pytest.approx(0.02, rel=1e-6)
         assert beta_expand == 0.0
 
+    def test_update_productivity_coefficients_with_null_norm_factor(self):
+        """Regression test for:
+
+            - Pipeline: Read -> Map
+            - Read has finished tasks with valid metrics
+            - Map has submitted tasks but none have finished yet (metrics are None)
+            - Read should gets alpha (productivity) computed correctly
+
+        Before the fix
+
+            - Bytes expansion ratio for Map would be null (with 0 being fallback)
+            - Normalization factor derived from downstreams' bytes expansion
+            - Upstream's productivity (alpha) multiplied by normalization factor
+             becomes 0 even though it has valid metrics from finished tasks, and
+             can compute productivity appropriately.
+        """
+        allocator = ThroughputBasedResourceAllocator(create_mock_resource_manager())
+
+        # ReadFiles: has finished tasks with valid metrics
+        metrics_read = Mock()
+        metrics_read.average_total_task_completion_time_s = 4.0
+        metrics_read.average_rows_inputs_per_task = 10
+        metrics_read.average_rows_outputs_per_task = 1000
+        metrics_read.average_bytes_inputs_per_task = 500  # Small input (file listing)
+        metrics_read.average_bytes_outputs_per_task = 200 * MiB  # Large output (data)
+
+        op_read = create_mock_operator("ReadFiles", MapOperator, metrics=metrics_read)
+        op_read.per_task_resource_allocation.return_value = ExecutionResources(
+            cpu=1.0, gpu=0.0
+        )
+
+        # Map: tasks submitted but none finished yet (all metrics are None)
+        metrics_map = Mock()
+        metrics_map.average_total_task_completion_time_s = None
+        metrics_map.average_rows_inputs_per_task = None
+        metrics_map.average_rows_outputs_per_task = None
+        metrics_map.average_bytes_inputs_per_task = None
+        metrics_map.average_bytes_outputs_per_task = None
+
+        op_map = create_mock_operator("Map", MapOperator, metrics=metrics_map)
+        op_map.per_task_resource_allocation.return_value = ExecutionResources(
+            cpu=1.0, gpu=0.0
+        )
+
+        eligible_ops = [op_read, op_map]
+
+        # Compute expansion ratios
+        # ReadFiles: 200 MiB / 500 bytes = large expansion
+        # Map: None / None -> returns None (no finished tasks)
+        op_expansion_ratios = {
+            op: _estimate_byte_expansion_ratio(op) for op in eligible_ops
+        }
+
+        # Verify Map's expansion ratio is None (no finished tasks)
+        assert op_expansion_ratios[op_map] is None
+
+        # Call _update_productivity_coefficients
+        allocator._update_productivity_coefficients(eligible_ops, op_expansion_ratios)
+
+        # Key assertion: ReadFiles should have non-zero alpha despite Map having
+        # no finished tasks. The fix uses 1.0 as default expansion ratio for Map,
+        # allowing ReadFiles to compute productivity based on its own metrics.
+        alpha_read, beta_read, gamma_read = allocator._op_productivity[op_read]
+
+        # Expected for ReadFiles:
+        #   Map's expansion ratio defaults to 1.0 (not 0) since it has no data
+        #   normalized_output = 200 MiB * 1.0 = 200 MiB
+        #   temporal_prod = 4.0s / 200 MiB = 0.02 s/MiB
+        #   alpha = 0.02 * 1.0 CPU = 0.02 CPU-s/MiB
+        assert alpha_read > 0, (
+            "ReadFiles should have non-zero productivity even when downstream "
+            "operator (Map) has no finished tasks"
+        )
+        assert alpha_read == pytest.approx(0.02, rel=1e-6)
+        assert beta_read == 0.0
+
+        # Map should have zero productivity (no finished tasks to measure)
+        alpha_map, beta_map, gamma_map = allocator._op_productivity[op_map]
+        assert alpha_map == 0.0
+        assert beta_map == 0.0
+
     def test_update_productivity_coefficients_with_shuffle(self):
         """Test that _update_productivity_coefficients calculates shuffle productivity
         appropriately.
@@ -818,7 +899,7 @@ class TestThroughputBasedResourceAllocator:
         allocator = ThroughputBasedResourceAllocator(create_mock_resource_manager())
 
         metrics_a = Mock()
-        metrics_a.average_task_completion_excl_backpressure_time_s = 10.0
+        metrics_a.average_total_task_completion_time_s = 10.0
         metrics_a.average_rows_inputs_per_task = 100
         metrics_a.average_rows_outputs_per_task = 100
         metrics_a.average_bytes_inputs_per_task = 1000 * MiB
@@ -832,7 +913,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Shuffle operator with real metrics (non-zero task time and CPU allocation)
         metrics_shuffle = Mock()
-        metrics_shuffle.average_task_completion_excl_backpressure_time_s = 8.0
+        metrics_shuffle.average_total_task_completion_time_s = 8.0
         metrics_shuffle.average_rows_inputs_per_task = 100
         metrics_shuffle.average_rows_outputs_per_task = 100
         metrics_shuffle.average_bytes_inputs_per_task = 1000 * MiB
@@ -850,7 +931,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Operator B - downstream from shuffle, cannot run until shuffle completes
         metrics_b = Mock()
-        metrics_b.average_task_completion_excl_backpressure_time_s = 5.0
+        metrics_b.average_total_task_completion_time_s = 5.0
         metrics_b.average_rows_inputs_per_task = 100
         metrics_b.average_rows_outputs_per_task = 50
         metrics_b.average_bytes_inputs_per_task = 1000 * MiB
@@ -1359,7 +1440,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         # Set up mock metrics to get deterministic allocations
         # o2: 10s task time, 1000 bytes in, 2000 bytes out (2x expansion)
         o2_metrics = Mock()
-        o2_metrics.average_task_completion_excl_backpressure_time_s = 10.0
+        o2_metrics.average_total_task_completion_time_s = 10.0
         o2_metrics.average_bytes_inputs_per_task = 1000
         o2_metrics.average_rows_inputs_per_task = 10
         o2_metrics.average_bytes_outputs_per_task = 2000
@@ -1369,7 +1450,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # o3: 5s task time, 2000 bytes in, 2000 bytes out (1x expansion)
         o3_metrics = Mock()
-        o3_metrics.average_task_completion_excl_backpressure_time_s = 5.0
+        o3_metrics.average_total_task_completion_time_s = 5.0
         o3_metrics.average_bytes_inputs_per_task = 2000
         o3_metrics.average_rows_inputs_per_task = 20
         o3_metrics.average_bytes_outputs_per_task = 2000
@@ -1385,7 +1466,7 @@ class TestThroughputBasedResourceAllocatorE2E:
             topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
         )
         resource_manager.get_op_usage = MagicMock(
-            side_effect=lambda op: ExecutionResources.zero()
+            side_effect=lambda op, include_ineligible_downstream=False: ExecutionResources.zero()
         )
 
         assert resource_manager.op_resource_allocator_enabled()
@@ -1445,7 +1526,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Set up mock metrics for deterministic allocations
         o2_metrics = Mock()
-        o2_metrics.average_task_completion_excl_backpressure_time_s = 10.0
+        o2_metrics.average_total_task_completion_time_s = 10.0
         o2_metrics.average_bytes_inputs_per_task = 1000
         o2_metrics.average_rows_inputs_per_task = 10
         o2_metrics.average_bytes_outputs_per_task = 2000
@@ -1495,7 +1576,9 @@ class TestThroughputBasedResourceAllocatorE2E:
         # Verify proper budget calculation
         usage = ExecutionResources(cpu=5, object_store_memory=100)
         resource_manager.get_op_usage = MagicMock(
-            side_effect=lambda op: usage if op == o2 else ExecutionResources.zero()
+            side_effect=lambda op, include_ineligible_downstream=False: usage
+            if op == o2
+            else ExecutionResources.zero()
         )
 
         allocator.update_budgets(limits=global_limits)
@@ -1508,7 +1591,9 @@ class TestThroughputBasedResourceAllocatorE2E:
         # Budget clamped to 0 when usage exhausts allocation
         full_usage = ExecutionResources(cpu=10, object_store_memory=1000)
         resource_manager.get_op_usage = MagicMock(
-            side_effect=lambda op: full_usage if op == o2 else ExecutionResources.zero()
+            side_effect=lambda op, include_ineligible_downstream=False: full_usage
+            if op == o2
+            else ExecutionResources.zero()
         )
 
         allocator.update_budgets(limits=global_limits)
@@ -1539,7 +1624,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Set up mock metrics - only o2 is running (has outputs), o3 hasn't started
         o2_metrics = Mock()
-        o2_metrics.average_task_completion_excl_backpressure_time_s = 10.0
+        o2_metrics.average_total_task_completion_time_s = 10.0
         o2_metrics.average_bytes_inputs_per_task = 1000
         o2_metrics.average_rows_inputs_per_task = 10
         o2_metrics.average_bytes_outputs_per_task = 2000
@@ -1549,7 +1634,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # o3 hasn't started yet (no outputs)
         o3_metrics = Mock()
-        o3_metrics.average_task_completion_excl_backpressure_time_s = None
+        o3_metrics.average_total_task_completion_time_s = None
         o3_metrics.average_bytes_inputs_per_task = None
         o3_metrics.average_rows_inputs_per_task = None
         o3_metrics.average_bytes_outputs_per_task = None
@@ -1589,7 +1674,9 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Now simulate that o2 has used its entire allocation running a task
         resource_manager.get_op_usage = MagicMock(
-            side_effect=lambda op: ExecutionResources(cpu=5, object_store_memory=100)
+            side_effect=lambda op, include_ineligible_downstream=False: ExecutionResources(
+                cpu=5, object_store_memory=100
+            )
             if op == o2
             else ExecutionResources.zero()
         )
@@ -1611,7 +1698,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Set up mock metrics for o2
         o2_metrics = Mock()
-        o2_metrics.average_task_completion_excl_backpressure_time_s = 10.0
+        o2_metrics.average_total_task_completion_time_s = 10.0
         o2_metrics.average_bytes_inputs_per_task = 1000
         o2_metrics.average_rows_inputs_per_task = 10
         o2_metrics.average_bytes_outputs_per_task = 2000
@@ -1628,7 +1715,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Set up mock metrics for o3 (GPU operator)
         o3_metrics = Mock()
-        o3_metrics.average_task_completion_excl_backpressure_time_s = 5.0
+        o3_metrics.average_total_task_completion_time_s = 5.0
         o3_metrics.average_bytes_inputs_per_task = 2000
         o3_metrics.average_rows_inputs_per_task = 20
         o3_metrics.average_bytes_outputs_per_task = 2000
@@ -1648,7 +1735,9 @@ class TestThroughputBasedResourceAllocatorE2E:
         resource_manager = ResourceManager(
             topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
         )
-        resource_manager.get_op_usage = MagicMock(side_effect=lambda op: op_usages[op])
+        resource_manager.get_op_usage = MagicMock(
+            side_effect=lambda op, include_ineligible_downstream=False: op_usages[op]
+        )
 
         allocator = resource_manager._op_resource_allocator
         allocator.update_budgets(limits=global_limits)
@@ -1738,13 +1827,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         # For operators not in budgets (InputDataBuffer), should return None
         assert allocator.max_task_output_bytes_to_read(o1) is None
 
-        # For operators in budgets with empty output queue, should return None
-        # (skipping budgeting if output queue is empty)
-        topo[o2].output_queue._num_blocks = 0
-        assert allocator.max_task_output_bytes_to_read(o2) is None
-
         # o2's downstream hash-shuffle is *eligible*, hence it gets finite budget
-        topo[o2].output_queue._num_blocks = 5
         assert allocator.max_task_output_bytes_to_read(o2) == 500
 
         # Shuffle operator itself is blocking materializing, gets infinite budget
@@ -1808,7 +1891,9 @@ class TestThroughputBasedResourceAllocatorE2E:
         )
 
         op_usages = {op: ExecutionResources.zero() for op in [o1, o2, o3, o4, o5]}
-        resource_manager.get_op_usage = MagicMock(side_effect=lambda op: op_usages[op])
+        resource_manager.get_op_usage = MagicMock(
+            side_effect=lambda op, include_ineligible_downstream=False: op_usages[op]
+        )
 
         allocator = resource_manager._op_resource_allocator
         assert isinstance(allocator, ThroughputBasedResourceAllocator)
@@ -1847,7 +1932,9 @@ class TestThroughputBasedResourceAllocatorE2E:
         resource_manager = ResourceManager(
             topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
         )
-        resource_manager.get_op_usage = MagicMock(side_effect=lambda op: op_usages[op])
+        resource_manager.get_op_usage = MagicMock(
+            side_effect=lambda op, include_ineligible_downstream=False: op_usages[op]
+        )
 
         allocator = resource_manager._op_resource_allocator
 
