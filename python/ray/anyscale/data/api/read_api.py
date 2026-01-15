@@ -9,7 +9,6 @@ import numpy as np
 
 import ray
 import ray.data.read_api as oss_read_api
-from ray.data._internal.util import merge_resources_to_ray_remote_args
 from ray._private.auto_init_hook import wrap_auto_init
 from ray._private.ray_constants import env_bool
 from ray._private.utils import INT32_MAX
@@ -46,8 +45,6 @@ from ray.anyscale.data._internal.readers import (
 from ray.anyscale.data._internal.readers.orjson_jsonl_reader import OrjsonJSONLReader
 from ray.anyscale.data._internal.readers.parquet_reader import ParquetFileChunker
 from ray.anyscale.data.datasource.snowflake_datasource import SnowflakeDatasource
-from ray.data.context import DataContext
-from ray.data.datasource.file_based_datasource import FileShuffleConfig
 from ray.data._internal.datasource.image_datasource import ImageDatasource
 from ray.data._internal.datasource.json_datasource import JSON_FILE_EXTENSIONS
 from ray.data._internal.datasource.numpy_datasource import NumpyDatasource
@@ -55,9 +52,15 @@ from ray.data._internal.datasource.parquet_datasource import ParquetDatasource
 from ray.data._internal.logical.interfaces import LogicalPlan
 from ray.data._internal.plan import ExecutionPlan
 from ray.data._internal.stats import DatasetStats
-from ray.data._internal.util import RetryingPyFileSystem, _is_local_scheme
+from ray.data._internal.util import (
+    RetryingPyFileSystem,
+    _is_local_scheme,
+    merge_resources_to_ray_remote_args,
+)
+from ray.data.context import DataContext
 from ray.data.dataset import Dataset
 from ray.data.datasource import FileMetadataProvider, Partitioning, PathPartitionFilter
+from ray.data.datasource.file_based_datasource import FileShuffleConfig
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
 from ray.data.datasource.path_util import (
     _resolve_paths_and_filesystem,
@@ -903,12 +906,12 @@ def read_files(
     list_files_op = ListFiles(
         paths=paths,
         file_indexer=file_indexer,
-        file_partitioner=file_partitioner,
         filesystem=filesystem,
+        source_paths=source_paths,
+        file_partitioner=file_partitioner,
         file_extensions=file_extensions,
         partition_filter=partition_filter,
         shuffle_config_factory=_shuffle_config_factory,
-        source_paths=source_paths,
     )
 
     read_files_op = ReadFiles(

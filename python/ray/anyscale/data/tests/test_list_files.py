@@ -8,8 +8,8 @@ from pyarrow.fs import FileSystem
 
 import ray
 from ray.anyscale.data._internal.file_indexer import NonSamplingFileIndexer
-from ray.data.context import DataContext
 from ray.data._internal.util import RetryingPyFileSystem
+from ray.data.context import DataContext
 from ray.data.tests.conftest import (  # noqa
     CoreExecutionMetrics,
     assert_core_execution_metrics_equals,
@@ -167,11 +167,7 @@ def test_list_files_operator_throttling_disabled():
     list_files_op = ListFiles(
         paths=["/tmp/test"],
         file_indexer=NonSamplingFileIndexer(ignore_missing_paths=True),
-        file_partitioner=None,
         filesystem=MagicMock(),
-        file_extensions=None,
-        partition_filter=None,
-        shuffle_config_factory=lambda: None,
         source_paths=["/tmp/test"],
     )
 

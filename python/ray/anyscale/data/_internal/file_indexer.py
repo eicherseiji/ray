@@ -1,28 +1,33 @@
 import abc
 import logging
-from typing import Iterable, Iterator, List, Optional, Tuple
-from typing import TypedDict, Type, get_type_hints
-from dataclasses import dataclass
-
 import math
+from dataclasses import dataclass
+from typing import (
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TypedDict,
+    get_type_hints,
+)
+
 import pyarrow as pa
 from pyarrow.fs import FileSelector, FileSystem, FileType
 
 from ray._private.ray_constants import env_integer
-
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
-from ray.data.block import BlockColumn, Block
+from ray.data._internal.util import infer_compression, make_async_gen
+from ray.data.block import Block, BlockColumn
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
 from ray.data.datasource.partitioning import PathPartitionFilter
 from ray.data.datasource.path_util import (
     _has_file_extension,
     _resolve_paths_and_filesystem,
 )
-from ray.data._internal.util import make_async_gen
-from ray.data._internal.util import infer_compression
-
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +213,14 @@ class NonSamplingFileIndexer(FileIndexer):
         self._file_chunker = (
             file_chunker if file_chunker is not None else WholeFileChunker()
         )
+
+    @property
+    def file_chunker(self) -> FileChunker:
+        """The file chunker that this indexer uses.
+
+        This property is exposed for testing.
+        """
+        return self._file_chunker
 
     def list_files(
         self,

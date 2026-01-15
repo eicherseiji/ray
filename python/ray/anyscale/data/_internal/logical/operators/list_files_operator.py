@@ -5,15 +5,15 @@ import numpy as np
 import pyarrow as pa
 from packaging.version import parse as parse_version
 
-from ray.data.datasource.file_based_datasource import FileShuffleConfig
-from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
-from ray.data.block import Block, BlockAccessor, BlockColumnAccessor
-from ray.data.datasource import PathPartitionFilter
+from ray._private.arrow_utils import get_pyarrow_version
 from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_FILE_FRAGMENTS_TYPE,
     CheckpointFragmentsInfo,
 )
-from ray._private.arrow_utils import get_pyarrow_version
+from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
+from ray.data.block import Block, BlockAccessor, BlockColumnAccessor
+from ray.data.datasource import PathPartitionFilter
+from ray.data.datasource.file_based_datasource import FileShuffleConfig
 
 # PyArrow version constant for compatibility checks
 PYARROW_VERSION_10 = "10.0.0"
@@ -170,12 +170,14 @@ class ListFiles(SourceOperator, LogicalOperator):
         *,
         paths: Union[str, List[str]],
         file_indexer: "FileIndexer",
-        file_partitioner: Optional["FilePartitioner"],
         filesystem,
-        file_extensions: List[str],
-        partition_filter: PathPartitionFilter,
-        shuffle_config_factory: Optional[Callable[[], Optional[FileShuffleConfig]]],
         source_paths: Union[str, List[str]],
+        file_partitioner: Optional["FilePartitioner"] = None,
+        file_extensions: Optional[List[str]] = None,
+        partition_filter: Optional[PathPartitionFilter] = None,
+        shuffle_config_factory: Optional[
+            Callable[[], Optional[FileShuffleConfig]]
+        ] = lambda: None,
     ):
         assert filesystem is not None
 
