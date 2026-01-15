@@ -130,6 +130,10 @@ def test_optimized_plan_does_not_partition_or_chunk_files():
     assert isinstance(
         optimized_list_files.file_indexer, NonSamplingFileIndexer
     ) and isinstance(optimized_list_files.file_indexer.file_chunker, WholeFileChunker)
+    # Assert that we don't mutate the logical operator. If the we mutate logical
+    # operator, it can cause bugs, especially if we reuse the same operator instance in
+    # multiple datasets.
+    assert optimized_list_files is not list_files
 
 
 def test_does_not_pushdown_if_row_metadata_is_not_available():
