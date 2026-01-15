@@ -1,9 +1,8 @@
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import ray
-from ray.data import DataContext, DataIterator, NodeIdStr
 from ray.train.v2._internal.callbacks.datasets import (
     DatasetsCallback as RayDatasetsCallback,
 )
@@ -20,6 +19,9 @@ from ray.train.v2._internal.execution.worker_group import (
     WorkerGroupContext,
 )
 
+if TYPE_CHECKING:
+    from ray.data import DataContext, DataIterator, NodeIdStr
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,9 +30,9 @@ class AnyscaleDatasetShardProvider:
         self,
         datasets: Dict[str, GenDataset],
         data_config: ray.train.DataConfig,
-        data_context: DataContext,
+        data_context: "DataContext",
         world_size: int,
-        worker_node_ids: List[NodeIdStr],
+        worker_node_ids: List["NodeIdStr"],
     ):
         from ray.anyscale.train._internal.data_integration.dataset_manager import (
             DatasetManager,
@@ -53,9 +55,9 @@ class AnyscaleDatasetShardProvider:
                 worker_node_ids=worker_node_ids,
             )
         )
-        self._cached_dataset_shards: Dict[str, DataIterator] = {}
+        self._cached_dataset_shards: Dict[str, "DataIterator"] = {}
 
-    def get_dataset_shard(self, dataset_info: DatasetShardMetadata) -> DataIterator:
+    def get_dataset_shard(self, dataset_info: DatasetShardMetadata) -> "DataIterator":
         dataset_name = dataset_info.dataset_name
         if dataset_name not in self._dataset_names:
             raise KeyError(

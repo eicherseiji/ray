@@ -1,8 +1,10 @@
-from typing import Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Union
 
 from ray.anyscale.data.checkpoint.interfaces import TrainingIngestCheckpointConfig
-from ray.data import ExecutionOptions
 from ray.train._internal.data_config import DataConfig as RayDataConfig
+
+if TYPE_CHECKING:
+    from ray.data import ExecutionOptions
 
 
 # Alias for the TrainingIngestCheckpointConfig to expose to users.
@@ -15,7 +17,7 @@ class DataConfig(RayDataConfig):
     def __init__(
         self,
         datasets_to_split: Union[Literal["all"], List[str]] = "all",
-        execution_options: Optional[ExecutionOptions] = None,
+        execution_options: Optional["ExecutionOptions"] = None,
         enable_shard_locality: bool = True,
         dataset_checkpoint_configs: Optional[Dict[str, DatasetCheckpointConfig]] = None,
     ):

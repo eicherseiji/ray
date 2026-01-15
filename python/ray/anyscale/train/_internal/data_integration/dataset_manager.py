@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import ray
 from ray.exceptions import GetTimeoutError
@@ -15,9 +15,10 @@ from ray.anyscale.data.checkpoint.interfaces import (
 from ray.anyscale.train._internal.data_integration.interfaces import (
     DatasetShardMetadata,
 )
-from ray.data import Dataset, DataContext, DataIterator, NodeIdStr
-from ray.data.datasource import PathPartitionFilter, PartitionStyle
 from ray.train.v2._internal.data_integration.interfaces import GenDataset
+
+if TYPE_CHECKING:
+    from ray.data import DataContext, Dataset, DataIterator, NodeIdStr
 
 
 logger = logging.getLogger(__name__)
@@ -30,9 +31,9 @@ class DatasetManager:
         self,
         datasets: Dict[str, GenDataset],
         data_config: ray.train.DataConfig,
-        data_context: DataContext,
+        data_context: "DataContext",
         world_size: int,
-        worker_node_ids: List[NodeIdStr],
+        worker_node_ids: List["NodeIdStr"],
     ):
         self._datasets = {k: v() if callable(v) else v for k, v in datasets.items()}
         self._data_config = data_config
@@ -47,17 +48,19 @@ class DatasetManager:
 
         # Maps dataset name to a list of cached `DataIterator`s corresponding to
         # Train worker ranks.
-        self._dataset_iterators: Dict[str, List[DataIterator]] = {}
+        self._dataset_iterators: Dict[str, List["DataIterator"]] = {}
 
         # A condition variable to synchronize the calls to the async `get_dataset_shard` method.
         self._condition = asyncio.Condition()
+
+        from ray.data import DataContext
 
         DataContext._set_current(data_context)
 
     def _configure_checkpoint_save_on_iterators(
         self,
         dataset_info: DatasetShardMetadata,
-        dataset_iterators: List[DataIterator],
+        dataset_iterators: List["DataIterator"],
     ) -> None:
         """Configures the dataset iterators per rank to save checkpoint state.
 
@@ -95,7 +98,7 @@ class DatasetManager:
             dataset_iterator._enable_checkpointing(checkpointer)
 
     def _configure_checkpoint_restore_on_base_dataset(
-        self, dataset_info: DatasetShardMetadata, base_dataset: Dataset
+        self, dataset_info: DatasetShardMetadata, base_dataset: "Dataset"
     ) -> None:
         """Sets the restoration checkpointing config on the base dataset.
 
@@ -162,6 +165,8 @@ class DatasetManager:
         If there is no state dict provided, disable checkpoint restoration
         by setting the checkpoint file filter to an empty filter.
         """
+        from ray.data.datasource import PathPartitionFilter, PartitionStyle
+
         checkpoint_path_partition_filter = PathPartitionFilter.of(
             filter_fn=lambda _: False,
             style=PartitionStyle.HIVE,
@@ -189,8 +194,8 @@ class DatasetManager:
         )
 
     def _create_dataset_iterators(
-        self, dataset_info: DatasetShardMetadata, base_dataset: Dataset
-    ) -> List[DataIterator]:
+        self, dataset_info: DatasetShardMetadata, base_dataset: "Dataset"
+    ) -> List["DataIterator"]:
         dataset_name = dataset_info.dataset_name
 
         iterators_per_rank = self._data_config.configure(
@@ -208,7 +213,7 @@ class DatasetManager:
 
     def _get_unsharded_dataset_iterator(
         self, dataset_info: DatasetShardMetadata
-    ) -> DataIterator:
+    ) -> "DataIterator":
         """Returns the dataset iterator for a dataset that is excluded
         from `DataConfig.datasets_to_split`.
         Note that this method is NOT a barrier across workers and can be called
@@ -226,7 +231,7 @@ class DatasetManager:
 
     async def _get_sharded_dataset_iterator(
         self, dataset_info: DatasetShardMetadata
-    ) -> DataIterator:
+    ) -> "DataIterator":
         """Returns the dataset iterator for a dataset that is included
         in `DataConfig.datasets_to_split`.
         Note that this method is a barrier across workers,
@@ -269,7 +274,7 @@ class DatasetManager:
     async def get_dataset_shard(
         self,
         dataset_info: DatasetShardMetadata,
-    ) -> DataIterator:
+    ) -> "DataIterator":
         """Create and return the dataset shard iterator for a Ray Train worker's
         call to `ray.train.get_dataset_shard`.
 

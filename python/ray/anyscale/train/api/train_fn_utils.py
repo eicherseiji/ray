@@ -1,14 +1,16 @@
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from ray.data import DataIterator
 from ray.train.v2._internal.execution.train_fn_utils import get_train_fn_utils
 from ray.util.annotations import PublicAPI
+
+if TYPE_CHECKING:
+    from ray.data import DataIterator
 
 
 @PublicAPI(stability="stable")
 def get_dataset_shard(
     dataset_name: str, state_dict: Optional[Dict[str, Any]] = None
-) -> DataIterator:
+) -> "DataIterator":
     """Returns the :class:`ray.data.DataIterator` shard for this worker.
 
     Call :meth:`~ray.data.DataIterator.iter_torch_batches` or
