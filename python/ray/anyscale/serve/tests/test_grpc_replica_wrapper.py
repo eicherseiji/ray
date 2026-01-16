@@ -48,9 +48,7 @@ class FakeReplicaActor:
         context: grpc.aio.ServicerContext,
     ):
         args = cloudpickle.loads(request.request_args)
-        return serve_pb2.ASGIResponse(
-            serialized_message=cloudpickle.dumps(args[0])
-        )
+        return serve_pb2.ASGIResponse(serialized_message=cloudpickle.dumps(args[0]))
 
     async def HandleRequestStreaming(
         self,
@@ -63,9 +61,7 @@ class FakeReplicaActor:
 
         for i in range(5):
             if request_metadata.is_http_request:
-                yield serve_pb2.ASGIResponse(
-                    serialized_message=f"{message}-{i}"
-                )
+                yield serve_pb2.ASGIResponse(serialized_message=f"{message}-{i}")
             else:
                 yield serve_pb2.ASGIResponse(
                     serialized_message=cloudpickle.dumps(f"{message}-{i}")
@@ -104,9 +100,7 @@ class FakeReplicaActor:
             return serve_pb2.ASGIResponse(serialized_message=b"")
 
         message = args[0]
-        return serve_pb2.ASGIResponse(
-            serialized_message=cloudpickle.dumps(message)
-        )
+        return serve_pb2.ASGIResponse(serialized_message=cloudpickle.dumps(message))
 
     async def HandleRequestWithRejectionStreaming(
         self,
