@@ -318,6 +318,12 @@ SERVE_MULTIPLEXED_MODEL_ID = "serve_multiplexed_model_id"
 # HTTP request ID
 SERVE_HTTP_REQUEST_ID_HEADER = "x-request-id"
 
+# HTTP request timeout
+SERVE_HTTP_REQUEST_TIMEOUT_S_HEADER = "x-request-timeout-seconds"
+
+# HTTP request disconnect disabled
+SERVE_HTTP_REQUEST_DISCONNECT_DISABLED_HEADER = "x-request-disconnect-disabled"
+
 # Feature flag to turn on node locality routing for proxies. On by default.
 RAY_SERVE_PROXY_PREFER_LOCAL_NODE_ROUTING = get_env_bool(
     "RAY_SERVE_PROXY_PREFER_LOCAL_NODE_ROUTING", "1"
@@ -462,13 +468,13 @@ RAY_SERVE_ENABLE_TASK_EVENTS = get_env_bool("RAY_SERVE_ENABLE_TASK_EVENTS", "0")
 
 # This is deprecated and will be removed in the future.
 RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY = get_env_bool(
-    "RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "0"
+    "RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "1"
 )
 
 # Use pack instead of spread scheduling strategy.
 RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY = get_env_bool(
     "RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY",
-    os.environ.get("RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "0"),
+    os.environ.get("RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "1"),
 )
 
 # Comma-separated list of custom resources prioritized in scheduling. Sorted from highest to lowest priority.
@@ -542,6 +548,7 @@ RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP = get_env_bool(
 # use gRPC to send requests, we flip this flag on.
 RAY_SERVE_USE_GRPC_BY_DEFAULT = (
     os.environ.get("RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
+    or os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
 )
 
 RAY_SERVE_PROXY_USE_GRPC = os.environ.get("RAY_SERVE_PROXY_USE_GRPC") == "1" or (
@@ -563,6 +570,9 @@ RAY_SERVE_FAIL_ON_RANK_ERROR = get_env_bool("RAY_SERVE_FAIL_ON_RANK_ERROR", "0")
 
 # The message to return when the replica is healthy.
 HEALTHY_MESSAGE = "success"
+NO_ROUTES_MESSAGE = "Route table is not populated yet."
+NO_REPLICAS_MESSAGE = "No replicas are available yet."
+DRAINING_MESSAGE = "This node is being drained."
 
 # If throughput optimized Ray Serve is enabled, set the following constants.
 # This should be at the end.
@@ -578,6 +588,9 @@ if RAY_SERVE_THROUGHPUT_OPTIMIZED:
         "RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP", "0"
     )
     RAY_SERVE_LOG_TO_STDERR = get_env_bool("RAY_SERVE_LOG_TO_STDERR", "0")
+    RAY_SERVE_USE_GRPC_BY_DEFAULT = get_env_bool(
+        "RAY_SERVE_USE_GRPC_BY_DEFAULT", "1"
+    ) or get_env_bool("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "0")
 
 # The maximum allowed RPC latency in milliseconds.
 # This is used to detect and warn about long RPC latencies

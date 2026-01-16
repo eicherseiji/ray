@@ -97,10 +97,12 @@
     - __suffix__: aws
     - __suffix__: gce
       env: gce
+      frequency: manual
       cluster:
         cluster_compute: hello_world_compute_config_gce.yaml
     - __suffix__: azure
       env: azure
+      frequency: manual
       cluster:
         cluster_compute: hello_world_compute_config_azure.yaml
     - __suffix__: released
@@ -117,17 +119,18 @@
   cluster:
     byod:
       post_build_script: byod_hello_world.sh
-      python_depset: emoji.lock
     cluster_compute: hello_world_compute_config.yaml
+
 
   run:
     timeout: 1800
-    script: python hello_world_emoji.py
+    script: python hello_world.py
 
   variations:
     - __suffix__: aws
     - __suffix__: gce
       env: gce
+      frequency: manual
       cluster:
         cluster_compute: hello_world_compute_config_gce.yaml
     - __suffix__: released
@@ -557,7 +560,7 @@
         cluster_compute: tpl_gce_1x16.yaml
     - __suffix__: kuberay
       env: kuberay
-      frequency: nightly
+      frequency: manual # TODO(khluu): make kuberay tests work on rayturbo.
       cluster:
         cluster_compute: kuberay.yaml
 
@@ -1585,6 +1588,8 @@
       runtime_env:
         - RAY_SERVE_THROUGHPUT_OPTIMIZED=1
         - RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY=0
+        - ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH=10500000
+        - ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S=0.01
     cluster_compute: compute_tpl_single_node_16_cpu.yaml
     cloud_id: cld_wy5a6nhazplvu32526ams61d98
     project_id: prj_lhlrf1u5yv8qz9qg3xzw8fkiiq
@@ -1687,7 +1692,9 @@
         timeout: 1200
         script: RAY_TRAIN_V2_ENABLED=1 python train_benchmark.py --task=image_classification --dataloader_type=torch --num_workers=16 --skip_train_step --skip_validation_at_epoch_end --image_classification_data_format=parquet
 
+    # TODO(srinathk10): Disabling due to excess spill and OOD. Refer https://anyscale1.atlassian.net/browse/DATA-1188
     - __suffix__: skip_training.parquet.fault_tolerance
+      frequency: manual
       run:
         timeout: 2700
         script: RAY_TRAIN_V2_ENABLED=1 python train_benchmark.py --task=image_classification --dataloader_type=ray_data --num_workers=16 --mock_gpu --skip_train_step --skip_validation_step --num_epochs=5 --max_failures=4 --image_classification_data_format=parquet
@@ -1695,7 +1702,9 @@
       cluster:
         cluster_compute: compute_configs/compute_mock_gpu_4x4_aws.yaml
 
+    # TODO(srinathk10): Disabling due to excess spill and OOD. Refer https://anyscale1.atlassian.net/browse/DATA-1188
     - __suffix__: skip_training.parquet.fault_tolerance.preserve_order
+      frequency: manual
       run:
         timeout: 2700
         script: RAY_TRAIN_V2_ENABLED=1 python train_benchmark.py --task=image_classification --dataloader_type=ray_data --num_workers=16 --mock_gpu --skip_train_step --skip_validation_step --num_epochs=5 --max_failures=4 --image_classification_data_format=parquet --preserve_order
@@ -3652,7 +3661,7 @@
   group: cluster-launcher-test
   working_dir: ../python/ray/autoscaler/
 
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
 
   cluster:
@@ -3746,7 +3755,7 @@
   group: cluster-launcher-test
   working_dir: ../python/ray/autoscaler/
 
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
@@ -3769,7 +3778,7 @@
   group: cluster-launcher-test
   working_dir: ../python/ray/autoscaler/
 
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
@@ -3795,7 +3804,7 @@
   stable: true
 
   env: gce
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
@@ -3821,7 +3830,7 @@
   stable: true
 
   env: gce
-  frequency: nightly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
@@ -3924,7 +3933,7 @@
   stable: true
 
   env: gce
-  frequency: weekly
+  frequency: manual # switch off on rayturbo
   team: clusters
   cluster:
     byod: {}
@@ -4328,7 +4337,7 @@
 
 
 - name: text_embeddings_benchmark_{{scaling}}
-  frequency: nightly
+  frequency: manual  # TODO(ray-data): switch to nightly once test stabalizes
   python: "3.11"  # necessary for the llm-cu128 image
   working_dir: nightly_tests
   team: data
@@ -4351,7 +4360,7 @@
 # Note: release tests do not support specifying both 'matrix' and 'variations'
 # in a test definition, so split off preemptible tests here.
 - name: text_embeddings_benchmark_{{scaling}}_preemptible
-  frequency: nightly
+  frequency: manual  # TODO(ray-data): switch to nightly once test stabalizes
   python: "3.11"
   working_dir: nightly_tests
   team: data

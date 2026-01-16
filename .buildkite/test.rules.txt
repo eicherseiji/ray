@@ -20,6 +20,12 @@
 ! linux_wheels macos_wheels docker doc python_dependencies min_build tools
 ! release_tests spark_on_ray
 
+anyscale/
+anyscaleruntime/
+python/ray/anyscale/
+# prevent default in this file; tags are handled in the anyscale specific test rules file
+;
+
 python/ray/air/
 @ ml train train_gpu tune data linux_wheels
 ;

@@ -7,7 +7,11 @@ from starlette.routing import Route
 from starlette.types import Scope
 
 from ray.serve._private.common import ApplicationName, DeploymentID, EndpointInfo
-from ray.serve._private.constants import SERVE_LOGGER_NAME
+from ray.serve._private.constants import (
+    NO_REPLICAS_MESSAGE,
+    NO_ROUTES_MESSAGE,
+    SERVE_LOGGER_NAME,
+)
 from ray.serve._private.thirdparty.get_asgi_route_name import (
     RoutePattern,
     get_asgi_route_name,
@@ -15,9 +19,6 @@ from ray.serve._private.thirdparty.get_asgi_route_name import (
 from ray.serve.handle import DeploymentHandle
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
-
-NO_ROUTES_MESSAGE = "Route table is not populated yet."
-NO_REPLICAS_MESSAGE = "No replicas are available yet."
 
 
 class ProxyRouter:
