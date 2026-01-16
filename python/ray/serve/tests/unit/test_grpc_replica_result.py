@@ -6,9 +6,9 @@ import pytest
 
 from ray import ActorID, cloudpickle
 from ray._common.test_utils import wait_for_condition
-from ray.anyscale.serve._private.replica_result import gRPCReplicaResult
 from ray.serve._private.common import RequestMetadata
-from ray.serve.generated import serve_proprietary_pb2
+from ray.serve._private.replica_result import gRPCReplicaResult
+from ray.serve.generated import serve_pb2
 
 
 class FakegRPCUnaryCall:
@@ -22,7 +22,7 @@ class FakegRPCUnaryCall:
             raise RuntimeError("Tried to fetch from a different loop!")
 
         yield
-        return serve_proprietary_pb2.ASGIResponse(
+        return serve_pb2.ASGIResponse(
             serialized_message=cloudpickle.dumps(self._item), is_error=self._is_error
         )
 
@@ -54,7 +54,7 @@ class FakegRPCStreamCall:
             await self._loop.run_in_executor(None, self._event.wait)
 
         item, is_error = self._items.pop(0)
-        return serve_proprietary_pb2.ASGIResponse(
+        return serve_pb2.ASGIResponse(
             serialized_message=cloudpickle.dumps(item),
             is_error=is_error,
         )

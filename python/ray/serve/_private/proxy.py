@@ -28,7 +28,6 @@ from ray.anyscale.serve._private.tracing_utils import (
     setup_tracing,
     tracing_decorator_factory,
 )
-from ray.anyscale.serve.utils import asyncio_grpc_exception_handler
 from ray.serve._private.common import (
     DeploymentID,
     EndpointInfo,
@@ -91,6 +90,7 @@ from ray.serve._private.proxy_response_generator import ProxyResponseGenerator
 from ray.serve._private.proxy_router import ProxyRouter
 from ray.serve._private.usage import ServeUsageTag
 from ray.serve._private.utils import (
+    asyncio_grpc_exception_handler,
     generate_request_id,
     get_head_node_id,
     is_grpc_enabled,

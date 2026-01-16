@@ -448,6 +448,12 @@ RAY_SERVE_GRPC_MAX_MESSAGE_SIZE = get_env_int(
     "RAY_SERVE_GRPC_MAX_MESSAGE_SIZE", (2 * 1024 * 1024 * 1024) - 1
 )
 
+RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH = get_env_int(
+    # Default max message length in gRPC is 4MB, we keep that default
+    "RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH",
+    4 * 1024 * 1024,
+)
+
 # Default options passed when constructing gRPC servers.
 DEFAULT_GRPC_SERVER_OPTIONS = [
     ("grpc.max_send_message_length", RAY_SERVE_GRPC_MAX_MESSAGE_SIZE),
@@ -538,6 +544,18 @@ RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP = get_env_bool(
     "RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP", "1"
 )
 
+# For now, this is used only for testing. In the suite of tests that
+# use gRPC to send requests, we flip this flag on.
+RAY_SERVE_USE_GRPC_BY_DEFAULT = (
+    os.environ.get("RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
+    or os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
+)
+
+RAY_SERVE_PROXY_USE_GRPC = os.environ.get("RAY_SERVE_PROXY_USE_GRPC") == "1" or (
+    not os.environ.get("RAY_SERVE_PROXY_USE_GRPC") == "0"
+    and RAY_SERVE_USE_GRPC_BY_DEFAULT
+)
+
 # The default buffer size for request path logs. Setting to 1 will ensure
 # logs are flushed to file handler immediately, otherwise it will be buffered
 # and flushed to file handler when the buffer is full or when there is a log
@@ -570,6 +588,9 @@ if RAY_SERVE_THROUGHPUT_OPTIMIZED:
         "RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP", "0"
     )
     RAY_SERVE_LOG_TO_STDERR = get_env_bool("RAY_SERVE_LOG_TO_STDERR", "0")
+    RAY_SERVE_USE_GRPC_BY_DEFAULT = get_env_bool(
+        "RAY_SERVE_USE_GRPC_BY_DEFAULT", "1"
+    ) or get_env_bool("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "0")
 
 # The maximum allowed RPC latency in milliseconds.
 # This is used to detect and warn about long RPC latencies
