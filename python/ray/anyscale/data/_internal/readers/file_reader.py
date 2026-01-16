@@ -6,8 +6,8 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
 )
 from ray.data.block import DataBatch
 from ray.data.datasource.datasource import (
-    _DatasourceProjectionPushdownMixin,
     _DatasourcePredicatePushdownMixin,
+    _DatasourceProjectionPushdownMixin,
 )
 
 if TYPE_CHECKING:

@@ -5,8 +5,8 @@ import pytest
 
 import ray
 from ray.cluster_utils import Cluster
-from ray.data.context import DataContext
 from ray.data._internal.execution.interfaces import ExecutionResources
+from ray.data.context import DataContext
 
 
 @pytest.fixture

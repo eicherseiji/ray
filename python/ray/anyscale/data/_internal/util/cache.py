@@ -1,7 +1,7 @@
-from typing import Callable, Dict, Tuple, Any
-from contextlib import contextmanager
-import time
 import functools
+import time
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Tuple
 
 _IS_TIMED_CACHE_ENABLED = True
 

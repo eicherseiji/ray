@@ -1,15 +1,15 @@
 import collections
 import logging
+from abc import abstractmethod
 from typing import (
-    Tuple,
-    List,
-    Sequence,
-    Dict,
-    Iterator,
     TYPE_CHECKING,
     Any,
+    Dict,
+    Iterator,
+    List,
+    Sequence,
+    Tuple,
 )
-from abc import abstractmethod
 
 import numpy as np
 
@@ -19,24 +19,23 @@ from ray.anyscale.data.aggregate_vectorized import (
     MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS,
 )
 from ray.data._internal.arrow_ops.transform_pyarrow import (
-    concat_and_sort,
     concat,
+    concat_and_sort,
 )
 from ray.data._internal.table_block import TableBlockAccessor
 from ray.data.aggregate import AggregateFn
 from ray.data.block import (
-    BlockAccessor,
+    AggType,
     Block,
-    BlockMetadata,
+    BlockAccessor,
+    BlockColumn,
+    BlockColumnAccessor,
     BlockExecStats,
+    BlockMetadata,
+    BlockMetadataWithSchema,
     BlockType,
     KeyType,
-    BlockColumn,
-    AggType,
-    BlockColumnAccessor,
-    BlockMetadataWithSchema,
 )
-
 
 if TYPE_CHECKING:
     from ray.data._internal.planner.exchange.sort_task_spec import SortKey

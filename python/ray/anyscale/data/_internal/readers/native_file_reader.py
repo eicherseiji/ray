@@ -5,21 +5,20 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 import pyarrow
 
-
 from .file_reader import FileReader
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
 from ray.data._internal.util import (
     RetryingPyFileSystem,
+    infer_compression,
     iterate_with_retry,
     make_async_gen,
 )
 from ray.data.block import DataBatch
 from ray.data.context import DataContext
 from ray.data.datasource import Partitioning, PathPartitionParser
-from ray.anyscale.data._internal.file_indexer import ChunkMetadata
-from ray.data._internal.util import infer_compression
 
 
 class NativeFileReader(FileReader):

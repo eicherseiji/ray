@@ -1,8 +1,8 @@
 from ray.data._internal.logical.interfaces import (
-    Rule,
-    Plan,
-    LogicalPlan,
     LogicalOperator,
+    LogicalPlan,
+    Plan,
+    Rule,
 )
 from ray.data._internal.logical.operators.one_to_one_operator import Download
 from ray.data._internal.logical.rules.operator_fusion import are_remote_args_compatible

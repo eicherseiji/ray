@@ -1,19 +1,20 @@
 import math
 import os
 from unittest.mock import MagicMock, patch
-import pytest
-import pyarrow as pa
 
-from ray.data.context import DataContext
+import pyarrow as pa
+import pyarrow.fs as pa_fs
+import pytest
+
 from ray.anyscale.data._internal.file_indexer import (
     LineDelimitedFileChunker,
-    WholeFileChunker,
-    NonSamplingFileIndexer,
     LineDelimitedFileChunkMetadata,
+    NonSamplingFileIndexer,
+    WholeFileChunker,
     create_chunk_metadata,
 )
 from ray.data._internal.util import RetryingPyFileSystem
-import pyarrow.fs as pa_fs
+from ray.data.context import DataContext
 
 
 class TestFileChunkers:

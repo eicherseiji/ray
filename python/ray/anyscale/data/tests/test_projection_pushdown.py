@@ -1,19 +1,20 @@
-import pytest
+from dataclasses import dataclass
+from typing import Dict, List, Set
+
+import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
-import pandas as pd
-from typing import Dict, List, Set
-from dataclasses import dataclass
+import pytest
 
 import ray
-from ray.data.expressions import DataType, col, udf
-from ray.data._internal.logical.operators.map_operator import Project
-from ray.data._internal.logical.operators.input_data_operator import InputData
 from ray.data._internal.logical.interfaces import LogicalPlan
-from ray.data.context import DataContext
+from ray.data._internal.logical.operators.input_data_operator import InputData
+from ray.data._internal.logical.operators.map_operator import Project
 from ray.data._internal.logical.rules.projection_pushdown import (
     ProjectionPushdown,
 )
+from ray.data.context import DataContext
+from ray.data.expressions import DataType, col, udf
 
 
 @dataclass

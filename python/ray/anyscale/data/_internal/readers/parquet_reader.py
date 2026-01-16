@@ -7,8 +7,8 @@ from typing import (
     Any,
     Callable,
     Dict,
-    Iterator,
     Iterable,
+    Iterator,
     List,
     Optional,
     Set,
@@ -24,48 +24,45 @@ import pyarrow as pa
 import pyarrow.dataset
 from packaging.version import parse as parse_version
 
-from ray._private.arrow_utils import get_pyarrow_version
-from ray.anyscale.data._internal.logical.operators.list_files_operator import (
-    FileManifest,
-)
-from ray.anyscale.data._internal.file_indexer import (
-    ChunkMetadata,
-    create_chunk_metadata,
-)
-from ray.data._internal.datasource.parquet_datasource import (
-    PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT,
-    ParquetDatasource,
-    check_for_legacy_tensor_type,
-    get_parquet_dataset,
-    _read_batches_from,
-    _get_partition_columns_schema,
-    _split_predicate_by_columns,
-)
-from ray.data._internal.util import (
-    call_with_retry,
-    iterate_with_retry,
-    GiB,
-    make_async_gen,
-)
-from ray.data.block import Block, BlockMetadata, DataBatch, Schema
-from ray.data.context import DataContext, MAX_SAFE_BLOCK_SIZE_FACTOR
-from ray.data.datasource import Partitioning, PathPartitionParser
-from ray.anyscale.data.checkpoint.util import (
-    CheckpointedFragmentInfo,
-    parse_checkpointed_fragment_info,
-    get_generated_id_column,
-    GENERATED_ID_COLUMN_TYPE,
-    exclude_checkpointed_rows,
-)
-
-from ray._private.ray_constants import env_integer
-
 from .file_reader import FileReader
 from .in_memory_size_estimator import (
     InMemorySizeEstimator,
 )
 from .supports_metadata import MetadataType, SupportsMetadata, SupportsSchema
-
+from ray._private.arrow_utils import get_pyarrow_version
+from ray._private.ray_constants import env_integer
+from ray.anyscale.data._internal.file_indexer import (
+    ChunkMetadata,
+    create_chunk_metadata,
+)
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
+from ray.anyscale.data.checkpoint.util import (
+    GENERATED_ID_COLUMN_TYPE,
+    CheckpointedFragmentInfo,
+    exclude_checkpointed_rows,
+    get_generated_id_column,
+    parse_checkpointed_fragment_info,
+)
+from ray.data._internal.datasource.parquet_datasource import (
+    PARQUET_ENCODING_RATIO_ESTIMATE_DEFAULT,
+    ParquetDatasource,
+    _get_partition_columns_schema,
+    _read_batches_from,
+    _split_predicate_by_columns,
+    check_for_legacy_tensor_type,
+    get_parquet_dataset,
+)
+from ray.data._internal.util import (
+    GiB,
+    call_with_retry,
+    iterate_with_retry,
+    make_async_gen,
+)
+from ray.data.block import Block, BlockMetadata, DataBatch, Schema
+from ray.data.context import MAX_SAFE_BLOCK_SIZE_FACTOR, DataContext
+from ray.data.datasource import Partitioning, PathPartitionParser
 
 logger = logging.getLogger(__name__)
 

@@ -1,8 +1,8 @@
 from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional
 
 from .native_file_reader import NativeFileReader
-from ray.data.block import DataBatch
 from ray.anyscale.data._internal.file_indexer import ChunkMetadata
+from ray.data.block import DataBatch
 
 if TYPE_CHECKING:
     import pyarrow

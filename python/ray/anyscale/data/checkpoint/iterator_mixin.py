@@ -1,14 +1,14 @@
 import dataclasses
 from contextlib import contextmanager
-from typing import Optional, Dict, Any, Iterator
+from typing import Any, Dict, Iterator, Optional
 
 from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
     BatchMetadataWithRowIDs,
     DataIteratorCheckpointer,
     RowIDBasedDataIteratorCheckpointer,
 )
-from ray.data._internal.block_batching.iter_batches import BatchIterator
 from ray.data._internal.block_batching.interfaces import Batch
+from ray.data._internal.block_batching.iter_batches import BatchIterator
 from ray.data._internal.execution.interfaces import RefBundle
 from ray.data._internal.table_block import TableBlockAccessor
 from ray.data.block import Block, BlockAccessor

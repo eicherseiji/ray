@@ -8,14 +8,14 @@ from jsonschema import validate
 import ray
 import ray._common.usage.usage_lib as ray_usage_lib
 from ray._common.test_utils import wait_for_condition
-from ray.tests.conftest import (  # noqa: F401
-    maybe_setup_external_redis,
-    ray_start_cluster,
-)
 from ray._common.tests.test_usage_stats import (  # noqa: F401
     print_dashboard_log,
     schema,
     start_usage_stats_server,
+)
+from ray.tests.conftest import (  # noqa: F401
+    maybe_setup_external_redis,
+    ray_start_cluster,
 )
 
 

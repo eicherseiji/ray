@@ -1,17 +1,17 @@
-import ray
+from typing import Dict
+from unittest.mock import MagicMock, patch
+
 import pytest
 
-from unittest.mock import MagicMock, patch
-from typing import Dict
-
-from ray.data._internal.execution.operators.hash_shuffle import (
-    HashShuffleOperator,
-    AggregatorPool,
-)
+import ray
 from ray.core.generated import autoscaler_pb2
-from ray.data.context import DataContext
 from ray.data._internal.execution.interfaces import PhysicalOperator
+from ray.data._internal.execution.operators.hash_shuffle import (
+    AggregatorPool,
+    HashShuffleOperator,
+)
 from ray.data._internal.util import GiB
+from ray.data.context import DataContext
 
 
 def test_derive_final_shuffle_aggregator_remote_args():

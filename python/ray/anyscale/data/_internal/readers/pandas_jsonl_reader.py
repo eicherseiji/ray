@@ -2,6 +2,7 @@ import logging
 from typing import TYPE_CHECKING, Iterable, Optional
 
 import pandas as pd
+
 from .native_file_reader import NativeFileReader
 from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 from ray.data._internal.datasource.json_datasource import (

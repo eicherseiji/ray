@@ -1,7 +1,6 @@
 from typing import Any, Callable, Dict, Optional
 
 import ray
-
 from ray.data._internal.execution.operators.map_operator import MapOperator
 from ray.data._internal.logical.rules.configure_map_task_memory import (
     ConfigureMapTaskMemoryRule,

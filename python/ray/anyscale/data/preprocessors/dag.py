@@ -1,9 +1,9 @@
 from collections import defaultdict
-from typing import List, Optional, Set, Callable, Sequence
+from typing import Callable, List, Optional, Sequence, Set
 
 from ray.air.util.data_batch_conversion import BatchFormat
-from ray.data.preprocessor import Preprocessor
 from ray.data.aggregate import AggregateFnV2
+from ray.data.preprocessor import Preprocessor
 
 
 class _DAGNode:

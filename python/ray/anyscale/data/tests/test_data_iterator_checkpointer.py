@@ -7,17 +7,16 @@ import pyarrow.parquet as pq
 import pytest
 
 import ray
-from ray.data._internal.block_batching.interfaces import Batch
+from ray._common.test_utils import wait_for_condition
 from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
-    RowIDBasedDataIteratorCheckpointer,
     BatchMetadataWithRowIDs,
+    RowIDBasedDataIteratorCheckpointer,
     RowIDBasedStateDict,
 )
-from ray.train import DatasetCheckpointConfig
-
-from ray._common.test_utils import wait_for_condition
-from ray.tests.conftest import *  # noqa
 from ray.data import FileShuffleConfig
+from ray.data._internal.block_batching.interfaces import Batch
+from ray.tests.conftest import *  # noqa
+from ray.train import DatasetCheckpointConfig
 
 
 def _create_batch(row_ids: List[int]) -> Batch:

@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Union, Any, Iterator, Dict, Mapping
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Mapping, Union
 
 import numpy as np
 

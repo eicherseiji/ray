@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Iterable, Optional, Union
 
 from .native_file_reader import NativeFileReader
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 from ray.data._internal.datasource.webdataset_datasource import (
     _apply_list,
     _default_decoder,
@@ -8,7 +9,6 @@ from ray.data._internal.datasource.webdataset_datasource import (
     _tar_file_iterator,
 )
 from ray.data.block import DataBatch
-from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 if TYPE_CHECKING:
     import pyarrow

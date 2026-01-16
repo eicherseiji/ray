@@ -1,16 +1,15 @@
-from typing import TYPE_CHECKING, Iterator, Iterable, Optional, Set
+from typing import TYPE_CHECKING, Iterable, Iterator, Optional, Set
 
 import numpy as np
-
-from ray.anyscale.data._internal.logical.operators.list_files_operator import (
-    FileManifest,
-)
-from ray.data.block import BlockMetadata, DataBatch
-from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 from .in_memory_size_estimator import InMemorySizeEstimator
 from .native_file_reader import NativeFileReader
 from .supports_metadata import MetadataType, SupportsMetadata
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
+from ray.anyscale.data._internal.logical.operators.list_files_operator import (
+    FileManifest,
+)
+from ray.data.block import BlockMetadata, DataBatch
 
 if TYPE_CHECKING:
     import pyarrow

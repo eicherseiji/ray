@@ -1,11 +1,11 @@
-import pytest
 import numpy as np
 import pyarrow as pa
+import pytest
 
 from ray.anyscale.data._internal.arrow_ops.transform_pyarrow import (
     _hash_partition_vectorized,
-    hash_partition_optimized,
     deepcopy_array,
+    hash_partition_optimized,
 )
 
 

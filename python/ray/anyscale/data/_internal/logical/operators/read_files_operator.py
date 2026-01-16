@@ -3,6 +3,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
+
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
     ListFiles,

@@ -1,3 +1,6 @@
+import logging
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
+
 from ray._private.arrow_utils import get_pyarrow_version
 from ray.data._internal.arrow_ops.transform_pyarrow import (
     MIN_PYARROW_VERSION_RUN_END_ENCODED_TYPES,
@@ -6,19 +9,14 @@ from ray.data._internal.execution.operators.hash_shuffle import _combine
 from ray.data._internal.execution.operators.join import (
     JoiningAggregation,
 )
-from ray.data._internal.util import _check_import
-
-
-import logging
-from typing import Any, List, Optional, Tuple, TYPE_CHECKING, Iterator, Dict
-
-from ray.data.context import DataContext
 from ray.data._internal.logical.operators.join_operator import JoinType
+from ray.data._internal.util import _check_import
 from ray.data.block import Block
+from ray.data.context import DataContext
 
 if TYPE_CHECKING:
-    import pyarrow as pa
     import polars as pl
+    import pyarrow as pa
 
 
 _JOIN_TYPE_TO_POLARS_JOIN_TYPE_MAP = {

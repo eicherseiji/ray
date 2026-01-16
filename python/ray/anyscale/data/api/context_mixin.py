@@ -1,13 +1,13 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Dict, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
+from ray._private.ray_constants import env_integer
 from ray.data.checkpoint import CheckpointBackend, CheckpointConfig
 from ray.data.context import (
     DEFAULT_TARGET_MAX_BLOCK_SIZE,
     DEFAULT_TARGET_MIN_BLOCK_SIZE,
     env_bool,
 )
-from ray._private.ray_constants import env_integer
 
 if TYPE_CHECKING:
     pass

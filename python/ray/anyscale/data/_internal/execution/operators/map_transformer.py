@@ -1,17 +1,17 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Callable, Any, Iterable
+from typing import Any, Callable, Iterable, List, Optional
 
 from ray.data._internal.execution.interfaces import TaskContext
 from ray.data._internal.execution.operators.map_transformer import (
-    MapTransformFn,
-    MapTransformer,
     BatchMapTransformFn,
     BlockMapTransformFn,
-    RowMapTransformFn,
+    MapTransformer,
+    MapTransformFn,
     Row,
+    RowMapTransformFn,
 )
 from ray.data._internal.output_buffer import OutputBlockSizeOption
-from ray.data.block import DataBatch, Block
+from ray.data.block import Block, DataBatch
 
 
 class OptimizedMapTransformer(MapTransformer):

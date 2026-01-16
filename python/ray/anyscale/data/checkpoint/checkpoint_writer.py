@@ -1,7 +1,7 @@
-from abc import abstractmethod
 import logging
 import os
 import uuid
+from abc import abstractmethod
 
 from pyarrow import parquet as pq
 

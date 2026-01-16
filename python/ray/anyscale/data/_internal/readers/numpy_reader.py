@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, Optional
 import numpy as np
 
 from .native_file_reader import NativeFileReader
-from ray.data.block import Block
 from ray.anyscale.data._internal.file_indexer import ChunkMetadata
+from ray.data.block import Block
 
 if TYPE_CHECKING:
     import pyarrow

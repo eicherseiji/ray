@@ -4,12 +4,12 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 from pyarrow.fs import FileSystem
 
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
 from ray.data.block import BlockAccessor, BlockColumn
-from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 
 if TYPE_CHECKING:
     from .file_reader import FileReader

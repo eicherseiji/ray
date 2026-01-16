@@ -1,13 +1,13 @@
 from ray.data._internal.logical.interfaces import (
-    Rule,
-    Plan,
-    LogicalPlan,
     LogicalOperator,
+    LogicalPlan,
+    Plan,
+    Rule,
 )
 from ray.data._internal.logical.operators.map_operator import (
-    StreamingRepartition,
-    MapRows,
     FlatMap,
+    MapRows,
+    StreamingRepartition,
 )
 
 

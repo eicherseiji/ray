@@ -5,6 +5,16 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set
 
 import ray
+from .bottleneck_detector import (
+    BottleneckDetector,
+    NormalizedThroughputBottleneckDetector,
+)
+from .supports_cluster_autoscaling import SupportsClusterAutoscaling
+from ray._private.ray_constants import env_float, env_integer
+from ray.anyscale.air._internal.autoscaling_coordinator import (
+    AutoscalingCoordinator,
+    DefaultAutoscalingCoordinator,
+)
 from ray.anyscale.data._internal.cluster_autoscaler.cluster_limits_aware import (
     clamp_resource_limits,
 )
@@ -14,16 +24,6 @@ from ray.data._internal.cluster_autoscaler.base_cluster_autoscaler import (
 from ray.data._internal.cluster_autoscaler.resource_utilization_gauge import (
     ResourceUtilizationGauge,
     RollingLogicalUtilizationGauge,
-)
-from .bottleneck_detector import (
-    NormalizedThroughputBottleneckDetector,
-    BottleneckDetector,
-)
-from .supports_cluster_autoscaling import SupportsClusterAutoscaling
-from ray._private.ray_constants import env_float, env_integer
-from ray.anyscale.air._internal.autoscaling_coordinator import (
-    AutoscalingCoordinator,
-    DefaultAutoscalingCoordinator,
 )
 from ray.data._internal.execution.interfaces import ExecutionOptions, PhysicalOperator
 from ray.data._internal.execution.interfaces.execution_options import ExecutionResources

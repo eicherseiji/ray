@@ -1,10 +1,10 @@
 import abc
-from concurrent.futures import ThreadPoolExecutor, Future
-from dataclasses import dataclass, fields
 import logging
 import os
-from queue import Queue
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, fields
+from queue import Queue
 from typing import Any, ClassVar, Dict, List, Optional
 
 import pyarrow as pa
@@ -12,13 +12,13 @@ import pyarrow.fs
 import pyarrow.parquet as pq
 
 import ray
-from ray.anyscale.data.checkpoint.interfaces import TrainingIngestCheckpointConfig
-from ray.data.block import Block, BlockAccessor
-from ray.data.context import DataContext
 from ray.anyscale.data._internal.arrow_ops.transform_pyarrow import deepcopy_array
+from ray.anyscale.data.checkpoint.interfaces import TrainingIngestCheckpointConfig
 from ray.data._internal.block_batching.interfaces import Batch, BatchMetadata
 from ray.data._internal.util import call_with_retry
-from ray.data.datasource import PathPartitionFilter, PartitionStyle
+from ray.data.block import Block, BlockAccessor
+from ray.data.context import DataContext
+from ray.data.datasource import PartitionStyle, PathPartitionFilter
 
 logger = logging.getLogger(__name__)
 
@@ -556,8 +556,8 @@ class RowIDBasedDataIteratorCheckpointer(DataIteratorCheckpointer):
         Deletes a partially written checkpoint directory from a previous run.
         """
         from ray.train.v2._internal.execution.storage import (
-            _exists_at_fs_path,
             _create_directory,
+            _exists_at_fs_path,
             delete_fs_path,
         )
 

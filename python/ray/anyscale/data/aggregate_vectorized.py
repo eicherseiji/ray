@@ -5,17 +5,16 @@ from ray.data._internal.arrow_ops.transform_pyarrow import (
     MIN_PYARROW_VERSION_TYPE_PROMOTION,
 )
 from ray.data.aggregate import (
+    AbsMax,
     AggregateFnV2,
     Count,
-    Sum,
-    Min,
     Max,
-    AbsMax,
+    Min,
     Quantile,
+    Sum,
     Unique,
 )
-from ray.data.block import AggType, BlockColumn, BlockColumnAccessor, Block, U
-
+from ray.data.block import AggType, Block, BlockColumn, BlockColumnAccessor, U
 
 MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS = MIN_PYARROW_VERSION_TYPE_PROMOTION
 

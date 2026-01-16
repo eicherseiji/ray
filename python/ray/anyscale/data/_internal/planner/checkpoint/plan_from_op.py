@@ -1,6 +1,7 @@
 import functools
 from typing import Callable, List, Optional
 
+from ray import ObjectRef
 from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_IDS_KWARG_NAME,
     filter_checkpointed_rows_for_blocks,
@@ -12,7 +13,6 @@ from ray.data._internal.execution.operators.map_transformer import (
     BlockMapTransformFn,
     MapTransformer,
 )
-from ray import ObjectRef
 from ray.data._internal.logical.operators.from_operators import AbstractFrom
 from ray.data._internal.output_buffer import OutputBlockSizeOption
 from ray.data.context import DataContext

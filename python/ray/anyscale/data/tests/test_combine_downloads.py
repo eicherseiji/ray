@@ -1,11 +1,11 @@
 import pytest
 
+import ray
+from ray.anyscale.data._internal.logical.rules.combine_downloads import CombineDownloads
 from ray.data._internal.logical.interfaces import LogicalPlan
 from ray.data._internal.logical.operators.input_data_operator import InputData
 from ray.data._internal.logical.operators.one_to_one_operator import Download
 from ray.data.context import DataContext
-from ray.anyscale.data._internal.logical.rules.combine_downloads import CombineDownloads
-import ray
 from ray.data.expressions import download
 from ray.data.tests.conftest import *  # noqa
 

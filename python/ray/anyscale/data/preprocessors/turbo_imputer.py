@@ -2,9 +2,9 @@ from typing import Dict
 
 import numpy as np
 
+import ray.data.preprocessors as preprocessors_module
 from ray.anyscale.data.preprocessors.turbo_preprocessor import TurboPreprocessor
 from ray.data.aggregate import Mean, ValueCounter
-import ray.data.preprocessors as preprocessors_module
 from ray.data.preprocessors.version_support import SerializablePreprocessor
 
 # Store original reference before potential patching

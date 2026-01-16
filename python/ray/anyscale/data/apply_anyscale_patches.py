@@ -45,8 +45,8 @@ def _patch_aggregations():
     # NOTE: For Arrow versions >= 14.0 (supporting type promotions) we override
     #       standard aggregations to use vectorized versions
     if get_pyarrow_version() >= MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS:
-        from . import aggregate_vectorized
         from ...data import aggregate
+        from . import aggregate_vectorized
 
         aggregate.Count = aggregate_vectorized.CountVectorized
         aggregate.Sum = aggregate_vectorized.SumVectorized
@@ -60,12 +60,11 @@ def _patch_aggregations():
 def _patch_map_transformations():
     """Patches ``MapTransformer`` implementation"""
     from ray.anyscale.data._internal.execution.operators.map_transformer import (
-        OptimizedMapTransformer,
-        OptimizedBlockMapTransformFn,
         OptimizedBatchMapTransformFn,
+        OptimizedBlockMapTransformFn,
+        OptimizedMapTransformer,
         OptimizedRowMapTransformFn,
     )
-
     from ray.data._internal.execution.operators import map_transformer
 
     map_transformer.MapTransformer = OptimizedMapTransformer
@@ -77,7 +76,6 @@ def _patch_map_transformations():
 def _patch_preprocessors():
     if ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS:
         from ...data import preprocessors
-
         from .preprocessors import (
             Categorizer,
             Chain,
@@ -102,10 +100,10 @@ def _patch_preprocessors():
 def _patch_arrow_ops():
     """Patch arrow operations with optimized implementations."""
     try:
+        from ...data._internal.arrow_ops import transform_pyarrow
         from ._internal.arrow_ops.transform_pyarrow import (
             hash_partition_optimized,
         )
-        from ...data._internal.arrow_ops import transform_pyarrow
 
         # Replace the hash_partition function with the optimized version
         transform_pyarrow.hash_partition = hash_partition_optimized
@@ -118,13 +116,11 @@ def _add_optimization_rules():
         get_logical_ruleset,
         get_physical_ruleset,
     )
-
-    from ._internal.logical.rules.combine_downloads import (
-        CombineDownloads,
-    )
-
     from ._internal.logical.rules import (
         PushdownCountFiles,
+    )
+    from ._internal.logical.rules.combine_downloads import (
+        CombineDownloads,
     )
 
     # Logical optimization rules
@@ -135,14 +131,12 @@ def _add_optimization_rules():
     # logical_ruleset.add(FuseMapWithRepartitionRule)
     logical_ruleset.add(CombineDownloads)
 
-    from ._internal.logical.rules.configure_map_task_memory import (
-        ConfigureMapTaskMemoryWithProfiling,
-    )
-
     # Physical optimization rules
-
     from ...data._internal.logical.rules.configure_map_task_memory import (
         ConfigureMapTaskMemoryUsingOutputSize,
+    )
+    from ._internal.logical.rules.configure_map_task_memory import (
+        ConfigureMapTaskMemoryWithProfiling,
     )
 
     physical_ruleset = get_physical_ruleset()
@@ -153,10 +147,10 @@ def _add_optimization_rules():
 
 def _patch_hash_shuffle_operator():
     """Patch hash shuffle operator with RayTurbo-specific dependency checking."""
+    from ._internal.util.dependencies import check_numba_for_hash_partitioning
     from ray.data._internal.execution.operators.hash_shuffle import (
         HashShufflingOperatorBase,
     )
-    from ._internal.util.dependencies import check_numba_for_hash_partitioning
 
     # Store the original __init__ method
     original_init = HashShufflingOperatorBase.__init__
@@ -176,13 +170,13 @@ def _register_anyscale_lineage_tracking_callback():
     """Register Anyscale lineage tracking callback."""
     if ANYSCALE_LINEAGE_TRACKING_ENABLED:
         try:
-            from ray.data.context import DataContext
-            from ray.data._internal.execution.execution_callback import (
-                add_execution_callback,
-            )
             from ray.anyscale.lineage.ray_lineage.data.main import (
                 RayDataOpenLineageExecutionCallback,
             )
+            from ray.data._internal.execution.execution_callback import (
+                add_execution_callback,
+            )
+            from ray.data.context import DataContext
 
             context = DataContext.get_current()
             callback = RayDataOpenLineageExecutionCallback()

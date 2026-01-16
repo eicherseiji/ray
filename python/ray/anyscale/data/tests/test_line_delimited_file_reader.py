@@ -1,12 +1,12 @@
 from pathlib import Path
 from typing import Any, Dict, List
 
-import pytest
 import pyarrow.fs as pa_fs
+import pytest
 
 from ray.anyscale.data._internal.readers import LineDelimitedFileReader
-from ray.data._internal.util import RetryingPyFileSystem
 from ray.anyscale.data.tests.utils import batches_to_rows
+from ray.data._internal.util import RetryingPyFileSystem
 
 
 class TestLineDelimitedFileReader:

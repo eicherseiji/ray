@@ -1,9 +1,9 @@
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import DefaultDict, List, Optional, Dict
+from typing import DefaultDict, Dict, List, Optional
 from unittest.mock import MagicMock
 
-import logging
 import pytest
 
 from ray.anyscale.air._internal.autoscaling_coordinator import (
@@ -28,8 +28,10 @@ from ray.data._internal.cluster_autoscaler.resource_utilization_gauge import (
     ResourceUtilizationGauge,
 )
 from ray.data._internal.execution.interfaces import PhysicalOperator
-from ray.data._internal.execution.interfaces.execution_options import ExecutionOptions
-from ray.data._internal.execution.interfaces.execution_options import ExecutionResources
+from ray.data._internal.execution.interfaces.execution_options import (
+    ExecutionOptions,
+    ExecutionResources,
+)
 from ray.data._internal.execution.resource_manager import ResourceManager
 from ray.data.tests.conftest import propagate_logs  # noqa
 

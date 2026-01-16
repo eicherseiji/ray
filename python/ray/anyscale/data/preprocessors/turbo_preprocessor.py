@@ -2,7 +2,6 @@ from typing import TYPE_CHECKING
 
 from ray.data.preprocessor import Preprocessor
 
-
 if TYPE_CHECKING:
     from ray.data import Dataset
 

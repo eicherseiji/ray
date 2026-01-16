@@ -18,12 +18,12 @@ from ray.anyscale.data.apply_anyscale_patches import (
     _patch_class_with_mixin,
     _register_anyscale_lineage_tracking_callback,
 )
-from ray.data._internal.execution.execution_callback import (
-    EXECUTION_CALLBACKS_CONFIG_KEY,
-)
 from ray.data._internal.execution.bundle_queue import (
     FIFOBundleQueue,
     create_bundle_queue,
+)
+from ray.data._internal.execution.execution_callback import (
+    EXECUTION_CALLBACKS_CONFIG_KEY,
 )
 from ray.tests.conftest import *  # noqa
 

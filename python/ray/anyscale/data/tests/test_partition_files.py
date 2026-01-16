@@ -5,10 +5,10 @@ import pyarrow as pa
 import pytest
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
-    FILE_SIZE_COLUMN_NAME,
-    PATH_COLUMN_NAME,
     FILE_CHUNK_METADATA_COLUMN_NAME,
     FILE_FRAGMENTS_CHECKPOINT_COLUMN_NAME,
+    FILE_SIZE_COLUMN_NAME,
+    PATH_COLUMN_NAME,
 )
 from ray.anyscale.data._internal.partitioners import (
     RoundRobinPartitioner,

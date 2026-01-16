@@ -1,10 +1,10 @@
-from typing import List, Union, Any, Iterator, Dict, Mapping
 import logging
+from typing import Any, Dict, Iterator, List, Mapping, Union
+
 import pandas as pd
-
 from pandas.api.types import is_scalar
-from ray.data._internal.row import row_repr, row_repr_pretty, row_str
 
+from ray.data._internal.row import row_repr, row_repr_pretty, row_str
 
 logger = logging.getLogger(__name__)
 

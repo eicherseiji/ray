@@ -2,13 +2,12 @@ import collections
 import logging
 from typing import Tuple
 
+from .file_partitioner import FilePartitioner
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
 from ray.anyscale.data._internal.readers import InMemorySizeEstimator
 from ray.anyscale.data.checkpoint.util import CheckpointFragmentsInfo
-
-from .file_partitioner import FilePartitioner
 
 logger = logging.getLogger(__name__)
 

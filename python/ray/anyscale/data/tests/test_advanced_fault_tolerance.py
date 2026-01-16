@@ -6,6 +6,8 @@ import pyarrow as pa
 import pytest
 
 import ray
+import ray._private.services as services
+from ray.core.generated import autoscaler_pb2
 from ray.data._internal.compute import (
     ActorPoolStrategy,
     ComputeStrategy,
@@ -22,8 +24,6 @@ from ray.data._internal.execution.streaming_executor import StreamingExecutor
 from ray.data.block import BlockAccessor
 from ray.tests.conftest import *  # noqa  # noqa
 from ray.tests.conftest import wait_for_condition
-import ray._private.services as services
-from ray.core.generated import autoscaler_pb2
 
 
 def test_removed_nodes_not_added_back(ray_start_cluster):

@@ -1,12 +1,14 @@
 import abc
 from enum import Enum
 from typing import Iterator, List, Optional, Set
+
 import pyarrow.fs
-from ray.data.block import BlockMetadata, Schema
+
+from .file_reader import FileReader
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
-from .file_reader import FileReader
+from ray.data.block import BlockMetadata, Schema
 
 
 class MetadataType(Enum):

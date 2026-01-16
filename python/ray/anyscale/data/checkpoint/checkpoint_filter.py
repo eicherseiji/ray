@@ -7,31 +7,31 @@ import pyarrow.compute as pc
 import ray
 from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
 from ray.anyscale.data.checkpoint.util import (
-    GeneratedIdFieldIndex,
-    get_struct_field_index,
-    FILE_NAME_FIELD,
-    GENERATED_ID_FIELD_MAPPING,
-    PATH_PREFIX_FIELD,
-    NUM_FRAGMENTS_FIELD,
-    FRAGMENT_FIELD,
-    NUM_ROWS_FIELD,
-    ROW_ID_FIELD,
-    CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
-    CHECKPOINTED_FRAGMENT_TYPE,
     CHECKPOINTED_FILE_COLUMN_NAME,
-    CHECKPOINTED_FILE_FRAGMENT_ID_FIELD,
-    CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD,
-    CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
     CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENT_ID_FIELD,
+    CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD,
     CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD,
     CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
-    CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD,
+    CHECKPOINTED_FRAGMENT_TYPE,
+    CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
+    FILE_NAME_FIELD,
+    FRAGMENT_FIELD,
+    GENERATED_ID_FIELD_MAPPING,
+    NUM_FRAGMENTS_FIELD,
+    NUM_ROWS_FIELD,
+    PATH_PREFIX_FIELD,
+    ROW_ID_FIELD,
+    GeneratedIdFieldIndex,
+    get_struct_field_index,
 )
 from ray.data.block import Block, BlockMetadata, Schema
 from ray.data.checkpoint.checkpoint_filter import (
+    BatchBasedCheckpointFilter as OSSBatchBasedCheckpointFilter,
     CheckpointFilter as OSSCheckpointFilter,
     CheckpointLoader,
-    BatchBasedCheckpointFilter as OSSBatchBasedCheckpointFilter,
 )
 from ray.data.context import ShuffleStrategy
 from ray.types import ObjectRef

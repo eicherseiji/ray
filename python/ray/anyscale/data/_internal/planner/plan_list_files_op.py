@@ -16,6 +16,7 @@ from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     ListFiles,
 )
 from ray.anyscale.data._internal.partitioners import FilePartitioner
+from ray.anyscale.data.checkpoint.util import CHECKPOINTED_IDS_KWARG_NAME
 from ray.data._internal.delegating_block_builder import DelegatingBlockBuilder
 from ray.data._internal.execution.interfaces import PhysicalOperator, RefBundle
 from ray.data._internal.execution.interfaces.task_context import TaskContext
@@ -29,7 +30,6 @@ from ray.data.block import Block, BlockAccessor
 from ray.data.context import DataContext
 from ray.data.datasource import FileShuffleConfig, PathPartitionFilter
 from ray.types import ObjectRef
-from ray.anyscale.data.checkpoint.util import CHECKPOINTED_IDS_KWARG_NAME
 
 logger = logging.getLogger(__name__)
 

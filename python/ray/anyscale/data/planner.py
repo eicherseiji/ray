@@ -23,9 +23,6 @@ from ray.anyscale.data._internal.planner.checkpoint import (
 from ray.anyscale.data.checkpoint.load_checkpoint_callback import (
     LoadCheckpointCallback,
 )
-from ray.data._internal.planner.checkpoint import (
-    plan_write_op_with_checkpoint_writer,
-)
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.operators.join import JoinOperator
 from ray.data._internal.logical.interfaces import LogicalOperator
@@ -33,6 +30,9 @@ from ray.data._internal.logical.operators.from_operators import AbstractFrom
 from ray.data._internal.logical.operators.join_operator import Join
 from ray.data._internal.logical.operators.read_operator import Read
 from ray.data._internal.logical.operators.write_operator import Write
+from ray.data._internal.planner.checkpoint import (
+    plan_write_op_with_checkpoint_writer,
+)
 from ray.data._internal.planner.planner import (
     PlanLogicalOpFn,
     Planner,
@@ -66,8 +66,8 @@ def plan_join_op(
 
     if data_context.use_polars_join:
         from ray.anyscale.data._internal.execution.operators.join_operator import (
-            validate_polars_gpu_config,
             JoiningAggregationWithPolars,
+            validate_polars_gpu_config,
         )
 
         # Validate GPU configuration if GPU joins are enabled

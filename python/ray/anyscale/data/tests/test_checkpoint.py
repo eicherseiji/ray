@@ -18,39 +18,6 @@ import ray
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
-from ray.data.checkpoint.checkpoint_filter import (
-    BatchBasedCheckpointFilter,
-)
-from ray.anyscale.data.checkpoint.util import (
-    get_generated_id_column,
-    ROW_ID_FIELD,
-    PATH_PREFIX_FIELD,
-    FILE_NAME_FIELD,
-    FRAGMENT_FIELD,
-    NUM_FRAGMENTS_FIELD,
-    NUM_ROWS_FIELD,
-    GENERATED_ID_COLUMN_FIELD_NAMES,
-    GENERATED_ID_COLUMN_FIELDS,
-    parse_checkpointed_fragment_info,
-    exclude_checkpointed_rows,
-    GENERATED_ID_COLUMN_TYPE,
-    normalize_id,
-    get_checkpoint_fragments_info_for_file,
-    index_checkpointed_fragments,
-    CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
-    CHECKPOINTED_FILE_COLUMN_NAME,
-    CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME,
-    CHECKPOINTED_FRAGMENT_TYPE,
-    CHECKPOINTED_FILE_FRAGMENTS_TYPE,
-    CHECKPOINTED_FILE_FRAGMENT_ID_FIELD,
-    CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD,
-    CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
-    CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
-    CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD,
-    CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
-    CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD,
-)
-
 from ray.anyscale.data.checkpoint.checkpoint_writer import (
     BatchBasedCheckpointWriter,
 )
@@ -59,19 +26,50 @@ from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointConfig,
     InvalidCheckpointingConfig,
 )
+from ray.anyscale.data.checkpoint.util import (
+    CHECKPOINTED_FILE_COLUMN_NAME,
+    CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENT_ID_FIELD,
+    CHECKPOINTED_FILE_FRAGMENT_NUM_CHECKPOINTED_ROWS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENT_NUM_ROWS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENTS_COLUMN_NAME,
+    CHECKPOINTED_FILE_FRAGMENTS_INFO_FIELD,
+    CHECKPOINTED_FILE_FRAGMENTS_NUM_FRAGMENTS_FIELD,
+    CHECKPOINTED_FILE_FRAGMENTS_TYPE,
+    CHECKPOINTED_FILE_FULLY_CHECKPOINTED_FIELD,
+    CHECKPOINTED_FRAGMENT_TYPE,
+    CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
+    FILE_NAME_FIELD,
+    FRAGMENT_FIELD,
+    GENERATED_ID_COLUMN_FIELD_NAMES,
+    GENERATED_ID_COLUMN_FIELDS,
+    GENERATED_ID_COLUMN_TYPE,
+    NUM_FRAGMENTS_FIELD,
+    NUM_ROWS_FIELD,
+    PATH_PREFIX_FIELD,
+    ROW_ID_FIELD,
+    exclude_checkpointed_rows,
+    get_checkpoint_fragments_info_for_file,
+    get_generated_id_column,
+    index_checkpointed_fragments,
+    normalize_id,
+    parse_checkpointed_fragment_info,
+)
 from ray.data._internal.datasource.csv_datasource import CSVDatasource
 from ray.data._internal.datasource.parquet_datasink import ParquetDatasink
 from ray.data._internal.logical.interfaces.logical_plan import LogicalPlan
 from ray.data._internal.logical.operators.read_operator import Read
 from ray.data._internal.logical.operators.write_operator import Write
 from ray.data._internal.logical.optimizers import get_execution_plan
-from ray.data.block import BlockAccessor, Block
-from ray.types import ObjectRef
+from ray.data.block import Block, BlockAccessor
+from ray.data.checkpoint.checkpoint_filter import (
+    BatchBasedCheckpointFilter,
+)
+from ray.data.context import DataContext
 from ray.data.datasource.path_util import _unwrap_protocol
 from ray.data.tests.conftest import *  # noqa
 from ray.tests.conftest import *  # noqa
-from ray.data.context import DataContext
-
+from ray.types import ObjectRef
 
 # User-provided ID column name
 ID_COL = "id"
@@ -1799,10 +1797,10 @@ class TestLoadCheckpointAndProcessGeneratedId:
         Returns:
             Configured BatchBasedCheckpointFilter instance
         """
-        from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
         from ray.anyscale.data.checkpoint.checkpoint_filter import (
             BatchBasedCheckpointFilter,
         )
+        from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
 
         if generated_id_column:
             # When using generated_id_column, don't specify id_column

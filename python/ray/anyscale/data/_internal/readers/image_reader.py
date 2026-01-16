@@ -1,18 +1,17 @@
 import io
-from typing import Iterator, Iterable, Optional, Set, Tuple
+from typing import Iterable, Iterator, Optional, Set, Tuple
 
 import numpy as np
 import pyarrow
 
+from .native_file_reader import NativeFileReader
+from .supports_metadata import MetadataType, SupportsMetadata
+from ray.anyscale.data._internal.file_indexer import ChunkMetadata
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
 from ray.data._internal.util import _check_import
 from ray.data.block import BlockMetadata, DataBatch
-from ray.anyscale.data._internal.file_indexer import ChunkMetadata
-
-from .native_file_reader import NativeFileReader
-from .supports_metadata import MetadataType, SupportsMetadata
 
 
 class ImageReader(NativeFileReader, SupportsMetadata):

@@ -2,8 +2,8 @@ from typing import Callable, List, Optional
 
 from ray.anyscale.data._internal.logical.operators.list_files_operator import ListFiles
 from ray.anyscale.data._internal.planner.plan_list_files_op import plan_list_files_op
-from ray.data.context import DataContext
 from ray.data._internal.execution.interfaces import PhysicalOperator
+from ray.data.context import DataContext
 from ray.types import ObjectRef
 
 

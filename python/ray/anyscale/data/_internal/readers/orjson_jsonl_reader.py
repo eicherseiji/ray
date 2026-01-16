@@ -1,8 +1,7 @@
 from typing import Any, Dict, Optional
 
-from ray.data.datasource.partitioning import Partitioning
-
 from .line_delimited_file_reader import LineDelimitedFileReader
+from ray.data.datasource.partitioning import Partitioning
 
 
 def decode_fn(data: bytes) -> Dict[str, Any]:

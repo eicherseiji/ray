@@ -1,36 +1,24 @@
-from typing import List, Callable, Optional
+from typing import Callable, List, Optional
 from unittest.mock import MagicMock
 
+import numpy as np
 import pandas as pd
 import pyarrow.compute as pc
 import pytest
-import numpy as np
-from PIL import Image
 import soundfile as sf
+from PIL import Image
 
 import ray
-from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
-from ray.data import Dataset, DataContext
-from ray.data._internal.execution.operators.map_transformer import (
-    MapTransformFn,
-)
 from ray.anyscale.data._internal.execution.operators.map_transformer import (
     OptimizedBatchMapTransformFn,
     OptimizedBlockMapTransformFn,
     OptimizedRowMapTransformFn,
 )
-from ray.data.expressions import col
-from ray.data._internal.logical.operators.map_operator import Project
-from ray.data._internal.logical.optimizers import LogicalOptimizer, get_execution_plan
-from ray.data.tests.conftest import *  # noqa
-from ray.data.tests.test_execution_optimizer_limit_pushdown import (
-    _check_valid_plan_and_result,
-)
-from ray.data.tests.util import column_udf
-from ray.tests.conftest import *  # noqa
+from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
 from ray.anyscale.data._internal.logical.rules.configure_map_task_memory import (
     ConfigureMapTaskMemoryWithProfiling,
 )
+from ray.data import DataContext, Dataset
 from ray.data._internal.execution.interfaces.op_runtime_metrics import (
     OpRuntimeMetrics,
 )
@@ -38,7 +26,19 @@ from ray.data._internal.execution.operators.input_data_buffer import (
     InputDataBuffer,
 )
 from ray.data._internal.execution.operators.map_operator import MapOperator
+from ray.data._internal.execution.operators.map_transformer import (
+    MapTransformFn,
+)
 from ray.data._internal.logical.interfaces.physical_plan import PhysicalPlan
+from ray.data._internal.logical.operators.map_operator import Project
+from ray.data._internal.logical.optimizers import LogicalOptimizer, get_execution_plan
+from ray.data.expressions import col
+from ray.data.tests.conftest import *  # noqa
+from ray.data.tests.test_execution_optimizer_limit_pushdown import (
+    _check_valid_plan_and_result,
+)
+from ray.data.tests.util import column_udf
+from ray.tests.conftest import *  # noqa
 
 
 @pytest.fixture

@@ -3,17 +3,17 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Iterable, Optional
 
 import pyarrow as pa
+
+from .native_file_reader import NativeFileReader
 from ray.anyscale.data._internal.file_indexer import ChunkMetadata
-from ray.data.datasource.partitioning import Partitioning
 from ray.data._internal.output_buffer import (
     BlockOutputBuffer,
     OutputBlockSizeOption,
 )
+from ray.data._internal.util import RetryingPyFileSystem
 from ray.data.block import DataBatch
 from ray.data.context import DataContext
-
-from .native_file_reader import NativeFileReader
-from ray.data._internal.util import RetryingPyFileSystem
+from ray.data.datasource.partitioning import Partitioning
 
 
 def _read_complete_file(

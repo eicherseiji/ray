@@ -1,11 +1,11 @@
 from typing import Dict
 
 import pandas as pd
-import ray.data.preprocessors as preprocessors_module
 
+import ray.data.preprocessors as preprocessors_module
 from ray.anyscale.data.aggregate_vectorized import (
-    UniqueVectorized,
     TopKUniqueVectorized,
+    UniqueVectorized,
 )
 from ray.anyscale.data.preprocessors.turbo_preprocessor import TurboPreprocessor
 from ray.data.preprocessors.encoder import (

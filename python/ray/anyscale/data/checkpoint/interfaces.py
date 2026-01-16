@@ -3,9 +3,6 @@ from typing import Optional
 
 import pyarrow
 
-from ray.data.datasource import PathPartitionFilter
-from ray.util.annotations import PublicAPI
-
 # Import shared classes from OSS
 from ray.data.checkpoint.interfaces import (
     CheckpointBackend,
@@ -13,6 +10,8 @@ from ray.data.checkpoint.interfaces import (
     InvalidCheckpointingConfig,
     InvalidCheckpointingOperators,
 )
+from ray.data.datasource import PathPartitionFilter
+from ray.util.annotations import PublicAPI
 
 # Re-export for backwards compatibility
 __all__ = [

@@ -1,20 +1,20 @@
 import functools
 from typing import Callable, List, Optional
 
+from ray import ObjectRef
 from ray.anyscale.data._internal.logical.operators.read_files_operator import ReadFiles
-from ray.anyscale.data._internal.readers.parquet_reader import ParquetReader
 from ray.anyscale.data._internal.planner.plan_read_files_op import plan_read_files_op
+from ray.anyscale.data._internal.readers.parquet_reader import ParquetReader
 from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_IDS_KWARG_NAME,
     filter_checkpointed_rows_for_batches,
 )
-from ray.data.context import DataContext
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.operators.map_transformer import (
     BatchMapTransformFn,
 )
-from ray import ObjectRef
 from ray.data._internal.output_buffer import OutputBlockSizeOption
+from ray.data.context import DataContext
 
 
 def plan_read_files_op_with_checkpoint_filter(

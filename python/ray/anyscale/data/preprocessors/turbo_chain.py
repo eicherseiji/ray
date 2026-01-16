@@ -2,12 +2,11 @@ import logging
 from typing import TYPE_CHECKING
 
 import ray
-
+import ray.data.preprocessors as preprocessors_module
 from ray.air.util.data_batch_conversion import BatchFormat
 from ray.anyscale.data.preprocessors.dag import _build_aggregation_dag
-from ray.data.preprocessor import Preprocessor
 from ray.anyscale.data.preprocessors.turbo_preprocessor import TurboPreprocessor
-import ray.data.preprocessors as preprocessors_module
+from ray.data.preprocessor import Preprocessor
 
 # Store original reference before potential patching
 _OriginalChain = preprocessors_module.Chain

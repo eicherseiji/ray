@@ -1,21 +1,21 @@
-from typing import Union, Iterable, Optional
+import logging
 import os
 import urllib.parse
-from enum import IntEnum
 from dataclasses import dataclass
+from enum import IntEnum
+from typing import Iterable, Optional, Union
 
+import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset
-import numpy as np
-import logging
+
 from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointConfig,
 )
+from ray.data._internal.arrow_block import ArrowBlockAccessor
 from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data.block import Block, BlockAccessor, DataBatch
-from ray.data._internal.arrow_block import ArrowBlockAccessor
-
 
 logger = logging.getLogger(__name__)
 

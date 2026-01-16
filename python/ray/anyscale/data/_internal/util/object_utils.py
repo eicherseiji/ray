@@ -1,6 +1,6 @@
-import ray
-from typing import Dict, Optional, List, Union, Set
+from typing import Dict, List, Optional, Set, Union
 
+import ray
 from ray.anyscale.data._internal.util.cached_ray_internals import get_drained_nodes
 from ray.data._internal.execution.interfaces.ref_bundle import RefBundle
 

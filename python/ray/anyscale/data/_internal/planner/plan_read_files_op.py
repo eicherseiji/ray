@@ -9,14 +9,13 @@ from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.task_context import TaskContext
 from ray.data._internal.execution.operators.map_operator import MapOperator
 from ray.data._internal.execution.operators.map_transformer import (
+    BatchMapTransformFn,
     MapTransformer,
     MapTransformFn,
-    BatchMapTransformFn,
 )
 from ray.data._internal.output_buffer import OutputBlockSizeOption
-from ray.data.block import Block, DataBatch, BatchFormat
+from ray.data.block import BatchFormat, Block, DataBatch
 from ray.data.context import DataContext
-
 
 logger = logging.getLogger(__name__)
 

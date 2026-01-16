@@ -3,8 +3,8 @@
 from typing import TYPE_CHECKING, Tuple
 
 from ray.data._internal.execution.interfaces import PhysicalOperator
-from ray.data._internal.execution.resource_manager import ResourceManager
 from ray.data._internal.execution.ranker import Ranker
+from ray.data._internal.execution.resource_manager import ResourceManager
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.streaming_executor_state import OpState, Topology

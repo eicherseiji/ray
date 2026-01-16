@@ -1,7 +1,7 @@
-import ray
-import pyarrow as pa
 import numpy as np
+import pyarrow as pa
 
+import ray
 from ray.data import DataContext
 
 

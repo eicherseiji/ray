@@ -1,9 +1,11 @@
+from unittest.mock import patch
+
+import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import patch
-import numpy as np
 
 import ray
+from ray.anyscale.data.preprocessors.dag import _build_aggregation_dag
 from ray.data.preprocessors import (
     Categorizer,
     Chain,
@@ -24,7 +26,6 @@ from ray.data.preprocessors import (
     Tokenizer,
     TorchVisionPreprocessor,
 )
-from ray.anyscale.data.preprocessors.dag import _build_aggregation_dag
 
 
 def test_transform_multiple_times():

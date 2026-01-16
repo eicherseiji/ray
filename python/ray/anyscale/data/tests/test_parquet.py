@@ -1,34 +1,34 @@
 import functools
-import re
 import os
+import re
 from typing import List
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from packaging.version import parse as parse_version
 from pyarrow.fs import FileSystemHandler, LocalFileSystem, PyFileSystem
-from ray.anyscale.data._internal.readers.parquet_reader import (
-    ParquetReader,
-    ParquetFileChunker,
-)
-from ray.data.context import MAX_SAFE_BLOCK_SIZE_FACTOR
+
+import ray
+from ray._private.arrow_utils import get_pyarrow_version
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
+from ray.anyscale.data._internal.readers.parquet_reader import (
+    ParquetFileChunker,
+    ParquetReader,
+)
 from ray.anyscale.data.checkpoint.interfaces import CheckpointConfig
 from ray.anyscale.data.checkpoint.util import (
-    normalize_id,
-    get_checkpoint_fragments_info_for_file,
-    CHECKPOINTED_FRAGMENT_TYPE,
     CHECKPOINTED_FILE_FRAGMENTS_TYPE,
+    CHECKPOINTED_FRAGMENT_TYPE,
     CHECKPOINTED_GENERATED_ID_COLUMN_TABLE_SCHEMA,
+    get_checkpoint_fragments_info_for_file,
+    normalize_id,
 )
-from ray._private.arrow_utils import get_pyarrow_version
-from packaging.version import parse as parse_version
-import ray
+from ray.data.context import MAX_SAFE_BLOCK_SIZE_FACTOR
 from ray.data.tests.conftest import *  # noqa
-
 
 # Generated ID column name
 GENERATED_ID_COL = "row_id"
@@ -821,6 +821,7 @@ def test_parquet_generated_id_column_with_filter_pushdown(
 ):
     """Verify row IDs when filter pushdown is applied with generated_id_column."""
     import pyarrow as pa
+
     import ray
 
     # Create test data with multiple files

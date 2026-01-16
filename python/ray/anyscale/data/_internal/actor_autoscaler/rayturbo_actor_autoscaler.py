@@ -1,15 +1,15 @@
+import math
 import time
 from collections import defaultdict
 from logging import getLogger
-from typing import TYPE_CHECKING, Optional, Dict, Union, OrderedDict
-import math
+from typing import TYPE_CHECKING, Dict, Optional, OrderedDict, Union
 
 from ray.anyscale.data._internal.util.average_calculator import (
     TimeWindowAverageCalculator,
 )
 from ray.data._internal.actor_autoscaler import (
-    DefaultActorAutoscaler,
     AutoscalingActorPool,
+    DefaultActorAutoscaler,
 )
 from ray.data._internal.actor_autoscaler.actor_pool_resizing_policy import (
     ActorPoolResizingPolicy,
