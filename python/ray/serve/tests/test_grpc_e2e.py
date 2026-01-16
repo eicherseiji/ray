@@ -78,7 +78,7 @@ def check_running():
 
 @pytest.mark.parametrize(
     "ray_instance",
-    [{"ANYSCALE_RAY_SERVE_PROXY_USE_GRPC": "1"}],
+    [{"RAY_SERVE_PROXY_USE_GRPC": "1"}],
     indirect=True,
 )
 def test_no_spammy_errors_in_grpc_proxy(ray_instance, tmp_dir):
@@ -100,7 +100,7 @@ def test_no_spammy_errors_in_grpc_proxy(ray_instance, tmp_dir):
             "serve",
             "run",
             "--address=auto",
-            "ray.anyscale.serve.tests.test_grpc_e2e.downstream_node",
+            "ray.serve.tests.test_grpc_e2e.downstream_node",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

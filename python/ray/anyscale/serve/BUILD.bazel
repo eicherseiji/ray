@@ -109,7 +109,7 @@ py_test_module_list(
 py_test_module_list(
     size = "large",
     data = glob(["tests/fixtures/*.*"]),
-    env = {"ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT": "1"},
+    env = {"RAY_SERVE_USE_GRPC_BY_DEFAULT": "1"},
     files = [
         "tests/test_direct_ingress.py",
     ],
@@ -128,7 +128,7 @@ py_test_module_list(
 py_test_module_list(
     size = "large",
     data = glob(["tests/fixtures/*.*"]),
-    env = {"ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT": "1"},
+    env = {"RAY_SERVE_USE_GRPC_BY_DEFAULT": "1"},
     files = [
         "tests/test_direct_ingress_standalone.py",
     ],

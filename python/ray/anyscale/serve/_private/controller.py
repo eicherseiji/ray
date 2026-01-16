@@ -6,7 +6,6 @@ from ray.anyscale.serve._private.constants import (
     ANYSCALE_FREEZE_GC_ON_STARTUP,
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
-    ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT,
 )
 from ray.serve._private.common import DeploymentID, RequestProtocol
 from ray.serve._private.constants import (
@@ -15,6 +14,7 @@ from ray.serve._private.constants import (
     RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD,
     RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP,
     RAY_SERVE_THROUGHPUT_OPTIMIZED,
+    RAY_SERVE_USE_GRPC_BY_DEFAULT,
     SERVE_LOGGER_NAME,
 )
 from ray.serve._private.controller import ServeController
@@ -80,7 +80,7 @@ class AnyscaleServeController(ServeController):
         msg = "Throughput optimized Ray Serve enabled with the following configurations:\n"
         if ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
             msg += "  • Direct ingress enabled\n"
-        if ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT:
+        if RAY_SERVE_USE_GRPC_BY_DEFAULT:
             msg += "  • gRPC communication enabled\n"
         if not RAY_SERVE_RUN_USER_CODE_IN_SEPARATE_THREAD:
             msg += "  • User code running in main thread (not separate)\n"

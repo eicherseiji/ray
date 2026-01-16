@@ -4,7 +4,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from ray.anyscale.serve._private.serialization import (
+from ray.serve._private.serialization import (
     SerializationMethod,
     RPCSerializer,
     clear_serializer_cache,

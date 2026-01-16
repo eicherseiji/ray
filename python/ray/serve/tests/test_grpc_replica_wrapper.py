@@ -7,12 +7,8 @@ import pytest
 
 import ray
 from ray import cloudpickle
-from ray._common.utils import get_or_create_event_loop
 from ray._common.test_utils import SignalActor
-from ray.anyscale.serve._private.replica_scheduler.replica_wrapper import (
-    AnyscaleRunningReplica,
-)
-from ray.serve._private.constants import SERVE_NAMESPACE
+from ray._common.utils import get_or_create_event_loop
 from ray.serve._private.common import (
     DeploymentID,
     ReplicaID,
@@ -20,7 +16,11 @@ from ray.serve._private.common import (
     RequestMetadata,
     RunningReplicaInfo,
 )
+from ray.serve._private.constants import SERVE_NAMESPACE
 from ray.serve._private.request_router.common import PendingRequest
+from ray.serve._private.request_router.replica_wrapper import (
+    RunningReplica,
+)
 from ray.serve._private.test_utils import send_signal_on_cancellation
 from ray.serve.generated import serve_pb2, serve_pb2_grpc
 from ray.serve.tests.conftest import *  # noqa
@@ -48,9 +48,7 @@ class FakeReplicaActor:
         context: grpc.aio.ServicerContext,
     ):
         args = cloudpickle.loads(request.request_args)
-        return serve_pb2.ASGIResponse(
-            serialized_message=cloudpickle.dumps(args[0])
-        )
+        return serve_pb2.ASGIResponse(serialized_message=cloudpickle.dumps(args[0]))
 
     async def HandleRequestStreaming(
         self,
@@ -63,9 +61,7 @@ class FakeReplicaActor:
 
         for i in range(5):
             if request_metadata.is_http_request:
-                yield serve_pb2.ASGIResponse(
-                    serialized_message=f"{message}-{i}"
-                )
+                yield serve_pb2.ASGIResponse(serialized_message=f"{message}-{i}")
             else:
                 yield serve_pb2.ASGIResponse(
                     serialized_message=cloudpickle.dumps(f"{message}-{i}")
@@ -104,9 +100,7 @@ class FakeReplicaActor:
             return serve_pb2.ASGIResponse(serialized_message=b"")
 
         message = args[0]
-        return serve_pb2.ASGIResponse(
-            serialized_message=cloudpickle.dumps(message)
-        )
+        return serve_pb2.ASGIResponse(serialized_message=cloudpickle.dumps(message))
 
     async def HandleRequestWithRejectionStreaming(
         self,
@@ -186,7 +180,7 @@ def setup_fake_replica(ray_instance, request) -> RunningReplicaInfo:
 async def test_to_object_ref_not_supported(
     setup_fake_replica: RunningReplicaInfo, is_streaming: bool, on_separate_loop: bool
 ):
-    replica = AnyscaleRunningReplica(setup_fake_replica)
+    replica = RunningReplica(setup_fake_replica)
     pr = PendingRequest(
         args=["Hello"],
         kwargs={"is_streaming": is_streaming},
@@ -217,7 +211,7 @@ async def test_to_object_ref_not_supported(
 async def test_send_request(
     setup_fake_replica: RunningReplicaInfo, is_streaming: bool, on_separate_loop: bool
 ):
-    replica = AnyscaleRunningReplica(setup_fake_replica)
+    replica = RunningReplica(setup_fake_replica)
     pr = PendingRequest(
         args=["Hello"],
         kwargs={"is_streaming": is_streaming},
@@ -248,7 +242,7 @@ async def test_send_request_with_rejection(
     on_separate_loop: bool,
 ):
     actor_handle = setup_fake_replica.get_actor_handle()
-    replica = AnyscaleRunningReplica(setup_fake_replica)
+    replica = RunningReplica(setup_fake_replica)
     ray.get(
         actor_handle.set_replica_queue_length_info.remote(
             ReplicaQueueLengthInfo(accepted=accepted, num_ongoing_requests=10),
@@ -288,7 +282,7 @@ async def test_send_request_with_rejection_cancellation(
     Verify that the downstream actor method call is cancelled if the call to send the
     request to the replica is cancelled.
     """
-    replica = AnyscaleRunningReplica(setup_fake_replica)
+    replica = RunningReplica(setup_fake_replica)
     executing_signal_actor = SignalActor.remote()
     cancelled_signal_actor = SignalActor.remote()
 

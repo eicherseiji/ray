@@ -2,6 +2,8 @@
 
 import os
 
+from ray.serve._private.constants import RAY_SERVE_USE_GRPC_BY_DEFAULT
+
 ANYSCALE_RAY_SERVE_ENABLE_PROPRIETARY_DEPLOYMENT_SCHEDULER = (
     os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_PROPRIETARY_DEPLOYMENT_SCHEDULER", "1")
     == "1"
@@ -133,12 +135,6 @@ ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER = os.environ.get(
     "ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER", "250ms"
 )
 
-# For now, this is used only for testing. In the suite of tests that
-# use gRPC to send requests, we flip this flag on.
-ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = (
-    os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
-)
-
 ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH = int(
     # Default max message length in gRPC is 4MB, we keep that default
     os.environ.get(
@@ -150,7 +146,7 @@ ANYSCALE_RAY_SERVE_PROXY_USE_GRPC = os.environ.get(
     "ANYSCALE_RAY_SERVE_PROXY_USE_GRPC"
 ) == "1" or (
     not os.environ.get("ANYSCALE_RAY_SERVE_PROXY_USE_GRPC") == "0"
-    and ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT
+    and RAY_SERVE_USE_GRPC_BY_DEFAULT
 )
 
 # Feature flag for prestarting workers in placement groups.
@@ -203,9 +199,6 @@ if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
 if os.environ.get("RAY_SERVE_THROUGHPUT_OPTIMIZED", "0") == "1":
     ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = (
         os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "1") == "1"
-    )
-    ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT = (
-        os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "1") == "1"
     )
     ANYSCALE_FREEZE_GC_ON_STARTUP = (
         os.environ.get("ANYSCALE_FREEZE_GC_ON_STARTUP", "1") == "1"

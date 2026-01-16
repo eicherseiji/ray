@@ -3,7 +3,7 @@ import pytest
 
 from ray import serve
 from ray._common.test_utils import SignalActor
-from ray.anyscale.serve._private.replica_result import gRPCReplicaResult
+from ray.serve._private.replica_result import gRPCReplicaResult
 from ray.serve._private.common import OBJ_REF_NOT_SUPPORTED_ERROR
 from ray.serve._private.replica_result import ActorReplicaResult, ReplicaResult
 from ray.serve.handle import DeploymentHandle

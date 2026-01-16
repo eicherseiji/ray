@@ -78,7 +78,7 @@ from ray.serve._private.replica import (
     StatusCodeCallback,
 )
 from ray.serve._private.utils import generate_request_id, is_grpc_enabled
-from ray.serve.generated import serve_proprietary_pb2, serve_proprietary_pb2_grpc
+from ray.serve.generated import serve_pb2, serve_pb2_grpc
 from ray.serve.grpc_util import (
     RayServegRPCContext,
 )
@@ -88,7 +88,7 @@ from ray.serve._private.grpc_util import (
     start_grpc_server,
 )
 from ray.util import metrics
-from ray.anyscale.serve._private.serialization import RPCSerializer
+from ray.serve._private.serialization import RPCSerializer
 
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
@@ -119,7 +119,7 @@ def _wrap_grpc_call(f):
     @wraps(f)
     async def wrapper(
         self,
-        request: serve_proprietary_pb2.ASGIRequest,
+        request: serve_pb2.ASGIRequest,
         context: grpc.aio.ServicerContext,
     ):
         request_metadata = pickle.loads(request.pickled_request_metadata)
@@ -140,11 +140,11 @@ def _wrap_grpc_call(f):
             result = await f(
                 self, context, request_metadata, *request_args, **request_kwargs
             )
-            return serve_proprietary_pb2.ASGIResponse(
+            return serve_pb2.ASGIResponse(
                 serialized_message=serialize(result, request_metadata)
             )
         except (Exception, asyncio.CancelledError) as e:
-            return serve_proprietary_pb2.ASGIResponse(
+            return serve_pb2.ASGIResponse(
                 serialized_message=serializer.dumps_response(e),
                 is_error=True,
             )
@@ -152,7 +152,7 @@ def _wrap_grpc_call(f):
     @wraps(f)
     async def gen_wrapper(
         self,
-        request: serve_proprietary_pb2.ASGIRequest,
+        request: serve_pb2.ASGIRequest,
         context: grpc.aio.ServicerContext,
     ):
         request_metadata = pickle.loads(request.pickled_request_metadata)
@@ -173,11 +173,11 @@ def _wrap_grpc_call(f):
             async for result in f(
                 self, context, request_metadata, *request_args, **request_kwargs
             ):
-                yield serve_proprietary_pb2.ASGIResponse(
+                yield serve_pb2.ASGIResponse(
                     serialized_message=serialize(result, request_metadata)
                 )
         except (Exception, asyncio.CancelledError) as e:
-            yield serve_proprietary_pb2.ASGIResponse(
+            yield serve_pb2.ASGIResponse(
                 serialized_message=serializer.dumps_response(e),
                 is_error=True,
             )
@@ -630,7 +630,7 @@ class AnyscaleReplica(ReplicaBase):
         )
 
     async def _on_initialized(self):
-        serve_proprietary_pb2_grpc.add_ASGIServiceServicer_to_server(self, self._server)
+        serve_pb2_grpc.add_ASGIServiceServicer_to_server(self, self._server)
         self._internal_grpc_port = self._server.add_insecure_port("[::]:0")
         await self._server.start()
 
