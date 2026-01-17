@@ -71,14 +71,12 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         if op not in self._op_budgets:
             return True
 
-        # Do not throttle, until at least 1 task is submitted
-        if op.metrics.num_tasks_submitted == 0:
-            return True
-
-        task_resource_req = op.incremental_resource_usage()
+        op_task_resource_req = op.incremental_resource_usage()
 
         # Check if operator has enough resources to submit one new task
-        has_sufficient_budget = task_resource_req.satisfies_limit(self._op_budgets[op])
+        has_sufficient_budget = op_task_resource_req.satisfies_limit(
+            self._op_budgets[op]
+        )
 
         # Handle the case when operator is allocated less than its incremental usage,
         # and can't therefore utilize its budget
@@ -89,12 +87,22 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
             #   - Operator is allocated less than its incremental usage
             #   - Operator still has non-zero budget (ie it hasn't utilized it yet)
             #
-            has_sufficient_allocation = task_resource_req.satisfies_limit(
+            has_sufficient_allocation = op_task_resource_req.satisfies_limit(
                 self._op_allocations[op]
             )
-            non_zero_budget = (
-                self._op_budgets[op].cpu > 0 or self._op_allocations[op].gpu > 0
-            )
+
+            # Verify that operator's task have corresponding non-zero budget
+            # available
+            if op_task_resource_req.cpu > 0 and op_task_resource_req.gpu > 0:
+                non_zero_budget = (
+                    self._op_budgets[op].cpu > 0 and self._op_budgets[op].gpu > 0
+                )
+            elif op_task_resource_req.cpu > 0:
+                non_zero_budget = self._op_budgets[op].cpu > 0
+            elif op_task_resource_req.gpu > 0:
+                non_zero_budget = self._op_budgets[op].gpu > 0
+            else:
+                non_zero_budget = False
 
             has_sufficient_budget = not has_sufficient_allocation and non_zero_budget
 

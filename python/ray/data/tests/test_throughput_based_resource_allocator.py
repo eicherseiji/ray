@@ -1550,7 +1550,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         allocator.update_budgets(limits=global_limits)
 
-        # Before any tasks submitted, should be allowed (due to num_tasks_submitted == 0 check)
+        # Allowed to submit since budget >= task requirement
         assert allocator.can_submit_new_task(o2)
 
         # Single operator gets all resources
@@ -1688,6 +1688,109 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Now can_submit_new_task should return False (no budget remaining)
         assert not allocator.can_submit_new_task(o2)
+
+    def test_can_submit_new_task_under_allocation_cpu_and_gpu(
+        self, restore_data_context
+    ):
+        """Test can_submit_new_task for both CPU and GPU under-allocated operators.
+
+        Scenario: Three operators with baseline allocation (no metrics):
+        - CPU operator: needs 6 CPU per task, gets ~1.3 CPU (under-allocated)
+        - GPU operator: needs 2 GPU per task, gets ~0.7 GPU (under-allocated)
+        - CPU+GPU operator: needs 4 CPU and 2 GPU per task (under-allocated)
+
+        This tests that can_submit_new_task only checks the resource type that
+        the task actually requires:
+        - CPU-only task: blocked when CPU budget exhausted (GPU budget doesn't help)
+        - GPU-only task: blocked when GPU budget exhausted (CPU budget doesn't help)
+        - CPU+GPU task: blocked when EITHER CPU or GPU budget exhausted (needs both)
+        """
+        o1 = InputDataBuffer(DataContext.get_current(), [])
+
+        # CPU operator: requires 6 CPU per task (will be under-allocated)
+        cpu_op = mock_map_op(
+            o1, incremental_resource_usage=ExecutionResources(6, 0, 100)
+        )
+
+        # GPU operator: requires 2 GPU per task (will be under-allocated)
+        gpu_op = mock_map_op(
+            cpu_op,
+            ray_remote_args={"num_gpus": 2},
+            incremental_resource_usage=ExecutionResources(0, 2, 100),
+        )
+
+        # CPU+GPU operator: requires both 4 CPU and 2 GPU per task
+        cpu_gpu_op = mock_map_op(
+            gpu_op,
+            ray_remote_args={"num_cpus": 4, "num_gpus": 2},
+            incremental_resource_usage=ExecutionResources(4, 2, 100),
+        )
+
+        topo = build_streaming_topology(cpu_gpu_op, ExecutionOptions())
+        # With baseline allocation, ops get exponentially decreasing shares
+        global_limits = ExecutionResources(cpu=4, gpu=2, object_store_memory=1000)
+
+        resource_manager = ResourceManager(
+            topo, ExecutionOptions(), MagicMock(), DataContext.get_current()
+        )
+        resource_manager.get_op_usage = MagicMock(
+            return_value=ExecutionResources.zero()
+        )
+
+        allocator = resource_manager._op_resource_allocator
+        assert isinstance(allocator, ThroughputBasedResourceAllocator)
+
+        allocator.update_budgets(limits=global_limits)
+
+        # All three can submit despite under-allocation (have non-zero budget)
+        assert allocator.can_submit_new_task(cpu_op)
+        assert allocator.can_submit_new_task(gpu_op)
+        assert allocator.can_submit_new_task(cpu_gpu_op)
+
+        # Exhaust only CPU budget for cpu_op, only GPU budget for gpu_op,
+        # and only CPU budget for cpu_gpu_op
+        cpu_op_alloc = allocator.get_allocation(cpu_op)
+        gpu_op_alloc = allocator.get_allocation(gpu_op)
+        cpu_gpu_op_alloc = allocator.get_allocation(cpu_gpu_op)
+
+        resource_manager.get_op_usage = MagicMock(
+            side_effect=lambda op, include_ineligible_downstream=False: {
+                cpu_op: ExecutionResources(
+                    cpu=cpu_op_alloc.cpu, gpu=0, object_store_memory=50
+                ),
+                gpu_op: ExecutionResources(
+                    cpu=0, gpu=gpu_op_alloc.gpu, object_store_memory=50
+                ),
+                # cpu_gpu_op: exhaust CPU but not GPU
+                cpu_gpu_op: ExecutionResources(
+                    cpu=cpu_gpu_op_alloc.cpu, gpu=0, object_store_memory=50
+                ),
+            }.get(op, ExecutionResources.zero())
+        )
+        allocator.update_budgets(limits=global_limits)
+
+        # cpu_op blocked: needs CPU but has no CPU budget (GPU budget doesn't help)
+        assert not allocator.can_submit_new_task(cpu_op)
+        # gpu_op blocked: needs GPU but has no GPU budget (CPU budget doesn't help)
+        assert not allocator.can_submit_new_task(gpu_op)
+        # cpu_gpu_op blocked: needs both CPU and GPU, but CPU budget exhausted
+        assert not allocator.can_submit_new_task(cpu_gpu_op)
+
+        # Now exhaust only GPU budget for cpu_gpu_op (CPU available)
+        resource_manager.get_op_usage = MagicMock(
+            side_effect=lambda op, include_ineligible_downstream=False: {
+                cpu_op: ExecutionResources.zero(),
+                gpu_op: ExecutionResources.zero(),
+                # cpu_gpu_op: exhaust GPU but not CPU
+                cpu_gpu_op: ExecutionResources(
+                    cpu=0, gpu=cpu_gpu_op_alloc.gpu, object_store_memory=50
+                ),
+            }.get(op, ExecutionResources.zero())
+        )
+        allocator.update_budgets(limits=global_limits)
+
+        # cpu_gpu_op blocked: needs both CPU and GPU, but GPU budget exhausted
+        assert not allocator.can_submit_new_task(cpu_gpu_op)
 
     def test_gpu_operator_allocation(self, restore_data_context):
         """Tests allocation for GPU operators."""
