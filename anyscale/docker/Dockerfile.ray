@@ -16,7 +16,6 @@ ARG WHEEL_PATH
 ARG ANYSCALERUNTIME_WHEEL_PATH
 ARG RAY_VERSION="3.0.0.dev0"
 
-COPY requirements_compiled.txt ./
 COPY \
     version-envs.sh \
     download_anyscale_data \
