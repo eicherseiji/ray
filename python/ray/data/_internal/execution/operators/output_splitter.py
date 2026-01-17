@@ -240,7 +240,7 @@ class OutputSplitter(InternalQueueOperatorMixin, PhysicalOperator):
             elif len(self._buffer) >= self._max_buffer_size or force:
                 # If we're not able to find a preferred bundle and buffer size is above
                 # the cap, we pop the longest awaiting and pass to the next receiver
-                target_bundle = self._buffer[0]
+                target_bundle = self._buffer.peek_next()
             else:
                 # Provided that we weren't able to either locate preferred bundle
                 # or dequeue the head one, we bail out from iteration

@@ -8,7 +8,7 @@ from ray.anyscale.data._internal.util.cached_ray_internals import (
     get_local_ongoing_lineage_reconstruction_tasks,
 )
 from ray.anyscale.data._internal.util.heapdict import heapdict
-from ray.data._internal.execution.bundle_queue.bundle_queue import BundleQueue
+from ray.data._internal.execution.bundle_queue import BaseBundleQueue
 from ray.data._internal.execution.interfaces import (
     ExecutionResources,
     ReportsExtraResourceUsage,
@@ -200,7 +200,7 @@ class _ActorTaskSelectorImpl(_ActorTaskSelector):
     # method should be called with the actor. If the operator doesn't, there might be correctness
     # issues.
     def select_actors(
-        self, input_queue: BundleQueue, actor_locality_enabled: bool
+        self, input_queue: BaseBundleQueue, actor_locality_enabled: bool
     ) -> Iterator[Tuple[RefBundle, ActorHandle]]:
         if not self._actor_pool.running_actors():
             # Actor pool is empty or all actors are still pending.

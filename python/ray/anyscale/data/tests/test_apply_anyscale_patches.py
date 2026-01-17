@@ -19,7 +19,7 @@ from ray.anyscale.data.apply_anyscale_patches import (
     _register_anyscale_lineage_tracking_callback,
 )
 from ray.data._internal.execution.bundle_queue import (
-    FIFOBundleQueue,
+    HashLinkedQueue,
     create_bundle_queue,
 )
 from ray.data._internal.execution.execution_callback import (
@@ -85,7 +85,7 @@ def test_patch_aggregations(ray_start_regular_shared):
     "env_value, expected_bundle_queue_type",
     [
         ("1", LocationAwareBundleQueue),
-        ("0", FIFOBundleQueue),
+        ("0", HashLinkedQueue),
         (None, LocationAwareBundleQueue),
     ],
 )

@@ -2,9 +2,12 @@ import threading
 import time
 from typing import TYPE_CHECKING, Dict, Optional
 
+from typing_extensions import override
+
 import ray
 from ray.anyscale.data._internal.util.object_utils import all_objects_exist_for_bundle
-from ray.data._internal.execution.bundle_queue import BundleQueue, FIFOBundleQueue
+from ray.data._internal.execution.bundle_queue import QueueWithRemoval
+from ray.data._internal.execution.bundle_queue.hash_link import HashLinkedQueue
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.interfaces import RefBundle
@@ -13,29 +16,33 @@ if TYPE_CHECKING:
 DEFAULT_UPDATE_FREQUENCY_S = 30
 
 
-class LocationAwareBundleQueue(BundleQueue):
+class LocationAwareBundleQueue(QueueWithRemoval):
     """Queue that prioritizes bundles that reside in Object Store memory.
 
     This class is thread-safe.
     """
 
     def __init__(self, update_frequency_s=DEFAULT_UPDATE_FREQUENCY_S):
+        super().__init__()
         self._update_frequency_s = update_frequency_s
 
-        self._fifo_queue = FIFOBundleQueue()
+        self._fifo_queue = HashLinkedQueue()
         self._bundle_nbytes: Dict["RefBundle", int] = {}
         self._last_size_refresh_ts = time.time()
         self._total_nbytes = 0
         self._lock = threading.RLock()
 
+    @override
     def __len__(self) -> int:
         with self._lock:
             return len(self._fifo_queue)
 
+    @override
     def __contains__(self, bundle: "RefBundle") -> bool:
         with self._lock:
             return bundle in self._fifo_queue
 
+    @override
     def add(self, bundle: "RefBundle") -> None:
         with self._lock:
             self._fifo_queue.add(bundle)
@@ -43,6 +50,7 @@ class LocationAwareBundleQueue(BundleQueue):
             self._bundle_nbytes[bundle] = bundle.size_bytes()
             self._total_nbytes += self._bundle_nbytes[bundle]
 
+    @override
     def get_next(self) -> "RefBundle":
         with self._lock:
             if not self._fifo_queue:
@@ -55,15 +63,18 @@ class LocationAwareBundleQueue(BundleQueue):
             self.remove(bundle)
             return bundle
 
+    @override
     def peek_next(self) -> Optional["RefBundle"]:
         with self._lock:
             self._try_ensure_first_bundle_exists()
             return self._fifo_queue.peek_next()
 
+    @override
     def has_next(self) -> bool:
         bundle = self.peek_next()
         return bundle is not None
 
+    @override
     def remove(self, bundle: "RefBundle") -> None:
         with self._lock:
             if bundle not in self._bundle_nbytes:
@@ -85,12 +96,14 @@ class LocationAwareBundleQueue(BundleQueue):
                     f"got {self._total_nbytes} bytes instead."
                 )
 
+    @override
     def clear(self) -> None:
         with self._lock:
             self._fifo_queue.clear()
             self._bundle_nbytes.clear()
             self._total_nbytes = 0
 
+    @override
     def estimate_size_bytes(self) -> int:
         with self._lock:
             now = time.time()
@@ -137,9 +150,6 @@ class LocationAwareBundleQueue(BundleQueue):
             assert nbytes >= 0, nbytes
             self._bundle_nbytes[bundle] = nbytes
 
+    @override
     def num_blocks(self) -> int:
         return self._fifo_queue.num_blocks()
-
-    def is_empty(self) -> bool:
-        with self._lock:
-            return not self._fifo_queue and not self._bundle_nbytes
