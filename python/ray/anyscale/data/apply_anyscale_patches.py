@@ -55,6 +55,7 @@ def _patch_aggregations():
         aggregate.AbsMax = aggregate_vectorized.AbsMaxVectorized
         aggregate.Quantile = aggregate_vectorized.QuantileVectorized
         aggregate.Unique = aggregate_vectorized.UniqueVectorized
+        aggregate.AsList = aggregate_vectorized.AsListVectorized
 
 
 def _patch_map_transformations():

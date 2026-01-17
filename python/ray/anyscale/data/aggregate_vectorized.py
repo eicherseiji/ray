@@ -6,7 +6,9 @@ from ray.data._internal.arrow_ops.transform_pyarrow import (
 )
 from ray.data.aggregate import (
     AbsMax,
+    AccumulatorType,
     AggregateFnV2,
+    AsList,
     Count,
     Max,
     Min,
@@ -38,6 +40,23 @@ class CountVectorized(VectorizedAggregateFnV2, Count):
         return BlockColumnAccessor.for_column(accumulator_col).sum(
             ignore_nulls=self._ignore_nulls
         )
+
+
+class AsListVectorized(VectorizedAggregateFnV2, AsList):
+    def aggregate_block(self, block: Block) -> AccumulatorType:
+        # NOTE: We simply return target column (array) as an aggregation result
+        accessor = BlockColumnAccessor.for_column(block[self._target_col_name])
+
+        if self._ignore_nulls:
+            accessor = BlockColumnAccessor.for_column(accessor.dropna())
+
+        # NOTE: We have to make sure that the column is represented in an
+        #       Arrow-compatible format (either ``pyarrow.Array`` or Python's ``list``)
+        #       to make sure it's not converted into a tensor downstream
+        return accessor._to_arrow_compatible_container()
+
+    def _combine_column(self, accumulator_col: BlockColumn) -> AggType:
+        return BlockColumnAccessor.for_column(accumulator_col).flatten()
 
 
 class SumVectorized(VectorizedAggregateFnV2, Sum):
@@ -76,7 +95,7 @@ class QuantileVectorized(VectorizedAggregateFnV2, Quantile):
         # NOTE: We have to make sure that the column is represented in an
         #       Arrow-compatible format (either ``pyarrow.Array`` or Python's ``list``)
         #       to make sure it's not converted into a tensor downstream
-        return accessor._as_arrow_compatible()
+        return accessor._to_arrow_compatible_container()
 
     def _combine_column(self, accumulator_col: BlockColumn) -> AggType:
         # Combine all the lists in a column into a single value (ie flatten it)
@@ -97,7 +116,7 @@ class UniqueVectorized(VectorizedAggregateFnV2, Unique):
         # NOTE: We have to make sure that the column is represented in an
         #       Arrow-compatible format (either ``pyarrow.Array`` or Python's ``list``)
         #       to make sure it's not converted into a tensor downstream
-        return BlockColumnAccessor.for_column(column)._as_arrow_compatible()
+        return BlockColumnAccessor.for_column(column)._to_arrow_compatible_container()
 
     def _combine_column(self, accumulator_col: BlockColumn) -> AggType:
         column_accessor = BlockColumnAccessor.for_column(accumulator_col)
@@ -131,4 +150,4 @@ class TopKUniqueVectorized(UniqueVectorized):
             column_accessor = BlockColumnAccessor.for_column(column_accessor.dropna())
         return BlockColumnAccessor.for_column(
             column_accessor.top_k(self.k)
-        )._as_arrow_compatible()
+        )._to_arrow_compatible_container()

@@ -79,6 +79,9 @@ def test_patch_aggregations(ray_start_regular_shared):
     assert should_be_vectorized == (
         aggregate.Unique is aggregate_vectorized.UniqueVectorized
     )
+    assert should_be_vectorized == (
+        aggregate.AsList is aggregate_vectorized.AsListVectorized
+    )
 
 
 @pytest.mark.parametrize(
