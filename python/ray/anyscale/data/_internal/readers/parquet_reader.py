@@ -955,6 +955,13 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             match=self._retried_io_errors,
         )
 
+        # If include_paths is True and there's a projection, add "path" to the columns
+        # NOTE: This mirrors the OSS get_current_projection() behavior where "path" is
+        # added to the projection list when include_paths=True.
+        projected_columns = columns
+        if self._include_paths and columns is not None and "path" not in columns:
+            projected_columns = list(columns) + ["path"]
+
         if not schema:
             schema = ParquetDatasource._derive_schema(
                 read_schema=self._schema,
@@ -963,8 +970,9 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
                     partitioning=self._partitioning,
                     file_paths=file_manifest.paths[:1].tolist(),
                 ),
-                projected_columns=columns,
+                projected_columns=projected_columns,
                 _block_udf=self._block_udf,
+                include_paths=self._include_paths,
             )
 
         # Add row ID column to schema if requested
