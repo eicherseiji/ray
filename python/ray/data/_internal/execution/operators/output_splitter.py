@@ -241,6 +241,7 @@ class OutputSplitter(InternalQueueOperatorMixin, PhysicalOperator):
                 # If we're not able to find a preferred bundle and buffer size is above
                 # the cap, we pop the longest awaiting and pass to the next receiver
                 target_bundle = self._buffer.peek_next()
+                assert target_bundle is not None
             else:
                 # Provided that we weren't able to either locate preferred bundle
                 # or dequeue the head one, we bail out from iteration
@@ -297,7 +298,6 @@ class OutputSplitter(InternalQueueOperatorMixin, PhysicalOperator):
         output_distribution[target_index] += target_num_rows
         buffer_requirement = self._calculate_buffer_requirement(output_distribution)
         # Subtract target bundle size from the projected buffer
-
         buffer_size = self._buffer.num_rows() - target_num_rows
         # Check if we have enough rows LEFT after dispatching to equalize.
         return buffer_size >= buffer_requirement
