@@ -141,9 +141,8 @@ class TrainLoopRunner:
         train_dataloader = self.factory.get_train_dataloader()
         train_dataloader = self._wrap_dataloader(train_dataloader, train=True)
 
-        # Skip through batches if we restored to a middle of the epoch.
-        # TODO: Compare this baseline to the data checkpointing approach once we have it.
-        if self._num_batches_to_skip:
+        if self.benchmark_config.skip_batches_upon_resume and self._num_batches_to_skip:
+            # Skip through batches if we restored to a middle of the epoch.
             if ray.train.get_context().get_world_rank() == 0:
                 logger.info(f"Skipping {self._num_batches_to_skip} batches...")
 

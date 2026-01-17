@@ -7,7 +7,7 @@ import ray
 from ray.rllib.algorithms.algorithm_config import AlgorithmConfig
 from ray.rllib.policy.sample_batch import MultiAgentBatch, SampleBatch
 from ray.rllib.utils.actor_manager import FaultAwareApply
-from ray.rllib.utils.framework import try_import_torch
+from ray.rllib.utils.framework import get_device, try_import_torch
 from ray.rllib.utils.metrics.metrics_logger import MetricsLogger
 from ray.rllib.utils.metrics.ray_metrics import (
     DEFAULT_HISTOGRAM_BOUNDARIES_SHORT_EVENTS,
@@ -53,7 +53,10 @@ class AggregatorActor(FaultAwareApply):
 
         # Set device and node.
         self._node = platform.node()
-        self._device = torch.device("cpu")
+        self._device = get_device(
+            self.config,
+            0.01 * float(self.config.num_gpus_per_learner > 0),
+        )
         self.metrics: MetricsLogger = MetricsLogger(
             stats_cls_lookup=config.stats_cls_lookup,
             root=True,

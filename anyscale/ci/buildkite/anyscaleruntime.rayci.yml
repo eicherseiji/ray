@@ -1,0 +1,17 @@
+group: anyscaleruntime tests
+depends_on:
+  - forge
+steps:
+  - label: "upstream mark check"
+    instance_type: small
+    commands:
+      - bash anyscale/ci/upstream-check.sh
+    tags:
+      - always
+
+  - label: "package install test"
+    instance_type: small
+    commands:
+      - bash anyscaleruntime/test-install.sh
+    tags:
+      - anyscaleruntime

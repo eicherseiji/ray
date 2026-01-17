@@ -8,3 +8,4 @@
 some/random/file.txt: always lint
 python/ray/actor.py: always lint
 doc/source/index.rst: always lint
+anyscale/go/go.mod: always lint
