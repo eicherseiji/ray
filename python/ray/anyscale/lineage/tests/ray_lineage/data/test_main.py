@@ -1,8 +1,7 @@
 import pytest
 
 from ray.anyscale.lineage.common.exceptions import AnyscaleLineageRayDataError
-from ray.anyscale.lineage.ray_lineage.data import main
-from ray.anyscale.lineage.ray_lineage.data import utils as ray_data_utils
+from ray.anyscale.lineage.ray_lineage.data import main, utils as ray_data_utils
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_DATASET_ID,
     TEST_MOCK_RUN_ID_STR,

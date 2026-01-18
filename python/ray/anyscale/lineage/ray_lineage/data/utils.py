@@ -2,13 +2,22 @@ from enum import Enum
 from functools import wraps
 from typing import Any, Callable, Dict, List, Type
 
+from ray.anyscale.lineage.common.constants import IGNORE_ERRORS
+from ray.anyscale.lineage.common.exceptions import AnyscaleLineageRayDataError
+from ray.anyscale.lineage.common.facets.dataset import FileFormats
+from ray.anyscale.lineage.common.logging import get_logger
 
 # Import all datasource classes
 from ray.data._internal.datasource.audio_datasource import AudioDatasource
 from ray.data._internal.datasource.avro_datasource import AvroDatasource
+
+# Import all datasink classes
+from ray.data._internal.datasource.bigquery_datasink import BigQueryDatasink
 from ray.data._internal.datasource.bigquery_datasource import BigQueryDatasource
 from ray.data._internal.datasource.binary_datasource import BinaryDatasource
+from ray.data._internal.datasource.clickhouse_datasink import ClickHouseDatasink
 from ray.data._internal.datasource.clickhouse_datasource import ClickHouseDatasource
+from ray.data._internal.datasource.csv_datasink import CSVDatasink
 from ray.data._internal.datasource.csv_datasource import CSVDatasource
 from ray.data._internal.datasource.databricks_uc_datasource import (
     DatabricksUCDatasource,
@@ -18,47 +27,36 @@ from ray.data._internal.datasource.delta_sharing_datasource import (
 )
 from ray.data._internal.datasource.hudi_datasource import HudiDatasource
 from ray.data._internal.datasource.huggingface_datasource import HuggingFaceDatasource
+from ray.data._internal.datasource.iceberg_datasink import IcebergDatasink
 from ray.data._internal.datasource.iceberg_datasource import IcebergDatasource
+from ray.data._internal.datasource.image_datasink import ImageDatasink
 from ray.data._internal.datasource.image_datasource import ImageDatasource
+from ray.data._internal.datasource.json_datasink import JSONDatasink
 from ray.data._internal.datasource.json_datasource import (
     ArrowJSONDatasource,
     PandasJSONDatasource,
 )
+from ray.data._internal.datasource.lance_datasink import LanceDatasink
 from ray.data._internal.datasource.lance_datasource import LanceDatasource
+from ray.data._internal.datasource.mongo_datasink import MongoDatasink
 from ray.data._internal.datasource.mongo_datasource import MongoDatasource
+from ray.data._internal.datasource.numpy_datasink import NumpyDatasink
 from ray.data._internal.datasource.numpy_datasource import NumpyDatasource
+from ray.data._internal.datasource.parquet_datasink import ParquetDatasink
 from ray.data._internal.datasource.parquet_datasource import ParquetDatasource
 from ray.data._internal.datasource.range_datasource import RangeDatasource
+from ray.data._internal.datasource.sql_datasink import SQLDatasink
 from ray.data._internal.datasource.sql_datasource import SQLDatasource
 from ray.data._internal.datasource.text_datasource import TextDatasource
+from ray.data._internal.datasource.tfrecords_datasink import TFRecordDatasink
 from ray.data._internal.datasource.tfrecords_datasource import TFRecordDatasource
 from ray.data._internal.datasource.torch_datasource import TorchDatasource
 from ray.data._internal.datasource.uc_datasource import UnityCatalogConnector
 from ray.data._internal.datasource.video_datasource import VideoDatasource
-from ray.data._internal.datasource.webdataset_datasource import WebDatasetDatasource
-
-# Import all datasink classes
-from ray.data._internal.datasource.bigquery_datasink import BigQueryDatasink
-from ray.data._internal.datasource.clickhouse_datasink import ClickHouseDatasink
-from ray.data._internal.datasource.csv_datasink import CSVDatasink
-from ray.data._internal.datasource.iceberg_datasink import IcebergDatasink
-from ray.data._internal.datasource.image_datasink import ImageDatasink
-from ray.data._internal.datasource.json_datasink import JSONDatasink
-from ray.data._internal.datasource.lance_datasink import LanceDatasink
-from ray.data._internal.datasource.mongo_datasink import MongoDatasink
-from ray.data._internal.datasource.numpy_datasink import NumpyDatasink
-from ray.data._internal.datasource.parquet_datasink import ParquetDatasink
-from ray.data._internal.datasource.sql_datasink import SQLDatasink
-from ray.data._internal.datasource.tfrecords_datasink import TFRecordDatasink
 from ray.data._internal.datasource.webdataset_datasink import WebDatasetDatasink
+from ray.data._internal.datasource.webdataset_datasource import WebDatasetDatasource
 from ray.data.datasource.datasink import Datasink
 from ray.data.datasource.datasource import Datasource
-
-from ray.anyscale.lineage.common.constants import IGNORE_ERRORS
-from ray.anyscale.lineage.common.exceptions import AnyscaleLineageRayDataError
-from ray.anyscale.lineage.common.facets.dataset import FileFormats
-from ray.anyscale.lineage.common.logging import get_logger
-
 
 logger = get_logger(__name__)
 

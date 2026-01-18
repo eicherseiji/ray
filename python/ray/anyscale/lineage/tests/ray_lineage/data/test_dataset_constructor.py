@@ -2,7 +2,6 @@
 
 from types import SimpleNamespace
 
-
 from ray.anyscale.lineage.common.facets.dataset import FileFormats
 from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import main
 

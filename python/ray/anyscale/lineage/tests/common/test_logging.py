@@ -71,6 +71,7 @@ def test_log_encoding_json_default(preserve_logger_state):
 def test_log_encoding_text(preserve_logger_state):
     """Test that TEXT encoding uses standard formatter when configured."""
     import importlib
+
     from ray.anyscale.lineage.common import constants
 
     importlib.reload(constants)
@@ -148,6 +149,7 @@ class TestLineageSessionFileHandler:
 
 if __name__ == "__main__":
     import sys
+
     import pytest
 
     sys.exit(pytest.main(["-v", "-x", __file__]))

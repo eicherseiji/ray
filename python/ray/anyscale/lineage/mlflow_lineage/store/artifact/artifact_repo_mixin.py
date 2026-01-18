@@ -10,7 +10,6 @@ from ray.anyscale.lineage.mlflow_lineage.store.artifact.utils import (
     process_and_emit_ol_events_for_artifact_repo_operation,
 )
 
-
 logger = get_logger(__name__)
 
 

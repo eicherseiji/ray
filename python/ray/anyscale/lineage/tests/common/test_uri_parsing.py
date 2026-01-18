@@ -1,7 +1,8 @@
 """Tests for URI parsing functions."""
 
-import pytest
 from urllib.parse import urlsplit
+
+import pytest
 
 from ray.anyscale.lineage.common import uri_parsing
 

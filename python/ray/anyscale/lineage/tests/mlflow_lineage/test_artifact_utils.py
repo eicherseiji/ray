@@ -14,8 +14,8 @@ from ray.anyscale.lineage.mlflow_lineage.store.artifact.utils import (
 from ray.anyscale.lineage.tests.test_constants import (
     TEST_CLOUD_ID,
     TEST_JOB_ID,
-    TEST_MODEL_ARTIFACT_PATH,
     TEST_MLFLOW_S3_URI as TEST_S3_URI,
+    TEST_MODEL_ARTIFACT_PATH,
     TEST_WORKLOAD_OL_RUN_ID_ALT,
 )
 

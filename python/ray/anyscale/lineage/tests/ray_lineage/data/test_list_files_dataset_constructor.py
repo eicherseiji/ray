@@ -7,10 +7,9 @@ import pytest
 from ray.anyscale.lineage.common.facets.dataset import FileFormats
 from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import list_files, main
 from ray.anyscale.lineage.tests.test_constants import (
-    TEST_RAY_DATA_S3_URI as TEST_S3_URI,
     TEST_CLOUD_ID,
+    TEST_RAY_DATA_S3_URI as TEST_S3_URI,
 )
-
 
 # Test data for parameterized tests based on actual Ray Data datasource extensions
 # Format: (datasource_name, registry_extensions, input_extension, expected_format)

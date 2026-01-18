@@ -2,7 +2,6 @@ import os
 
 from ray.anyscale.lineage.version import __version__
 
-
 # Environment variable prefix for this package
 ANYSCALE_LINEAGE_ENV_PREFIX = "ANYSCALE_LINEAGE"
 

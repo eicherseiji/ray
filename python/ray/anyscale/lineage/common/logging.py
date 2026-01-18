@@ -3,7 +3,6 @@ import os
 from typing import Optional
 
 from ray._common.formatters import JSONFormatter
-
 from ray.anyscale.lineage.common.constants import (
     LOG_ENABLE_CONSOLE,
     LOG_ENCODING,

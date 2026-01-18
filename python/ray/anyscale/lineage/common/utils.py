@@ -9,7 +9,6 @@ from functools import wraps
 from typing import Any, Callable, Dict, Optional, Tuple, Type
 from urllib.parse import urlsplit
 
-import ray
 from openlineage.client.event_v2 import (
     Dataset,
     InputDataset,
@@ -26,6 +25,7 @@ from openlineage.client.facet_v2 import (
 )
 from openlineage.client.uuid import generate_new_uuid
 
+import ray
 from ray.anyscale.lineage.common.constants import LINEAGE_EVENTS_LOG_FILENAME
 from ray.anyscale.lineage.common.exceptions import AnyscaleLineageClientError
 from ray.anyscale.lineage.common.logging import get_logger

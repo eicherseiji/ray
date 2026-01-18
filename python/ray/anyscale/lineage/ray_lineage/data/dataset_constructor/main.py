@@ -1,12 +1,6 @@
 from typing import Any, Dict, List, Tuple
 
 from openlineage.client.event_v2 import InputDataset, OutputDataset
-from ray.data._internal.execution.streaming_executor import StreamingExecutor
-from ray.data._internal.logical.interfaces.logical_operator import LogicalOperator
-from ray.data._internal.logical.operators.read_operator import Read as ReadOperator
-from ray.data._internal.logical.operators.write_operator import Write as WriteOperator
-from ray.data.datasource.datasink import Datasink
-from ray.data.datasource.datasource import Datasource
 
 from ray.anyscale.lineage.common.facets.dataset import FileFormats
 from ray.anyscale.lineage.common.logging import get_logger
@@ -36,6 +30,12 @@ from ray.anyscale.lineage.ray_lineage.data.utils import (
     get_file_format_datasinks,
     get_file_format_datasources,
 )
+from ray.data._internal.execution.streaming_executor import StreamingExecutor
+from ray.data._internal.logical.interfaces.logical_operator import LogicalOperator
+from ray.data._internal.logical.operators.read_operator import Read as ReadOperator
+from ray.data._internal.logical.operators.write_operator import Write as WriteOperator
+from ray.data.datasource.datasink import Datasink
+from ray.data.datasource.datasource import Datasource
 
 logger = get_logger(__name__)
 

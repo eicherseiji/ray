@@ -42,7 +42,7 @@ repos:
         exclude: ^(python/ray/data/__init__.py)
       - id: ruff
         args: [ --select, "I", --fix, --exit-non-zero-on-fix ]
-        exclude: ^(python/ray/anyscale/(air|lineage|safetensors|serve|train|_private))
+        exclude: ^(python/ray/anyscale/(air|serve|train|_private))
 
   - repo: https://github.com/jsh9/pydoclint
     rev: "0.8.3"

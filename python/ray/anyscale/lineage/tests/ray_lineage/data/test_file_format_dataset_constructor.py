@@ -4,10 +4,10 @@
 from ray.anyscale.lineage.common.facets.dataset import FileFormats
 from ray.anyscale.lineage.ray_lineage.data.dataset_constructor import file_format
 from ray.anyscale.lineage.tests.test_constants import (
+    TEST_CLOUD_ID,
+    TEST_JOB_ID,
     TEST_RAY_DATA_FILE_URI as TEST_FILE_URI,
     TEST_RAY_DATA_S3_URI as TEST_S3_URI,
-    TEST_JOB_ID,
-    TEST_CLOUD_ID,
 )
 
 

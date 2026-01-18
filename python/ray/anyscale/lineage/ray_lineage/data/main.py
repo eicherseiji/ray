@@ -2,8 +2,6 @@ from typing import Dict, List, Optional, Tuple, cast
 
 from openlineage.client.event_v2 import InputDataset, OutputDataset, RunState
 from openlineage.client.facet_v2 import JobFacet, RunFacet
-from ray.data._internal.execution.execution_callback import ExecutionCallback
-from ray.data._internal.execution.streaming_executor import StreamingExecutor
 
 from ray.anyscale.lineage.common.openlineage_client import AnyscaleOpenLineageClient
 from ray.anyscale.lineage.common.utils import (
@@ -24,6 +22,8 @@ from ray.anyscale.lineage.ray_lineage.data.facet_constructor import (
     RayDataFacetConstructor,
 )
 from ray.anyscale.lineage.ray_lineage.data.utils import catch_lineage_callback_exception
+from ray.data._internal.execution.execution_callback import ExecutionCallback
+from ray.data._internal.execution.streaming_executor import StreamingExecutor
 
 
 class RayDataOpenLineageExecutionCallback(ExecutionCallback):

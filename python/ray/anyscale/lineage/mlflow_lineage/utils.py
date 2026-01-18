@@ -5,7 +5,6 @@ from ray.anyscale.lineage.common.constants import IGNORE_ERRORS
 from ray.anyscale.lineage.common.exceptions import AnyscaleLineageMLflowError
 from ray.anyscale.lineage.common.logging import get_logger
 
-
 logger = get_logger(__name__)
 
 
