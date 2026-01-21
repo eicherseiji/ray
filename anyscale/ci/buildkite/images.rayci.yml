@@ -212,3 +212,21 @@ steps:
     matrix:
       - predeploy
       - production
+
+  - label: ":tapioca: copy rayturbo images to local registry"
+    key: copy-rayturbo-images
+    depends_on:
+      - rayturbo-image
+      # aarch64 images are not yet supported on Anyscale
+      # - rayturbo-image-aarch64
+      - rayturbo-slim-image
+      - rayturbo-llm-image
+    tags:
+      - docker
+      - skip-on-premerge
+    if: build.branch == "master"
+    commands:
+      - bazel run //anyscale/ci/nightly_images:generate_and_copy_images
+    instance_type: medium
+    job_env: forge
+    mount_buildkite_agent: true
