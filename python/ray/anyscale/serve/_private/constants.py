@@ -2,8 +2,6 @@
 
 import os
 
-from ray.serve._private.constants import RAY_SERVE_USE_GRPC_BY_DEFAULT
-
 ANYSCALE_RAY_SERVE_ENABLE_PROPRIETARY_DEPLOYMENT_SCHEDULER = (
     os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_PROPRIETARY_DEPLOYMENT_SCHEDULER", "1")
     == "1"
@@ -137,16 +135,13 @@ ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER = os.environ.get(
 
 ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH = int(
     # Default max message length in gRPC is 4MB, we keep that default
+    # Check OSS env var first, then anyscale-specific one for backwards compatibility
     os.environ.get(
-        "ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH", 4 * 1024 * 1024
+        "RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH",
+        os.environ.get(
+            "ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH", 4 * 1024 * 1024
+        ),
     )
-)
-
-ANYSCALE_RAY_SERVE_PROXY_USE_GRPC = os.environ.get(
-    "ANYSCALE_RAY_SERVE_PROXY_USE_GRPC"
-) == "1" or (
-    not os.environ.get("ANYSCALE_RAY_SERVE_PROXY_USE_GRPC") == "0"
-    and RAY_SERVE_USE_GRPC_BY_DEFAULT
 )
 
 # Feature flag for prestarting workers in placement groups.

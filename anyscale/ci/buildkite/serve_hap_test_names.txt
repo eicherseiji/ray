@@ -5,7 +5,7 @@
 //python/ray/anyscale/serve:tests/test_direct_ingress_standalone_with_grpc
 //python/ray/anyscale/serve:tests/test_direct_ingress_with_grpc
 //python/ray/anyscale/serve:tests/test_draining
-//python/ray/anyscale/serve:tests/test_grpc_e2e
+//python/ray/serve/tests:test_grpc_e2e
 //python/ray/anyscale/serve:tests/test_grpc_replica_wrapper
 //python/ray/anyscale/serve:tests/test_handle
 //python/ray/anyscale/serve:tests/test_haproxy

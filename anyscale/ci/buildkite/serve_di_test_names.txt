@@ -43,6 +43,6 @@
 //python/ray/anyscale/serve:tests/test_az_routing
 //python/ray/anyscale/serve:tests/test_cluster_node_info_cache
 //python/ray/anyscale/serve:tests/test_draining
-//python/ray/anyscale/serve:tests/test_grpc_e2e
+//python/ray/serve/tests:test_grpc_e2e
 //python/ray/anyscale/serve:tests/test_grpc_replica_wrapper
 //python/ray/anyscale/serve:tests/test_handle
