@@ -1,7 +1,7 @@
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-import sys
 from freezegun import freeze_time
 
 from ray.anyscale.air._internal.autoscaling_coordinator import ResourceRequestPriority
@@ -54,7 +54,7 @@ def _get_mock_worker_group_state(
 ) -> WorkerGroupState:
     return WorkerGroupState(
         start_time=start_time,
-        placement_group=MagicMock(),
+        placement_group_handle=MagicMock(),
         workers=[MagicMock() for _ in range(num_workers)],
         sync_actor=MagicMock(),
     )
