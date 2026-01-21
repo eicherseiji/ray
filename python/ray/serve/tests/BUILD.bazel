@@ -246,7 +246,10 @@ py_test_module_list(
 py_test_module_list(
     size = "medium",
     timeout = "long",
-    env = {"ANYSCALE_TRACING_EXPORTER_IMPORT_PATH": ""},
+    env = {
+        "RAY_SERVE_ROUTER_QUEUE_LEN_GAUGE_THROTTLE_S": "0",
+        "ANYSCALE_TRACING_EXPORTER_IMPORT_PATH": "",
+    },
     files = [
         "test_deploy_app.py",
         "test_deploy_app_2.py",
