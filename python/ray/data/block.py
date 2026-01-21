@@ -687,6 +687,9 @@ class BlockColumnAccessor:
         """Returns requested quantile of the given column"""
         raise NotImplementedError()
 
+    def top_k(self, k: int) -> BlockColumn:
+        raise NotImplementedError()
+
     def unique(self) -> BlockColumn:
         """Returns new column holding only distinct values of the current one"""
         raise NotImplementedError()
@@ -746,7 +749,7 @@ class BlockColumnAccessor:
         """Converts underlying column to Numpy"""
         raise NotImplementedError()
 
-    def _as_arrow_compatible(self) -> Union[List[Any], "pyarrow.Array"]:
+    def _to_arrow_compatible_container(self) -> Union[List[Any], "pyarrow.Array"]:
         """Converts block column into a representation compatible with Arrow"""
         raise NotImplementedError()
 

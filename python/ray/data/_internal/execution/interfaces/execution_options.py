@@ -358,6 +358,9 @@ class ExecutionOptions:
                     f" both be set for {attr} resource."
                 )
 
+    def max_cluster_limits(self) -> ExecutionResources:
+        return self.resource_limits.subtract(self.exclude_resources)
+
 
 def safe_or(value: Optional[Any], alt: Any) -> Any:
     return value if value is not None else alt

@@ -1,0 +1,11 @@
+name: "rayturbobuild"
+froms: ["cr.ray.io/rayproject/oss-ci-base_build-py3.10"]
+dockerfile: anyscale/ci/docker/rayturbo.build.Dockerfile
+srcs:
+  - python/requirements.txt
+  - python/requirements_compiled.txt
+  - python/requirements/test-requirements.txt
+  - anyscale/docker/runtime-requirements.txt
+  - anyscale/docker/runtime-test-requirements.txt
+tags:
+  - cr.ray.io/rayproject/rayturbobuild

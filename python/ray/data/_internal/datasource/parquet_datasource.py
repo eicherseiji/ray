@@ -1132,6 +1132,8 @@ def _estimate_reader_batch_size(
 def get_parquet_dataset(paths, filesystem, dataset_kwargs):
     import pyarrow.parquet as pq
 
+    from ray.data.datasource.path_util import _resolve_paths_and_filesystem
+
     # If you pass a list containing a single directory path to `ParquetDataset`, PyArrow
     # errors with 'IsADirectoryError: Path ... points to a directory, but only file
     # paths are supported'. To avoid this, we pass the directory path directly.
@@ -1194,7 +1196,6 @@ def _sample_fragments(
 def _add_partitions_to_table(
     partition_col_values: Dict[str, PartitionDataType], table: "pyarrow.Table"
 ) -> "pyarrow.Table":
-
     for partition_col, value in partition_col_values.items():
         field_index = table.schema.get_field_index(partition_col)
         if field_index == -1:

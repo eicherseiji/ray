@@ -704,6 +704,7 @@ def _debug_dump_topology(topology: Topology, resource_manager: ResourceManager) 
         resource_manager: The resource manager for this topology.
     """
     logger.debug("Execution Progress:")
+
     for i, (op, state) in enumerate(topology.items()):
         summary_str = format_op_state_summary(state, resource_manager, verbose=True)
         logger.debug(

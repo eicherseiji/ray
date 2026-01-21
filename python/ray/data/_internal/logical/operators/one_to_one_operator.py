@@ -1,3 +1,4 @@
+from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ray.data._internal.logical.interfaces import (
@@ -46,6 +47,7 @@ class AbstractOneToOne(LogicalOperator):
     def input_dependency(self) -> LogicalOperator:
         return self._input_dependencies[0]
 
+    @abstractmethod
     def can_modify_num_rows(self) -> bool:
         """Whether this operator can modify the number of rows,
         i.e. number of input rows != number of output rows."""
