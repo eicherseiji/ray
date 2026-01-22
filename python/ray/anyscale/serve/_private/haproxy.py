@@ -25,6 +25,7 @@ from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER,
     ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER,
     ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER,
+    ANYSCALE_RAY_SERVE_HAPROXY_SYSLOG_PORT,
     ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN,
     ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT,
     ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD,
@@ -383,6 +384,8 @@ class HAProxyConfig:
     health_check_path: Optional[str] = "/-/healthz"  # For HTTP health checks
 
     http_options: HTTPOptions = field(default_factory=HTTPOptions)
+
+    syslog_port: int = ANYSCALE_RAY_SERVE_HAPROXY_SYSLOG_PORT
 
     @property
     def frontend_host(self) -> str:

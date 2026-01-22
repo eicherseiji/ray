@@ -261,6 +261,7 @@ def test_generate_config_file_internal(haproxy_api_cleanup):
 global
     # Log to the standard system log socket with debug level.
     log /dev/log local0 debug
+    log 127.0.0.1:514 local0 debug
     stats socket {socket_path} mode 666 level admin expose-fd listeners
     stats timeout 30s
     maxconn 1000
@@ -294,6 +295,8 @@ frontend http_frontend
     bind *:8000
     # Health check endpoint
     acl healthcheck path -i /-/healthz
+    # Suppress logging for health checks
+    http-request set-log-level silent if healthcheck
     # 200 if any backend has at least one server UP
     acl backend_api_backend_server_up nbsrv(api_backend) ge 1
     acl backend_web_backend_server_up nbsrv(web_backend) ge 1

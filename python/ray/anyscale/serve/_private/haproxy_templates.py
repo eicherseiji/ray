@@ -1,5 +1,7 @@
 HAPROXY_HEALTHZ_RULES_TEMPLATE = """    # Health check endpoint
     acl healthcheck path -i {{ config.health_check_endpoint }}
+    # Suppress logging for health checks
+    http-request set-log-level silent if healthcheck
 {%- if not health_info.healthy %}
     # Override: force health checks to fail (used by drain/disable)
     http-request return status {{ health_info.status }} content-type text/plain string "{{ health_info.health_message }}" if healthcheck
@@ -19,6 +21,7 @@ HAPROXY_HEALTHZ_RULES_TEMPLATE = """    # Health check endpoint
 HAPROXY_CONFIG_TEMPLATE = """global
     # Log to the standard system log socket with debug level.
     log /dev/log local0 debug
+    log 127.0.0.1:{{ config.syslog_port }} local0 debug
     stats socket {{ config.socket_path }} mode 666 level admin expose-fd listeners
     stats timeout 30s
     maxconn {{ config.maxconn }}

@@ -87,6 +87,11 @@ ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT = int(
     os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT", "9101")
 )
 
+# HAProxy log port
+ANYSCALE_RAY_SERVE_HAPROXY_SYSLOG_PORT = int(
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_SYSLOG_PORT", "514")
+)
+
 # HAProxy timeout configurations (in seconds, None = no timeout)
 ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S = (
     int(os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S"))
