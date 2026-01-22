@@ -30,7 +30,7 @@ from .in_memory_size_estimator import (
 )
 from .supports_metadata import MetadataType, SupportsMetadata, SupportsSchema
 from ray._private.arrow_utils import get_pyarrow_version
-from ray._private.ray_constants import env_integer
+from ray._private.ray_constants import env_bool, env_integer
 from ray.anyscale.data._internal.file_indexer import (
     ChunkMetadata,
     create_chunk_metadata,
@@ -56,6 +56,7 @@ from ray.data._internal.datasource.parquet_datasource import (
 )
 from ray.data._internal.util import (
     GiB,
+    MiB,
     call_with_retry,
     iterate_with_retry,
     make_async_gen,
@@ -163,6 +164,12 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
     _DEFAULT_FRAGMENT_READAHEAD = env_integer(
         "RAY_DATA_PARQUET_READER_FRAGMENT_READAHEAD", 1
     )
+    _DEFAULT_FRAGMENT_USE_BUFFERED_STREAM = env_bool(
+        "RAY_DATA_PARQUET_READER_FRAGMENT_USE_BUFFERED_STREAM", True
+    )
+    _DEFAULT_FRAGMENT_SCAN_BUFFER_SIZE = env_integer(
+        "RAY_DATA_PARQUET_READER_FRAGMENT_SCAN_BUFFER_SIZE", 8 * MiB
+    )
 
     # Refer https://arrow.apache.org/docs/python/generated/pyarrow.dataset.Dataset.html#pyarrow.dataset.Dataset.to_batches
     # In `to_batches`,
@@ -220,6 +227,18 @@ class ParquetReader(FileReader, SupportsMetadata, SupportsSchema):
             to_batches_kwargs.setdefault(
                 "fragment_readahead", self._DEFAULT_FRAGMENT_READAHEAD
             )
+
+            # Refer https://arrow.apache.org/docs/python/generated/pyarrow.dataset.ParquetFragmentScanOptions.html
+            # Read files through buffered input streams rather than loading
+            # entire row groups at once.
+            if self._DEFAULT_FRAGMENT_USE_BUFFERED_STREAM:
+                to_batches_kwargs.setdefault(
+                    "fragment_scan_options",
+                    pa.dataset.ParquetFragmentScanOptions(
+                        use_buffered_stream=True,
+                        buffer_size=self._DEFAULT_FRAGMENT_SCAN_BUFFER_SIZE,
+                    ),
+                )
 
         self._schema = schema
         self._dataset_kwargs = dataset_kwargs
