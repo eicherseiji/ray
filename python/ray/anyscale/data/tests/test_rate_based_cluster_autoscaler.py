@@ -33,6 +33,7 @@ from ray.data._internal.execution.interfaces.execution_options import (
     ExecutionResources,
 )
 from ray.data._internal.execution.resource_manager import ResourceManager
+from ray.data.context import DataContext
 from ray.data.tests.conftest import propagate_logs  # noqa
 
 
@@ -334,7 +335,7 @@ def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):
     with pytest.raises(ValueError):
         create_cluster_autoscaler(
             topology={},
-            execution_options=ExecutionOptions(),
+            data_context=DataContext(execution_options=ExecutionOptions()),
             resource_manager=MagicMock(spec=ResourceManager),
             execution_id="test",
         )
@@ -356,7 +357,7 @@ def test_cluster_autoscaler_env_value_creates_correct_autoscaler(
 
     autoscaler = create_cluster_autoscaler(
         topology={},
-        execution_options=ExecutionOptions(),
+        data_context=DataContext(execution_options=ExecutionOptions()),
         resource_manager=MagicMock(spec=ResourceManager),
         execution_id="test",
     )
