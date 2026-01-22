@@ -10,7 +10,6 @@ from ray.anyscale.air._internal.autoscaling_coordinator import (
 from ray.anyscale.data._internal.cluster_autoscaler import (
     BottleneckDetector,
     ClusterAutoscalingMetrics,
-    LegacyRayTurboClusterAutoscaler,
     NormalizedThroughputBottleneckDetector,
     RateBasedClusterAutoscaler,
     SupportsClusterAutoscaling,
@@ -299,7 +298,6 @@ def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):
     "cluster_autoscaler_env_value, expected_autoscaler_type",
     [
         ("RAYTURBO", RateBasedClusterAutoscaler),
-        ("RAYTURBO_LEGACY", LegacyRayTurboClusterAutoscaler),
         ("V2", DefaultClusterAutoscalerV2),
         ("V1", DefaultClusterAutoscaler),
     ],
