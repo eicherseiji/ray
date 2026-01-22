@@ -26,7 +26,7 @@ class LocationAwareBundleQueue(QueueWithRemoval):
         super().__init__()
         self._update_frequency_s = update_frequency_s
 
-        self._fifo_queue = HashLinkedQueue()
+        self._hash_linked = HashLinkedQueue()
         self._bundle_nbytes: Dict["RefBundle", int] = {}
         self._last_size_refresh_ts = time.time()
         self._total_nbytes = 0
@@ -35,29 +35,30 @@ class LocationAwareBundleQueue(QueueWithRemoval):
     @override
     def __len__(self) -> int:
         with self._lock:
-            return len(self._fifo_queue)
+            return len(self._hash_linked)
 
     @override
     def __contains__(self, bundle: "RefBundle") -> bool:
         with self._lock:
-            return bundle in self._fifo_queue
+            return bundle in self._hash_linked
 
     @override
     def add(self, bundle: "RefBundle") -> None:
         with self._lock:
-            self._fifo_queue.add(bundle)
             # Use `"RefBundle".size_bytes()` as an initial estimate.
-            self._bundle_nbytes[bundle] = bundle.size_bytes()
-            self._total_nbytes += self._bundle_nbytes[bundle]
+            if bundle not in self._hash_linked:
+                self._bundle_nbytes[bundle] = bundle.size_bytes()
+                self._total_nbytes += self._bundle_nbytes[bundle]
+            self._hash_linked.add(bundle)
 
     @override
     def get_next(self) -> "RefBundle":
         with self._lock:
-            if not self._fifo_queue:
+            if not self._hash_linked:
                 raise IndexError("You can't pop from an empty queue")
 
             self._try_ensure_first_bundle_exists()
-            bundle = self._fifo_queue.peek_next()
+            bundle = self._hash_linked.peek_next()
             if bundle is None:
                 raise IndexError("Unexpected empty queue")
             self.remove(bundle)
@@ -67,12 +68,11 @@ class LocationAwareBundleQueue(QueueWithRemoval):
     def peek_next(self) -> Optional["RefBundle"]:
         with self._lock:
             self._try_ensure_first_bundle_exists()
-            return self._fifo_queue.peek_next()
+            return self._hash_linked.peek_next()
 
     @override
     def has_next(self) -> bool:
-        bundle = self.peek_next()
-        return bundle is not None
+        return self.peek_next() is not None
 
     @override
     def remove(self, bundle: "RefBundle") -> None:
@@ -82,9 +82,9 @@ class LocationAwareBundleQueue(QueueWithRemoval):
 
             # If there are multiple instances of the bundle in the queue, this method
             # only removes the first one.
-            self._fifo_queue.remove(bundle)
+            self._hash_linked.remove(bundle)
 
-            if bundle not in self._fifo_queue:
+            if bundle not in self._hash_linked:
                 # The underlying FIFO queue might contain multiple instances of the
                 # same bundle. So, we only decrement the total size if the bundle is
                 # not in the queue anymore.
@@ -99,7 +99,7 @@ class LocationAwareBundleQueue(QueueWithRemoval):
     @override
     def clear(self) -> None:
         with self._lock:
-            self._fifo_queue.clear()
+            self._hash_linked.clear()
             self._bundle_nbytes.clear()
             self._total_nbytes = 0
 
@@ -116,20 +116,20 @@ class LocationAwareBundleQueue(QueueWithRemoval):
             return self._total_nbytes
 
     def _try_ensure_first_bundle_exists(self):
-        if not self._fifo_queue:
+        if not self._hash_linked:
             return
 
         num_bundles_skipped = 0
         while num_bundles_skipped < len(self._bundle_nbytes):
-            first_bundle = self._fifo_queue.peek_next()
+            first_bundle = self._hash_linked.peek_next()
             if first_bundle is None:
                 return
 
             if all_objects_exist_for_bundle(first_bundle):
                 break
 
-            self._fifo_queue.get_next()
-            self._fifo_queue.add(first_bundle)
+            self._hash_linked.get_next()
+            self._hash_linked.add(first_bundle)
             num_bundles_skipped += 1
 
     def _refresh_bundle_sizes(self) -> None:
@@ -138,9 +138,7 @@ class LocationAwareBundleQueue(QueueWithRemoval):
 
             nbytes = 0
             for object_info in object_locs.values():
-                if object_info["object_size"] is None:
-                    nbytes = 0
-                else:
+                if object_info["object_size"] is not None:
                     # There can be copies of the object on multiple nodes. So, to
                     # calculate the total size of the object in shared object store
                     # memory, we multiply the object size by the number of nodes the
@@ -152,4 +150,8 @@ class LocationAwareBundleQueue(QueueWithRemoval):
 
     @override
     def num_blocks(self) -> int:
-        return self._fifo_queue.num_blocks()
+        return self._hash_linked.num_blocks()
+
+    @override
+    def num_rows(self) -> int:
+        return self._hash_linked.num_rows()

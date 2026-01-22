@@ -47,7 +47,7 @@ def test_location_aware_bundle_queue_thread_safety():
                     if stop_event.is_set():
                         break
 
-                    bundle = MagicMock(size_bytes=lambda: 100)
+                    bundle = MagicMock(size_bytes=lambda: 100, num_rows=lambda: 1)
                     queue.add(bundle)
                     time.sleep(0.001)  # Small delay to increase thread interleaving
                     queue.get_next()

@@ -8,7 +8,7 @@ from .hash_link import HashLinkedQueue
 from ray.data.context import DataContext
 
 
-def create_bundle_queue() -> BaseBundleQueue:
+def create_bundle_queue() -> QueueWithRemoval:
     from ray._private.ray_constants import env_bool
 
     if (
