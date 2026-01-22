@@ -9,9 +9,12 @@ import pytest
 import ray
 from ray import serve
 from ray._common.test_utils import wait_for_condition
-from ray.serve._private.constants import SERVE_DEFAULT_APP_NAME
+from ray.serve._private.constants import (
+    RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    SERVE_DEFAULT_APP_NAME,
+)
 from ray.serve._private.storage.kv_store import KVStoreError, RayInternalKVStore
-from ray.serve._private.test_utils import check_apps_running
+from ray.serve._private.test_utils import check_apps_running, get_application_url
 from ray.serve.context import _get_global_client
 from ray.serve.handle import DeploymentHandle
 from ray.serve.schema import ServeDeploySchema
@@ -67,6 +70,11 @@ def test_ray_internal_kv_timeout(serve_ha):  # noqa: F811
 )
 @pytest.mark.parametrize("use_handle", [False, True])
 def test_controller_gcs_failure(serve_ha, use_handle):  # noqa: F811
+    # In direct ingress mode, there's no proxy, so HTTP tests need to use
+    # the replica's direct ingress port instead of localhost:8000.
+    if not use_handle and RAY_SERVE_ENABLE_DIRECT_INGRESS:
+        pytest.skip("Proxy-based HTTP test not supported in direct ingress mode")
+
     @serve.deployment
     def d(*args):
         return f"{os.getpid()}"
@@ -76,7 +84,8 @@ def test_controller_gcs_failure(serve_ha, use_handle):  # noqa: F811
             handle = serve.get_app_handle(SERVE_DEFAULT_APP_NAME)
             ret = handle.remote().result()
         else:
-            ret = httpx.get("http://localhost:8000/d").text
+            url = get_application_url("HTTP") + "/d"
+            ret = httpx.get(url).text
         return ret
 
     serve.run(d.bind())
@@ -162,6 +171,9 @@ def test_new_router_on_gcs_failure(serve_ha, use_proxy: bool):
     send its first request, new incoming requests should successfully get
     sent to replicas during GCS downtime.
     """
+    # In direct ingress mode, there's no proxy, so proxy-based tests are skipped.
+    if use_proxy and RAY_SERVE_ENABLE_DIRECT_INGRESS:
+        pytest.skip("Proxy-based test not supported in direct ingress mode")
 
     _, client = serve_ha
 
@@ -264,6 +276,10 @@ def test_proxy_router_updated_replicas_then_gcs_failure(serve_ha):
 
     This test sends http requests to the proxy.
     """
+    # In direct ingress mode, there's no proxy, so this test is skipped.
+    if RAY_SERVE_ENABLE_DIRECT_INGRESS:
+        pytest.skip("Proxy-based test not supported in direct ingress mode")
+
     _, client = serve_ha
 
     config = {
