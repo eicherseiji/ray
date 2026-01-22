@@ -1,7 +1,5 @@
-import logging
-from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import DefaultDict, Dict, List, Optional
+from typing import Dict, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,10 +11,12 @@ from ray.anyscale.data._internal.cluster_autoscaler import (
     BottleneckDetector,
     ClusterAutoscalingMetrics,
     LegacyRayTurboClusterAutoscaler,
-    NodeType,
     NormalizedThroughputBottleneckDetector,
     RateBasedClusterAutoscaler,
     SupportsClusterAutoscaling,
+)
+from ray.anyscale.data._internal.cluster_autoscaler.rate_based_cluster_autoscaler import (
+    _to_resource_bundle,
 )
 from ray.data._internal.cluster_autoscaler import (
     CLUSTER_AUTOSCALER_ENV_KEY,
@@ -111,79 +111,6 @@ class StubClusterAutoscalingOperator(SupportsClusterAutoscaling):
         return self._completed
 
 
-@pytest.mark.parametrize(
-    "cpu_node_count, gpu_node_count, expected_max_nodes_delta",
-    [(1, 1, 2), (50, 50, 32)],
-)
-def test_autoscaler_scales_correct_num_nodes_for_bottleneck_op(
-    cpu_node_count: int, gpu_node_count: int, expected_max_nodes_delta: int
-):
-    cpu_op = StubClusterAutoscalingOperator(
-        _min_scheduling_resources=ExecutionResources(cpu=1),
-    )
-    gpu_op = StubClusterAutoscalingOperator(
-        _min_scheduling_resources=ExecutionResources(gpu=1),
-    )
-    cpu_node_type, gpu_node_type = NodeType({"CPU": 1}), NodeType({"GPU": 1})
-    resource_manager = StubResourceManager()
-    autoscaler = RateBasedClusterAutoscaler(
-        ops=[cpu_op, gpu_op],
-        resource_manager=resource_manager,
-        execution_id="test",
-        bottleneck_detector=StubBottleneckDetector(bottleneck=gpu_op),
-        max_cluster_limits=ExecutionResources.for_limits(),
-        utility_calculator=StubUtilizationGauge(),
-        autoscaling_coordinator=FakeAutoscalingCoordinator(),
-        get_node_counts=lambda: {
-            cpu_node_type: cpu_node_count,
-            gpu_node_type: gpu_node_count,
-        },
-        min_gap_between_autoscaling_requests_s=0,
-    )
-
-    autoscaler.try_trigger_scaling()
-
-    # The requested resources include the existing nodes and the new nodes. Since the
-    # bottleneck is the GPU operator, it should double the GPU nodes, or clamp to
-    # default max scaling delta (32.0)
-    assert autoscaler.get_total_resources().gpu == expected_max_nodes_delta
-
-
-def test_autoscaler_logs_warning_if_no_valid_node_types(
-    # We need the `propagate_logs` fixture to propagate Ray Data logs to the root
-    # logger. This is necessary for the `caplog` pytest fixture to work correctly.
-    propagate_logs,  # noqa
-    caplog,
-):
-    # This test sets up a GPU operator but only provides CPU node types. The autoscaler
-    # should detect this mismatch and warn the user to add a compatible worker node
-    # type.
-    gpu_op = StubClusterAutoscalingOperator(
-        _min_scheduling_resources=ExecutionResources(gpu=1),
-    )
-    cpu_node_type = NodeType({"CPU": 1})
-    resource_manager = StubResourceManager()
-    autoscaler = RateBasedClusterAutoscaler(
-        ops=[gpu_op],
-        resource_manager=resource_manager,
-        execution_id="test",
-        bottleneck_detector=StubBottleneckDetector(gpu_op),
-        max_cluster_limits=ExecutionResources.for_limits(),
-        utility_calculator=StubUtilizationGauge(),
-        autoscaling_coordinator=FakeAutoscalingCoordinator(),
-        get_node_counts=lambda: {cpu_node_type: 1},
-        min_gap_between_autoscaling_requests_s=0,
-    )
-
-    with caplog.at_level(logging.WARNING):
-        autoscaler.try_trigger_scaling()
-
-    assert (
-        "add a worker node type that satisfies these resource requirements"
-        in caplog.text
-    )
-
-
 def test_autoscaler_requests_resources_if_no_scalable_ops():
     """Test the autoscaler requests resources even if no ops support cluster
     autoscaling.
@@ -198,13 +125,13 @@ def test_autoscaler_requests_resources_if_no_scalable_ops():
         ops=[],
         resource_manager=resource_manager,
         execution_id="test",
+        topology=resource_manager._topology,
         bottleneck_detector=StubBottleneckDetector(bottleneck=None),
         max_cluster_limits=ExecutionResources.for_limits(),
         utility_calculator=StubUtilizationGauge(),
         autoscaling_coordinator=FakeAutoscalingCoordinator(
             get_time=lambda: time, remaining=[{"CPU": 1}]
         ),
-        get_node_counts=lambda: {NodeType({"CPU": 1}): 1},
         min_gap_between_autoscaling_requests_s=0,
         autoscaling_request_expire_time_s=1,
     )
@@ -223,18 +150,45 @@ def test_autoscaler_requests_resources_if_no_scalable_ops():
     assert autoscaler.get_total_resources() == ExecutionResources(cpu=1)
 
 
+class StubOpResourceAllocator:
+    """Stub for the op_resource_allocator used by RateBasedClusterAutoscaler."""
+
+    def __init__(
+        self, allocations: Dict[SupportsClusterAutoscaling, ExecutionResources]
+    ):
+        self._allocations = allocations
+
+    def get_allocation(
+        self, op: SupportsClusterAutoscaling
+    ) -> Optional[ExecutionResources]:
+        return self._allocations.get(op)
+
+
 class StubResourceManager:
     def __init__(
         self,
         global_limits: ExecutionResources = None,
         op_usage: Dict[PhysicalOperator, ExecutionResources] = None,
+        op_allocations: Dict[SupportsClusterAutoscaling, ExecutionResources] = None,
+        topology: Dict[PhysicalOperator, any] = None,
     ):
         if global_limits is None:
             global_limits = ExecutionResources.for_limits()
         if op_usage is None:
             op_usage = {}
+        if op_allocations is None:
+            op_allocations = {}
+        if topology is None:
+            # If topology not provided, infer from op_allocations keys as a simple list
+            # The real topology is a dict, but RateBasedClusterAutoscaler iterates over it
+            # so a list or dict keys view works fine for iteration.
+            # Using dict keys to mimic topology iteration.
+            topology = list(op_allocations.keys())
+
         self.global_limits = global_limits
         self._op_usage = op_usage
+        self.op_resource_allocator = StubOpResourceAllocator(op_allocations)
+        self._topology = topology
 
     def get_global_limits(self) -> ExecutionResources:
         return self.global_limits
@@ -367,134 +321,148 @@ def test_cluster_autoscaler_env_value_creates_correct_autoscaler(
 
 @pytest.mark.parametrize("cpu_usage", [0.25, 0.9])
 @pytest.mark.parametrize("gpu_usage", [0.25, 0.9])
-@pytest.mark.parametrize("memory_usage", [0.25, 0.9])
-def test_autoscaler_utilization_threshold(cpu_usage, gpu_usage, memory_usage):
+def test_autoscaler_utilization_threshold(cpu_usage, gpu_usage):
     """Test autoscaler scaling behavior based on cluster utilization thresholds.
 
-    Tests all combinations of cpu, gpu, and memory utilization values.
-    The autoscaler should scale up if any utilization exceeds the 0.75 threshold.
+    Tests all combinations of cpu and gpu utilization values.
+    The autoscaler should scale up if CPU or GPU utilization exceeds the 0.75 threshold.
     """
-    # Calculate expected resources: scale up if any utilization >= 0.75
     threshold = 0.75
 
     cpu_op = StubClusterAutoscalingOperator(
         _min_scheduling_resources=ExecutionResources(cpu=1),
     )
-    cpu_node_type = NodeType({"CPU": 4, "memory": 1000})
 
-    execution_resources = ExecutionResources(
-        cpu=cpu_usage, gpu=gpu_usage, object_store_memory=memory_usage
+    execution_resources = ExecutionResources(cpu=cpu_usage, gpu=gpu_usage)
+
+    # Allocate some resources to the operator so it can calculate current task num
+    resource_manager = StubResourceManager(
+        op_allocations={cpu_op: ExecutionResources(cpu=4)}
     )
-
-    resource_manager = StubResourceManager()
     autoscaler = RateBasedClusterAutoscaler(
         ops=[cpu_op],
         resource_manager=resource_manager,
         execution_id="test",
+        topology=resource_manager._topology,
         bottleneck_detector=StubBottleneckDetector(bottleneck=cpu_op),
         max_cluster_limits=ExecutionResources.for_limits(),
         utility_calculator=StubUtilizationGauge(execution_resources),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
-        get_node_counts=lambda: {cpu_node_type: 1},
         min_gap_between_autoscaling_requests_s=0,
         cluster_scaling_up_util_threshold=threshold,  # 75% threshold
         cluster_scaling_up_gpu_threshold=threshold,  # 75% threshold for GPU
     )
 
-    autoscaler.try_trigger_scaling()
+    result = autoscaler.try_trigger_scaling()
 
-    over_threshold = (
-        cpu_usage >= threshold or gpu_usage >= threshold or memory_usage >= threshold
-    )
+    over_threshold = cpu_usage >= threshold or gpu_usage >= threshold
     if over_threshold:
-        assert autoscaler.get_total_resources().cpu > 4
+        # Should return non-empty list of resource bundles
+        assert result is not None and len(result) > 0
     else:
-        assert autoscaler.get_total_resources().cpu <= 4
+        # Should return empty list when under threshold
+        assert result == []
 
 
 @pytest.mark.parametrize(
-    "max_cluster_limits,resource_request,expected_clamped",
+    "min_scheduling_resources,current_allocation,max_cpu_delta,max_gpu_delta,expected_total_bundle_count",
     [
-        # Test with requests that don't exceed the limit - all should be included
+        # CPU-only operator: 4 tasks allocated, scaling factor 2x = 4 additional tasks
+        # Max CPU delta 256 / 1 CPU per task = 256 bundles allowed, so no capping
+        # Total = current (4) + additional (4) = 8
         (
-            ExecutionResources(cpu=8, gpu=0, memory=0),
-            [{"CPU": 2}, {"CPU": 2}],
-            [{"CPU": 2}, {"CPU": 2}],
+            ExecutionResources(cpu=1),
+            ExecutionResources(cpu=4),
+            256.0,
+            32.0,
+            8,  # 4 current + 4 additional
         ),
-        # Test with requests that exceed the cluster limit
+        # CPU-only operator: 100 tasks allocated, scaling factor 2x = 100 additional
+        # Max CPU delta 50 / 1 CPU per task = 50 bundles allowed (capped)
+        # Total = current (100) + additional (50 capped) = 150
         (
-            ExecutionResources(cpu=8, gpu=0, memory=0),
-            [{"CPU": 3}, {"CPU": 3}, {"CPU": 3}, {"CPU": 3}],
-            [{"CPU": 3}, {"CPU": 3}],
+            ExecutionResources(cpu=1),
+            ExecutionResources(cpu=100),
+            50.0,
+            32.0,
+            150,  # 100 current + 50 additional (capped by max_cpu_delta)
         ),
-        # Test with heterogeneous cluster (both CPU and GPU resources, not evenly divisible)
+        # GPU operator: 8 GPUs allocated, 2 GPU per task = 4 tasks
+        # scaling factor 2x = 4 additional tasks
+        # Max GPU delta 32 / 2 GPU per task = 16 bundles allowed, so no capping
+        # Total = current (4) + additional (4) = 8
         (
-            ExecutionResources(cpu=7, gpu=2, memory=0),
-            [{"CPU": 3, "GPU": 1}, {"CPU": 3, "GPU": 1}, {"CPU": 3, "GPU": 1}],
-            [{"CPU": 3, "GPU": 1}, {"CPU": 3, "GPU": 1}],
+            ExecutionResources(gpu=2),
+            ExecutionResources(gpu=8),
+            256.0,
+            32.0,
+            8,  # 4 current + 4 additional
         ),
-        # Test with object store memory limits
-        # Note: object_store_memory is stripped from the final result because Autoscaler SDK
-        # doesn't work with obj store, but it still affects clamping logic
+        # GPU operator: Max GPU delta 4 / 2 GPU per task = 2 bundles allowed (capped)
+        # Total = current (4) + additional (2 capped) = 6
         (
-            ExecutionResources(cpu=8, gpu=0, memory=0, object_store_memory=1000),
-            [
-                {"CPU": 2, "object_store_memory": 400},
-                {"CPU": 2, "object_store_memory": 400},
-                {"CPU": 2, "object_store_memory": 400},
-            ],
-            [{"CPU": 2}, {"CPU": 2}],  # object_store_memory stripped in final result
+            ExecutionResources(gpu=2),
+            ExecutionResources(gpu=8),
+            256.0,
+            4.0,
+            6,  # 4 current + 2 additional (capped by max_gpu_delta)
+        ),
+        # Mixed CPU+GPU operator: GPU is the limiting factor for both task count and delta
+        # Total = current (4) + additional (2 capped) = 6
+        (
+            ExecutionResources(cpu=4, gpu=1),
+            ExecutionResources(cpu=16, gpu=4),  # 4 tasks based on GPU
+            256.0,
+            2.0,  # Allows only 2 additional bundles
+            6,  # 4 current + 2 additional (capped by GPU delta)
         ),
     ],
 )
-def test_resource_limits_clamper(
-    max_cluster_limits: ExecutionResources,
-    resource_request: List[Dict[str, float]],
-    expected_clamped: List[Dict[str, float]],
+def test_autoscaler_requests_correct_bundle_count(
+    min_scheduling_resources: ExecutionResources,
+    current_allocation: ExecutionResources,
+    max_cpu_delta: float,
+    max_gpu_delta: float,
+    expected_total_bundle_count: int,
 ):
-    """Test that clamp_resource_limits respects cluster limits through RateBasedClusterAutoscaler."""
-    # Create a minimal operator for the autoscaler
-    cpu_op = StubClusterAutoscalingOperator(
-        _min_scheduling_resources=ExecutionResources(cpu=1),
+    """Test that autoscaler requests total bundles (current + capped additional) and respects delta caps."""
+    op = StubClusterAutoscalingOperator(
+        _min_scheduling_resources=min_scheduling_resources,
     )
-    node_count: DefaultDict[NodeType, int] = defaultdict(int)
-    for r in resource_request:
-        node_count[NodeType(r)] += 1
-    resource_manager = StubResourceManager()
+    resource_manager = StubResourceManager(
+        op_allocations={op: current_allocation},
+    )
     autoscaler = RateBasedClusterAutoscaler(
-        ops=[cpu_op],
+        ops=[op],
         resource_manager=resource_manager,
         execution_id="test",
-        bottleneck_detector=StubBottleneckDetector(bottleneck=cpu_op),
-        max_cluster_limits=max_cluster_limits,
+        topology=resource_manager._topology,
+        bottleneck_detector=StubBottleneckDetector(bottleneck=op),
+        max_cluster_limits=ExecutionResources.for_limits(),
         utility_calculator=StubUtilizationGauge(),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
-        get_node_counts=lambda: node_count,
         min_gap_between_autoscaling_requests_s=0,
-        # Setting this to 1.0 so that we can directly compare against
-        # the clamped value.
-        cluster_scaling_up_factor=1.0,
+        cluster_scaling_up_max_cpu_resource_delta=max_cpu_delta,
+        cluster_scaling_up_max_gpu_resource_delta=max_gpu_delta,
     )
 
-    # Test clamping through the autoscaler
-    requested_resources = autoscaler.try_trigger_scaling()
+    result = autoscaler.try_trigger_scaling()
 
-    expected_clamped = [
-        ExecutionResources.from_resource_dict(er) for er in expected_clamped
-    ]
-    assert len(requested_resources) == len(expected_clamped)
-    assert requested_resources == expected_clamped
+    assert len(result) == expected_total_bundle_count
+    # Each bundle should match the min_scheduling_resources (excluding object_store_memory and zeros)
+    expected_bundle = _to_resource_bundle(min_scheduling_resources)
+    for bundle in result:
+        assert bundle == expected_bundle
 
 
 @pytest.mark.parametrize(
-    "max_resource_requirements,current_op_usage,min_scheduling_resources,resource_type,should_scale",
+    "max_resource_requirements,current_op_usage,min_scheduling_resources,should_scale",
     [
         # Case 1: Current usage (4) + min_scheduling (1) = 5 > max (4) -> don't scale
         (
             ExecutionResources(cpu=4),
             ExecutionResources(cpu=4),
             ExecutionResources(cpu=1),
-            "cpu",
             False,
         ),
         # Case 2: Current usage (3) + min_scheduling (1) = 4 <= max (4) -> scale
@@ -502,17 +470,15 @@ def test_resource_limits_clamper(
             ExecutionResources(cpu=4),
             ExecutionResources(cpu=3),
             ExecutionResources(cpu=1),
-            "cpu",
             True,
         ),
-        # Case 3: Heterogeneous - CPU at limit (4) but memory below limit (500)
-        # Adding one more task: CPU 4+1=5 > 4 (exceeds), memory 500+100=600 <= 1000 (within limit)
+        # Case 3: Heterogeneous - CPU at limit (4) but GPU below limit (2)
+        # Adding one more task: CPU 4+1=5 > 4 (exceeds), GPU 2+1=3 <= 4 (within limit)
         # Should not scale because CPU exceeds limit
         (
-            ExecutionResources(cpu=4, memory=1000),
-            ExecutionResources(cpu=4, memory=500),
-            ExecutionResources(cpu=1, memory=100),
-            "cpu",
+            ExecutionResources(cpu=4, gpu=4),
+            ExecutionResources(cpu=4, gpu=2),
+            ExecutionResources(cpu=1, gpu=1),
             False,
         ),
     ],
@@ -521,29 +487,32 @@ def test_autoscaler_skips_scaling_when_at_max_schedulable_tasks(
     max_resource_requirements: ExecutionResources,
     current_op_usage: ExecutionResources,
     min_scheduling_resources: ExecutionResources,
-    resource_type: str,
     should_scale: bool,
 ):
     """Test that autoscaler skips scaling when bottleneck operator would exceed max resource limits."""
 
     # Set up operator with min_scheduling_resources
-    cpu_op = StubClusterAutoscalingOperator(
+    op = StubClusterAutoscalingOperator(
         _min_scheduling_resources=min_scheduling_resources,
         _max_resource_requirements=max_resource_requirements,
     )
-    node_type = NodeType({resource_type.upper(): 1})
-    resource_manager = StubResourceManager(op_usage={cpu_op: current_op_usage})
+    resource_manager = StubResourceManager(
+        op_usage={op: current_op_usage},
+        op_allocations={
+            op: current_op_usage
+        },  # Also set allocations for task_num calculation
+    )
     autoscaler = RateBasedClusterAutoscaler(
-        ops=[cpu_op],
+        ops=[op],
         resource_manager=resource_manager,
         execution_id="test",
-        bottleneck_detector=StubBottleneckDetector(bottleneck=cpu_op),
+        topology=resource_manager._topology,
+        bottleneck_detector=StubBottleneckDetector(bottleneck=op),
         max_cluster_limits=ExecutionResources.for_limits(),
         utility_calculator=StubUtilizationGauge(
             ExecutionResources(cpu=0.9, gpu=0, object_store_memory=0, memory=0)
         ),
         autoscaling_coordinator=FakeAutoscalingCoordinator(),
-        get_node_counts=lambda: {node_type: 1},
         min_gap_between_autoscaling_requests_s=0,
     )
 
@@ -555,6 +524,93 @@ def test_autoscaler_skips_scaling_when_at_max_schedulable_tasks(
     else:
         # Should not scale - return empty list because adding one more task would exceed max_op_limits
         assert requested_resources == []
+
+
+def test_autoscaler_requests_at_least_one_bundle_when_no_allocation():
+    """Test that autoscaler requests at least 1 bundle even when current allocation is 0."""
+    op = StubClusterAutoscalingOperator(
+        _min_scheduling_resources=ExecutionResources(cpu=2, gpu=1),
+    )
+    # No allocations yet
+    resource_manager = StubResourceManager(op_allocations={})
+    autoscaler = RateBasedClusterAutoscaler(
+        ops=[op],
+        resource_manager=resource_manager,
+        execution_id="test",
+        topology=resource_manager._topology,
+        bottleneck_detector=StubBottleneckDetector(bottleneck=op),
+        max_cluster_limits=ExecutionResources.for_limits(),
+        utility_calculator=StubUtilizationGauge(),
+        autoscaling_coordinator=FakeAutoscalingCoordinator(),
+        min_gap_between_autoscaling_requests_s=0,
+    )
+
+    result = autoscaler.try_trigger_scaling()
+
+    # Should still request at least 1 bundle
+    assert len(result) >= 1
+    # Bundle should have CPU=2, GPU=1 (no object_store_memory or zero values)
+    assert result[0] == {"CPU": 2, "GPU": 1}
+
+
+def test_get_allocated_resource_bundles_aggregates_correctly():
+    """Test that _get_allocated_resource_bundles correctly sums up resources from all operators."""
+    # Op1: 2 CPUs per task, 3 tasks allocated -> 6 CPUs total
+    op1 = StubClusterAutoscalingOperator(
+        _min_scheduling_resources=ExecutionResources(cpu=2),
+    )
+    # Op2: 1 GPU per task, 2 tasks allocated -> 2 GPUs total
+    op2 = StubClusterAutoscalingOperator(
+        _min_scheduling_resources=ExecutionResources(gpu=1),
+    )
+    # Op3: Non-scalable op (or just skipped by autoscaler for scaling purposes),
+    # but still consumes resources. 1 CPU per task, 4 tasks -> 4 CPUs total.
+    op3 = StubClusterAutoscalingOperator(
+        _min_scheduling_resources=ExecutionResources(cpu=1),
+    )
+
+    op_allocations = {
+        op1: ExecutionResources(cpu=6),
+        op2: ExecutionResources(gpu=2),
+        op3: ExecutionResources(cpu=4),
+    }
+
+    resource_manager = StubResourceManager(
+        op_allocations=op_allocations,
+        # Ensure all ops are in the topology
+        topology={op1: None, op2: None, op3: None},
+    )
+
+    autoscaler = RateBasedClusterAutoscaler(
+        ops=[op1, op2],  # op3 might not be in the scalable ops list
+        resource_manager=resource_manager,
+        execution_id="test",
+        topology=resource_manager._topology,
+        bottleneck_detector=StubBottleneckDetector(bottleneck=op1),
+        max_cluster_limits=ExecutionResources.for_limits(),
+        utility_calculator=StubUtilizationGauge(),
+        autoscaling_coordinator=FakeAutoscalingCoordinator(),
+        min_gap_between_autoscaling_requests_s=0,
+    )
+
+    current_resources = autoscaler._get_allocated_resource_bundles(
+        resource_manager._topology
+    )
+
+    # Expected:
+    # Op1: 3 bundles of {CPU: 2}
+    # Op2: 2 bundles of {GPU: 1}
+    # Op3: 4 bundles of {CPU: 1}
+    # Order doesn't strictly matter for correctness of the sum, but let's check counts.
+
+    cpu2_bundles = [r for r in current_resources if r.get("CPU") == 2]
+    gpu1_bundles = [r for r in current_resources if r.get("GPU") == 1]
+    cpu1_bundles = [r for r in current_resources if r.get("CPU") == 1]
+
+    assert len(cpu2_bundles) == 3
+    assert len(gpu1_bundles) == 2
+    assert len(cpu1_bundles) == 4
+    assert len(current_resources) == 9
 
 
 if __name__ == "__main__":

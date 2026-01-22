@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     import pandas
 
     from ray.data._internal.compute import ComputeStrategy
-    from ray.data._internal.execution.interfaces import RefBundle
+    from ray.data._internal.execution.interfaces import ExecutionResources, RefBundle
     from ray.data._internal.planner.exchange.sort_task_spec import SortKey
     from ray.data.block import (
         Block,
@@ -1767,3 +1767,16 @@ def infer_compression(path: str) -> Optional[str]:
         if suffix and suffix[1:] == "snappy":
             compression = "snappy"
     return compression
+
+
+def get_max_task_capacity(
+    allocated_resources: Optional["ExecutionResources"],
+    min_scheduling_resources: "ExecutionResources",
+) -> int:
+    if allocated_resources is None:
+        return 0
+    if min_scheduling_resources.gpu == 0 and min_scheduling_resources.cpu == 0:
+        return float("inf")
+
+    capacity = allocated_resources.floordiv(min_scheduling_resources)
+    return min(capacity.cpu, capacity.gpu)

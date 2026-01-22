@@ -1,10 +1,8 @@
 import math
 import time
-from collections import defaultdict
 from logging import getLogger
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Optional
 
-import ray
 from .bottleneck_detector import (
     BottleneckDetector,
     NormalizedThroughputBottleneckDetector,
@@ -14,9 +12,6 @@ from ray._private.ray_constants import env_float, env_integer
 from ray.anyscale.air._internal.autoscaling_coordinator import (
     AutoscalingCoordinator,
     DefaultAutoscalingCoordinator,
-)
-from ray.anyscale.data._internal.cluster_autoscaler.cluster_limits_aware import (
-    clamp_resource_limits,
 )
 from ray.data._internal.cluster_autoscaler.base_cluster_autoscaler import (
     ClusterAutoscaler,
@@ -33,6 +28,7 @@ from ray.data._internal.execution.operators.base_physical_operator import (
 from ray.data._internal.execution.operators.hash_shuffle import (
     HashShufflingOperatorBase,
 )
+from ray.data._internal.util import get_max_task_capacity
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
@@ -42,55 +38,13 @@ if TYPE_CHECKING:
 logger = getLogger(__name__)
 
 
-class NodeType:
-    """Represents a node type available in the cluster."""
+def _to_resource_bundle(resources: ExecutionResources) -> Dict[str, float]:
+    """Convert ExecutionResources to a resource bundle dict for the autoscaler.
 
-    def __init__(self, resource_dict: Dict[str, float]):
-        # Remove object store memory because the autoscaler SDK doesn't work correctly
-        # with it.
-        self._resources = ExecutionResources.from_resource_dict(resource_dict)
-
-    def to_bundle(self, include_obj_store: bool) -> Dict[str, float]:
-        resources = self._resources
-        if not include_obj_store:
-            resources = resources.copy(object_store_memory=0)
-        return {k: v for k, v in resources.to_resource_dict().items() if v > 0}
-
-    def __hash__(self):
-        return hash(self._resources)
-
-    def __eq__(self, other):
-        return self._resources == other._resources
-
-    def __repr__(self):
-        return f"<NodeType {self._resources}>"
-
-    def can_schedule(self, res: ExecutionResources) -> bool:
-        """Check if this node can schedule the given resources."""
-        return res.satisfies_limit(self._resources)
-
-
-def _get_node_types_and_counts() -> Dict[NodeType, int]:
-    """Get the unique worker node types and their counts in the cluster."""
-    # TODO(hchen): Use the new API to get cluster scaling config
-    # when https://github.com/anyscale/rayturbo/issues/577 is done.
-
-    # Filter out the head node because we can't scale it.
-    # NOTE: Even though we filter the head node here, the streaming executor can
-    # usually still schedule tasks on a head-node-only cluster because we request all
-    # remaining resources when we submit a request to the autoscaling coordinator.
-    node_resources = [
-        node["Resources"]
-        for node in ray.nodes()
-        if node["Alive"] and "node:__internal_head__" not in node["Resources"]
-    ]
-
-    node_type_counts = defaultdict(int)
-    for r in node_resources:
-        node_type = NodeType(r)
-        node_type_counts[node_type] += 1
-
-    return node_type_counts
+    Excludes object_store_memory and filters out zero values.
+    """
+    resource_dict = resources.copy(object_store_memory=0).to_resource_dict()
+    return {k: v for k, v in resource_dict.items() if v > 0}
 
 
 class RateBasedClusterAutoscaler(ClusterAutoscaler):
@@ -113,8 +67,11 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
     # for smaller clusters and not too high to prevent scaling too many nodes
     # at a time. In english, this means "no more than 32 nodes can be provisioned
     # of a node type at a time"
-    DEFAULT_CLUSTER_SCALING_UP_MAX_DELTA: float = env_float(
-        "RAY_DATA_DEFAULT_CLUSTER_SCALING_UP_MAX_DELTA", 32.0
+    DEFAULT_CLUSTER_SCALING_UP_MAX_CPU_RESOURCE_DELTA: float = env_float(
+        "RAY_DATA_DEFAULT_CLUSTER_SCALING_UP_MAX_CPU_RESOURCE_DELTA", 256.0
+    )
+    DEFAULT_CLUSTER_SCALING_UP_MAX_GPU_RESOURCE_DELTA: float = env_float(
+        "RAY_DATA_DEFAULT_CLUSTER_SCALING_UP_MAX_GPU_RESOURCE_DELTA", 32.0
     )
     # Min number of seconds between two autoscaling requests.
     MIN_GAP_BETWEEN_AUTOSCALING_REQUESTS_S = env_integer(
@@ -139,16 +96,17 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         ops: List[SupportsClusterAutoscaling],
         resource_manager: "ResourceManager",
         execution_id: str,
+        topology: "Topology",
         bottleneck_detector: BottleneckDetector,
         *,
         max_cluster_limits: ExecutionResources,
         utility_calculator: ResourceUtilizationGauge,
         autoscaling_coordinator: Optional["AutoscalingCoordinator"] = None,
-        get_node_counts: Callable[[], Dict[NodeType, int]] = _get_node_types_and_counts,
         cluster_scaling_up_util_threshold: float = DEFAULT_CLUSTER_SCALING_UP_UTIL_THRESHOLD,  # noqa: E501
         cluster_scaling_up_gpu_threshold: float = DEFAULT_CLUSTER_GPU_SCALING_UP_UTIL_THRESHOLD,  # noqa: E501
         cluster_scaling_up_factor: float = DEFAULT_CLUSTER_SCALING_UP_FACTOR,
-        cluster_scaling_up_max_delta: float = DEFAULT_CLUSTER_SCALING_UP_MAX_DELTA,
+        cluster_scaling_up_max_cpu_resource_delta: float = DEFAULT_CLUSTER_SCALING_UP_MAX_CPU_RESOURCE_DELTA,
+        cluster_scaling_up_max_gpu_resource_delta: float = DEFAULT_CLUSTER_SCALING_UP_MAX_GPU_RESOURCE_DELTA,
         min_gap_between_autoscaling_requests_s: int = MIN_GAP_BETWEEN_AUTOSCALING_REQUESTS_S,
         autoscaling_request_expire_time_s: int = AUTOSCALING_REQUEST_EXPIRE_TIME_S,
     ):
@@ -159,6 +117,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             resource_manager: The resource manager.
             execution_id: The execution ID of the dataset. This is used to identify the
                 dataset when requesting resources.
+            topology: The topology of the operators.
             bottleneck_detector: The detector to identify the bottleneck operator.
             max_cluster_limits: Maximum cluster resource limits. Used to clamp resource
                 requests to ensure we don't exceed the maximum cluster capacity.
@@ -168,8 +127,6 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             autoscaling_coordinator: The `AutoscalingCoordinator` to request resources
                 from. This is exposed as a seam for testing. If not provided, this uses
                 the default coordinator.
-            get_node_counts: A function to get the number of nodes of each type. This
-                is exposed as a seam for testing.
             cluster_scaling_up_util_threshold: The cluster utilization threshold that
                 must be exceeded before scaling up. If average CPU or memory utilization
                 is below this threshold, the autoscaler will not scale up even if there
@@ -179,11 +136,10 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
                 is below this threshold, the autoscaler will not scale up even if there
                 is a bottleneck. Defaults to 0.75 (75%).
             cluster_scaling_up_factor: The factor to scale up the cluster.
-            cluster_scaling_up_max_delta: Maximum absolute increase in number of nodes
-                when scaling up. By default, because we scale the number of nodes by 2 every time,
-                the cluster size can experience unbounded growth, which is bad for cost savings
-                and resource management. By limiting the # of nodes added to the cluster, the resource
-                manager has time to accordingly adjust to the new cluster size.
+            cluster_scaling_up_max_cpu_resource_delta: Maximum absolute increase in CPU resource
+                when scaling up.
+            cluster_scaling_up_max_gpu_resource_delta: Maximum absolute increase in GPU resource
+                when scaling up.
             min_gap_between_autoscaling_requests_s: The minimum gap between two
                 autoscaling requests. This is exposed as a seam for testing.
             autoscaling_request_expire_time_s: The number of seconds before requested
@@ -196,14 +152,19 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
 
         self._ops = ops
         self._execution_id = execution_id
+        self._topology = topology
         self._resource_manager = resource_manager
         self._bottleneck_detector = bottleneck_detector
         self._max_cluster_limits = max_cluster_limits
         self._utility_calculator = utility_calculator
         self._autoscaling_coordinator = autoscaling_coordinator
-        self._get_node_counts = get_node_counts
         self._cluster_scaling_up_factor = cluster_scaling_up_factor
-        self._cluster_scaling_up_max_delta = cluster_scaling_up_max_delta
+        self._cluster_scaling_up_max_cpu_resource_delta = (
+            cluster_scaling_up_max_cpu_resource_delta
+        )
+        self._cluster_scaling_up_max_gpu_resource_delta = (
+            cluster_scaling_up_max_gpu_resource_delta
+        )
         self._min_gap_between_autoscaling_requests = (
             min_gap_between_autoscaling_requests_s
         )
@@ -248,6 +209,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         return RateBasedClusterAutoscaler(
             scalable_ops,
             execution_id=execution_id,
+            topology=topology,
             resource_manager=resource_manager,
             bottleneck_detector=bottleneck_detector,
             max_cluster_limits=max_cluster_limits,
@@ -267,6 +229,40 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             # Ray autoscaler will add nodes to the cluster.
             and not isinstance(op, (AllToAllOperator, HashShufflingOperatorBase))
         )
+
+    def _get_allocated_resource_bundles(
+        self, topology: "Topology"
+    ) -> List[Dict[str, float]]:
+        """Get the current cluster resources as a list of resource bundles.
+
+        This iterates over all operators in the topology (including those not eligible
+        for autoscaling) and calculates their current resource allocation in terms
+        of bundles.
+        """
+        resource_request = []
+
+        for op in topology:
+            # Skip operators that don't require resources (e.g. InputDataBuffer)
+            min_resources = op.min_scheduling_resources()
+            if min_resources == ExecutionResources.zero():
+                continue
+
+            # 1. Determine current bundle count for this op
+            # Try to get the specific allocation target from the allocator
+            allocation = self._resource_manager.op_resource_allocator.get_allocation(op)
+
+            # If the allocator doesn't track this op (e.g. Shuffle), fallback to current usage
+            if allocation is None:
+                allocation = self._resource_manager.get_op_usage(op)
+
+            # Convert allocation (Total Resources) -> Bundle Count
+            current_bundles = get_max_task_capacity(allocation, min_resources)
+
+            if current_bundles > 0:
+                bundle = _to_resource_bundle(min_resources)
+                resource_request.extend([bundle] * current_bundles)
+
+        return resource_request
 
     def try_trigger_scaling(self):
         # Limit the frequency of autoscaling requests.
@@ -302,8 +298,8 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         logger.debug(
             f"Average cluster util: (cpu={util.cpu}, "
             f"gpu={util.gpu}, "
-            f"object_store={util.object_store_memory}) "
-            f"threshold={self._cluster_scaling_up_util_threshold}"
+            f"object_store={util.object_store_memory}), "
+            f"threshold={self._cluster_scaling_up_util_threshold}, "
             f"gpu_threshold={self._cluster_scaling_up_gpu_util_threshold}"
         )
 
@@ -337,101 +333,63 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             self._send_resource_request([])
             return []
 
-        # 6. Find the nodes that will benefit the bottlenecked operator.
-        needed_node_types = self._find_needed_node_types(op=bottleneck_op)
+        # 6. Calculate the additional task num needed to scale up.
+        allocated_resources = (
+            self._resource_manager.op_resource_allocator.get_allocation(bottleneck_op)
+        )
+        maximum_task_capacity = get_max_task_capacity(
+            allocated_resources, min_scheduling_resources
+        )
+        target_task_num = math.ceil(
+            maximum_task_capacity * self._cluster_scaling_up_factor
+        )
+        additional_task_num = target_task_num - maximum_task_capacity
 
-        if not needed_node_types:
-            logger.warning(f"No existing node types can schedule {bottleneck_op}.")
-            # Still send an empty request when upscaling is not needed, to renew our
-            # registration on AutoscalingCoordinator.
-            self._send_resource_request([])
-            return []
+        # 7. Cap the additional bundles based on max resource deltas
+        max_additional_by_cpu = (
+            math.floor(
+                self._cluster_scaling_up_max_cpu_resource_delta
+                / min_scheduling_resources.cpu
+            )
+            if min_scheduling_resources.cpu > 0
+            else float("inf")
+        )
+        max_additional_by_gpu = (
+            math.floor(
+                self._cluster_scaling_up_max_gpu_resource_delta
+                / min_scheduling_resources.gpu
+            )
+            if min_scheduling_resources.gpu > 0
+            else float("inf")
+        )
+        capped_additional = int(
+            min(additional_task_num, max_additional_by_cpu, max_additional_by_gpu)
+        )
+        # Ensure at least 1 additional bundle if we have a bottleneck
+        capped_additional = max(capped_additional, 1)
 
-        node_type_request = self._create_node_type_request(needed_node_types)
-        # 6. Clamp resources to respect user resource_limits.
-        resource_request = clamp_resource_limits(
-            node_type_request=node_type_request,
-            max_cluster_limits=self._max_cluster_limits,
+        # 8. Calculate total bundle count (current + capped additional)
+        # AutoscalingCoordinator expects total resources, not incremental.
+        # We need to request resources for ALL operators, not just the bottleneck one.
+        resource_request = self._get_allocated_resource_bundles(self._topology)
+
+        # Add the additional bundles for the bottleneck operator
+        resource_bundle = _to_resource_bundle(min_scheduling_resources)
+
+        if capped_additional > 0:
+            resource_request.extend([resource_bundle] * capped_additional)
+
+        total_bundle_count = maximum_task_capacity + capped_additional
+
+        logger.debug(
+            f"Scaling bottleneck {bottleneck_op}: maximum_task_capacity={maximum_task_capacity}, "
+            f"additional_tasks={capped_additional}, total_bundle_count={total_bundle_count}, "
+            f"resource_bundle={resource_bundle}"
         )
 
-        # 7. Exclude Object Store becaue Autoscaler SDK doesn't work with obj store.
-        resource_request = [
-            r.to_bundle(include_obj_store=False) for r in resource_request
-        ]
         self._send_resource_request(resource_request)
 
-        return [ExecutionResources.from_resource_dict(r) for r in resource_request]
-
-    def _find_needed_node_types(
-        self,
-        op: SupportsClusterAutoscaling,
-    ) -> List[NodeType]:
-        """Find all the worker node types that can schedule the given operator."""
-
-        valid_worker_node_types: Set[NodeType] = set()
-
-        resource_requirement = op.min_scheduling_resources().copy(object_store_memory=0)
-        worker_node_type_counts = self._get_node_counts()
-
-        for worker_node_type in worker_node_type_counts:
-            if worker_node_type.can_schedule(resource_requirement):
-                valid_worker_node_types.add(worker_node_type)
-
-        is_head_node_only = len(worker_node_type_counts) == 0
-        if (
-            not valid_worker_node_types
-            # Don't emit a warning if the compute config doesn't contain worker nodes,
-            # because head-node-only clusters are common for small scale testing.
-            and not is_head_node_only
-        ):
-            # Convert the `ExecutionResources` object to a resource dict because that's
-            # the abstraction people use when configuring clusters, and filter out
-            # falsey values to improve readability.
-            min_scheduling_resources_dict = {
-                key: value
-                for key, value in op.min_scheduling_resources()
-                .to_resource_dict()
-                .items()
-                if value
-            }
-            logger.warning(
-                "The Ray Data autoscaler couldn't find any worker node types that "
-                f"can execute tasks for {op}. This can happen if you misconfigure your "
-                "cluster. To fix the warning, add a worker node type that satisfies "
-                f"these resource requirements: {min_scheduling_resources_dict}.",
-            )
-
-        return valid_worker_node_types
-
-    def _create_node_type_request(
-        self, needed_node_types: Set[NodeType]
-    ) -> List[NodeType]:
-        """Scale up the cluster by requesting resources for the needed node types."""
-
-        node_type_request: List[Dict[str, float]] = []
-        debug_msg = "Scaling up cluster. Requesting resources:"
-        node_type_counts = self._get_node_counts()
-        for node_type, count in node_type_counts.items():
-
-            if node_type in needed_node_types:
-                num_to_request = int(
-                    min(
-                        math.ceil(count * self._cluster_scaling_up_factor),
-                        self._cluster_scaling_up_max_delta,
-                    )
-                )
-                debug_msg += f" [{node_type.to_bundle(include_obj_store=True)}: {count} -> {num_to_request}]"
-            else:
-                num_to_request = count
-
-            node_type_request.extend([node_type] * num_to_request)
-
-        logger.debug(debug_msg)
-
-        # NOTE: We sort the resource request by str to get a deterministic ordering of nodes.
-        # This is important for clamping resources to limits.
-        node_type_request.sort(key=lambda x: str(x))
-        return node_type_request
+        return resource_request
 
     def _send_resource_request(self, resource_request: List[Dict[str, float]]):
         logger.debug(f"Sending Resource Request: {resource_request}")
