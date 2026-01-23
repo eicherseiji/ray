@@ -59,7 +59,7 @@ from ray.data._internal.util import (
 )
 from ray.data.context import DataContext
 from ray.data.dataset import Dataset
-from ray.data.datasource import FileMetadataProvider, Partitioning, PathPartitionFilter
+from ray.data.datasource import Partitioning, PathPartitionFilter
 from ray.data.datasource.file_based_datasource import FileShuffleConfig
 from ray.data.datasource.file_meta_provider import _handle_read_os_error
 from ray.data.datasource.path_util import (
@@ -942,7 +942,6 @@ def read_delta(
     num_gpus: Optional[float] = None,
     memory: Optional[float] = None,
     ray_remote_args: Dict[str, Any] = None,
-    meta_provider: Optional[FileMetadataProvider] = None,
     partition_filter: Optional[PathPartitionFilter] = None,
     partitioning: Optional[Partitioning] = Partitioning("hive"),
     shuffle: Union[Literal["files"], None] = None,
@@ -980,9 +979,6 @@ def read_delta(
             worker.
         memory: The heap memory in bytes to reserve for each parallel read worker.
         ray_remote_args: kwargs passed to :meth:`~ray.remote` in the read tasks.
-        meta_provider: A :ref:`file metadata provider <metadata_provider>`. Custom
-            metadata providers may be able to resolve file metadata more quickly and/or
-            accurately. In most cases you do not need to set this parameter.
         partition_filter: A
             :class:`~ray.data.datasource.partitioning.PathPartitionFilter`. Use
             with a custom callback to read only selected partitions of a dataset.
@@ -1044,7 +1040,6 @@ def read_delta(
         num_cpus=num_cpus,
         num_gpus=num_gpus,
         memory=memory,
-        meta_provider=meta_provider,
         partition_filter=partition_filter,
         partitioning=partitioning,
         shuffle=shuffle,
