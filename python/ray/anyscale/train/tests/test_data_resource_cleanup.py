@@ -4,11 +4,6 @@ from unittest.mock import MagicMock, create_autospec
 import pytest
 
 import ray.data
-from ray.data import DataContext
-from ray.data._internal.iterator.stream_split_iterator import (
-    SplitCoordinator,
-)
-
 from ray.anyscale.train._internal.callbacks.datasets import (
     AnyscaleDatasetShardProvider,
     DatasetsCallback,
@@ -16,6 +11,10 @@ from ray.anyscale.train._internal.callbacks.datasets import (
 from ray.anyscale.train._internal.data_integration.dataset_manager import DatasetManager
 from ray.anyscale.train.tests.test_dataset_manager import (
     get_dataset_shard_for_all_workers,
+)
+from ray.data import DataContext
+from ray.data._internal.iterator.stream_split_iterator import (
+    SplitCoordinator,
 )
 from ray.train.v2.tests.test_worker_group import _default_worker_group_context
 from ray.train.v2.tests.util import (

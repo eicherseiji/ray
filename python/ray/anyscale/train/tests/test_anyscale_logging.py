@@ -6,8 +6,8 @@ import pytest
 import ray
 from ray.runtime_context import get_runtime_context
 from ray.train.v2._internal.logging import LoggingManager
-from ray.train.v2.tests.util import create_dummy_run_context, create_dummy_train_context
 from ray.train.v2.tests.test_logging import get_file_contents
+from ray.train.v2.tests.util import create_dummy_run_context, create_dummy_train_context
 
 
 @pytest.fixture(name="worker_logging")

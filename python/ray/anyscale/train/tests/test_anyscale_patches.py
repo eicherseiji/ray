@@ -1,14 +1,14 @@
-import pytest
 import sys
 
-import ray.train
+import pytest
 
+import ray.train
 from ray.train.v2.tests.util import create_dummy_run_context
 
 
 def test_logging_manager():
-    from ray.train.v2._internal.logging import LoggingManager
     from ray.anyscale.train._internal.logging import AnyscaleLoggingManager
+    from ray.train.v2._internal.logging import LoggingManager
 
     assert LoggingManager is AnyscaleLoggingManager
 

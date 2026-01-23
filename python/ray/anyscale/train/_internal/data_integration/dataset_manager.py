@@ -3,7 +3,6 @@ import logging
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 import ray
-from ray.exceptions import GetTimeoutError
 from ray.anyscale.data.checkpoint.data_iterator_checkpointer import (
     RowIDBasedDataIteratorCheckpointer,
     RowIDBasedStateDict,
@@ -15,10 +14,11 @@ from ray.anyscale.data.checkpoint.interfaces import (
 from ray.anyscale.train._internal.data_integration.interfaces import (
     DatasetShardMetadata,
 )
+from ray.exceptions import GetTimeoutError
 from ray.train.v2._internal.data_integration.interfaces import GenDataset
 
 if TYPE_CHECKING:
-    from ray.data import DataContext, Dataset, DataIterator, NodeIdStr
+    from ray.data import DataContext, DataIterator, Dataset, NodeIdStr
 
 
 logger = logging.getLogger(__name__)
@@ -165,7 +165,7 @@ class DatasetManager:
         If there is no state dict provided, disable checkpoint restoration
         by setting the checkpoint file filter to an empty filter.
         """
-        from ray.data.datasource import PathPartitionFilter, PartitionStyle
+        from ray.data.datasource import PartitionStyle, PathPartitionFilter
 
         checkpoint_path_partition_filter = PathPartitionFilter.of(
             filter_fn=lambda _: False,

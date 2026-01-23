@@ -2,11 +2,11 @@ import asyncio
 
 import pytest
 
+import ray.data
 from ray.anyscale.train._internal.data_integration.dataset_manager import (
     DatasetManager,
     DatasetShardMetadata,
 )
-import ray.data
 from ray.data import DataContext
 from ray.data._internal.iterator.stream_split_iterator import StreamSplitDataIterator
 

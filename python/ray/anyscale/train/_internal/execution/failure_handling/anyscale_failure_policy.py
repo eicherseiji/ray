@@ -2,14 +2,14 @@ import logging
 from typing import Dict
 
 from ray.exceptions import RayActorError
-from ray.train.v2.api.exceptions import (
-    TrainingFailedError,
-    WorkerGroupError,
-)
 from ray.train.v2._internal.exceptions import WorkerHealthCheckFailedError
 from ray.train.v2._internal.execution.failure_handling import (
     DefaultFailurePolicy,
     FailureDecision,
+)
+from ray.train.v2.api.exceptions import (
+    TrainingFailedError,
+    WorkerGroupError,
 )
 
 logger = logging.getLogger(__name__)

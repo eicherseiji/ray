@@ -7,12 +7,12 @@ import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Callable
-from typing import Optional
+from typing import Callable, Dict, List, Optional
+
 import ray
 import ray.exceptions
-from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 from ray.autoscaler._private.constants import env_integer
+from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 logger = logging.getLogger(__name__)
 

@@ -7,17 +7,16 @@ from ray.train.v2._internal.callbacks.datasets import (
     DatasetsCallback as RayDatasetsCallback,
 )
 from ray.train.v2._internal.data_integration.interfaces import (
-    DatasetShardProvider,
     DatasetShardMetadata,
+    DatasetShardProvider,
     GenDataset,
 )
 from ray.train.v2._internal.execution.context import TrainRunContext
-from ray.train.v2._internal.execution.worker_group import Worker
-from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
-
 from ray.train.v2._internal.execution.worker_group import (
+    Worker,
     WorkerGroupContext,
 )
+from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 if TYPE_CHECKING:
     from ray.data import DataContext, DataIterator, NodeIdStr

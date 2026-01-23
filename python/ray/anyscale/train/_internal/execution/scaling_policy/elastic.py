@@ -17,8 +17,8 @@ from ray.train.v2._internal.execution.scaling_policy import (
     ScalingPolicy,
 )
 from ray.train.v2._internal.execution.worker_group import (
-    WorkerGroupState,
     WorkerGroupPollStatus,
+    WorkerGroupState,
 )
 from ray.train.v2._internal.util import time_monotonic
 from ray.train.v2.api.config import ScalingConfig

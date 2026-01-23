@@ -3,22 +3,21 @@ from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pyarrow.fs import LocalFileSystem
-from ray.data.datasource import FileShuffleConfig
 import pytest
+from pyarrow.fs import LocalFileSystem
 
-from ray.anyscale.train._internal.callbacks.datasets import DatasetsCallback
 import ray.data
 import ray.train
-from ray.train import DataConfig, DatasetCheckpointConfig
 import ray.train.collective
-from ray.train.v2.api.data_parallel_trainer import DataParallelTrainer
-
 from ray.anyscale.data.tests.test_data_iterator_checkpointer import (
     filter_state_dict,
     read_checkpoint_files_for_state_dict,
 )
+from ray.anyscale.train._internal.callbacks.datasets import DatasetsCallback
+from ray.data.datasource import FileShuffleConfig
+from ray.train import DataConfig, DatasetCheckpointConfig
 from ray.train.tests.util import create_dict_checkpoint, load_dict_checkpoint
+from ray.train.v2.api.data_parallel_trainer import DataParallelTrainer
 from ray.train.v2.tests.util import create_dummy_run_context
 
 
