@@ -951,6 +951,10 @@ class HAProxyManager(ProxyActorInterface):
 
         self._target_groups: List[TargetGroup] = []
 
+        # Lock to serialize HAProxy reloads and prevent concurrent reload operations
+        # which can cause race conditions with SO_REUSEPORT
+        self._reload_lock = asyncio.Lock()
+
         self.long_poll_client = long_poll_client or LongPollClient(
             ray.get_actor(SERVE_CONTROLLER_NAME, namespace=SERVE_NAMESPACE),
             {
@@ -1054,14 +1058,18 @@ class HAProxyManager(ProxyActorInterface):
                 f"Start to drain the HAProxy on node {self._node_id}.",
                 extra={"log_to_stderr": False},
             )
-            await self._haproxy.disable()
+            # Use the reload lock to serialize with other HAProxy reload operations
+            async with self._reload_lock:
+                await self._haproxy.disable()
             self._draining_start_time = time.time()
         if (not draining) and self._is_draining():
             logger.info(
                 f"Stop draining the HAProxy on node {self._node_id}.",
                 extra={"log_to_stderr": False},
             )
-            await self._haproxy.enable()
+            # Use the reload lock to serialize with other HAProxy reload operations
+            async with self._reload_lock:
+                await self._haproxy.enable()
             self._draining_start_time = None
 
     async def is_drained(self, _after: Optional[Any] = None) -> bool:
@@ -1140,8 +1148,10 @@ class HAProxyManager(ProxyActorInterface):
     async def _reload_haproxy(self) -> None:
         # To avoid dropping updates from a long poll, we wait until HAProxy
         # is up and running before attempting to generate config and reload.
-        await self._haproxy_start_task
-        await self._haproxy.reload()
+        # Use lock to serialize reloads and prevent race conditions with SO_REUSEPORT
+        async with self._reload_lock:
+            await self._haproxy_start_task
+            await self._haproxy.reload()
 
     def update_target_groups(self, target_groups: List[TargetGroup]) -> None:
         self._target_groups = target_groups
