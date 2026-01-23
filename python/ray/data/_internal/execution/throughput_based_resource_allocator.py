@@ -24,6 +24,7 @@ from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.resource_manager import (
     OpResourceAllocator,
 )
+from ray.data._internal.execution.util import memory_string
 from ray.data._internal.util import GiB, MiB
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,10 @@ if TYPE_CHECKING:
 
 class ThroughputBasedResourceAllocator(OpResourceAllocator):
 
-    _DEFAULT_EWMA_FACTOR = 0.9
+    # NOTE: This factor is chosen such that after 5 data-points
+    #       the weight of the 5th data-point in the mix becomes ~1%
+    _DEFAULT_EWMA_FACTOR = 0.5
+
     _ALLOCATION_PERIOD_S = 0.5
     _DUMP_DEBUG_STATE_PERIOD_S = 5
 
@@ -56,7 +60,8 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         self._op_budgets: Dict[PhysicalOperator, ExecutionResources] = {}
         self._op_allocations: Dict[PhysicalOperator, ExecutionResources] = {}
 
-        self._target_rate = 0.0
+        # NOTE: For numerical stability this is measured in MiB / s
+        self._target_throughput = 0.0
 
         # Per-operator productivity coefficients (CPU-s/MiB, GPU-s/MiB, HEAP-s/MiB)
         self._op_productivity: Dict[PhysicalOperator, Tuple[float, float, float]] = {}
@@ -117,6 +122,15 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         if op not in self._op_budgets:
             return None
 
+        # Do not throttle, when output queue (including ineligible ops) is empty
+        if (
+            self._resource_manager.get_mem_op_outputs(
+                op, include_ineligible_downstream=True
+            )
+            == 0
+        ):
+            return None
+
         remaining_budget = (
             round(self._op_budgets[op].object_store_memory)
             if not np.isinf(self._op_budgets[op].object_store_memory)
@@ -160,7 +174,7 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
             # Perform water-filling allocation
             (
                 allocatable_limits,
-                target_rate,
+                target_throughput,
                 op_allocations,
             ) = self._allocate_water_filling(
                 eligible_ops,
@@ -169,7 +183,7 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
                 limits,
             )
 
-            self._target_rate = target_rate
+            self._target_throughput = target_throughput
             self._op_allocations = op_allocations
             self._last_allocated_at = time.perf_counter()
 
@@ -418,9 +432,11 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("=== Water-Filling Allocator: Computing Target Rate ===")
             logger.debug(
-                f"Computed target throughput: {final_target_rate:.2f} MiB/s (CPU={cpu_limited_rate:.2f} MiB/s / GPU={gpu_limited_rate:.2f} MiB/s)"
+                f"Computed target throughput: {memory_string(final_target_rate)}/s (CPU={memory_string(cpu_limited_rate)}/s / GPU={memory_string(gpu_limited_rate)}/s)"
             )
-            logger.debug(f"Target rate (before capping): {target_rate=:.2f} MiB/s")
+            logger.debug(
+                f"Target throughput (before capping): {memory_string(target_rate)}/s"
+            )
             for op, cap in zip(allocatable_ops, max_rate_caps):
                 logger.debug(f"  {op}: {cap:.5f}")
 
@@ -439,7 +455,13 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         normalized_output_mibs = normalized_output_bytes / MiB
 
         # Calculate temporal productivity using normalized MiB
-        avg_task_dur_s = op.metrics.average_total_task_completion_time_s or 0
+        #
+        # NOTE: We're deliberately excluding back-pressure to avoid inflating
+        #       resource requirement of the operator in case when it's being, for ex,
+        #       output backpressured
+        avg_task_dur_s = (
+            op.metrics.average_task_completion_excl_backpressure_time_s or 0
+        )
 
         # Temporal productivity is measured in seconds / MiB, representing
         # how many seconds it takes current operator to produce 1 MiB of output
@@ -668,7 +690,9 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         logger.debug("=== Water-Filling Allocator: Allocation Complete ===")
         logger.debug(f"Total limits: {total_limits}")
         logger.debug(f"Allocatable limits: {allocatable_limits}")
-        logger.debug(f"Target rate: {self._target_rate:.2f} MiB/s")
+        logger.debug(
+            f"Target throughput: {memory_string(self._target_throughput * MiB)}/s"
+        )
 
         for op in eligible_ops:
             rows_expansion_ratio = (op.metrics.average_rows_outputs_per_task or 0) / (

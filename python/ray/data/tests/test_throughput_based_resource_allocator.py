@@ -671,7 +671,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Operator A
         metrics_a = Mock()
-        metrics_a.average_total_task_completion_time_s = 10.0
+        metrics_a.average_task_completion_excl_backpressure_time_s = 10.0
         metrics_a.average_rows_inputs_per_task = 100
         metrics_a.average_rows_outputs_per_task = 100
         metrics_a.average_bytes_inputs_per_task = 1000 * MiB
@@ -685,7 +685,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Operator B (contracts 2:1)
         metrics_b = Mock()
-        metrics_b.average_total_task_completion_time_s = 5.0
+        metrics_b.average_task_completion_excl_backpressure_time_s = 5.0
         metrics_b.average_rows_inputs_per_task = 100
         metrics_b.average_rows_outputs_per_task = 50
         metrics_b.average_bytes_inputs_per_task = 1000 * MiB
@@ -699,7 +699,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Operator C (contracts 2:1)
         metrics_c = Mock()
-        metrics_c.average_total_task_completion_time_s = 2.5
+        metrics_c.average_task_completion_excl_backpressure_time_s = 2.5
         metrics_c.average_rows_inputs_per_task = 50
         metrics_c.average_rows_outputs_per_task = 25
         metrics_c.average_bytes_inputs_per_task = 500 * MiB
@@ -752,7 +752,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Filter operator - contracts 10:1
         metrics_filter = Mock()
-        metrics_filter.average_total_task_completion_time_s = 8.0
+        metrics_filter.average_task_completion_excl_backpressure_time_s = 8.0
         metrics_filter.average_rows_inputs_per_task = 100
         metrics_filter.average_rows_outputs_per_task = 10
         metrics_filter.average_bytes_inputs_per_task = 1000 * MiB
@@ -768,7 +768,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Expand operator - expands 1:2
         metrics_expand = Mock()
-        metrics_expand.average_total_task_completion_time_s = 4.0
+        metrics_expand.average_task_completion_excl_backpressure_time_s = 4.0
         metrics_expand.average_rows_inputs_per_task = 10
         metrics_expand.average_rows_outputs_per_task = 20
         metrics_expand.average_bytes_inputs_per_task = 100 * MiB
@@ -826,7 +826,7 @@ class TestThroughputBasedResourceAllocator:
 
         # ReadFiles: has finished tasks with valid metrics
         metrics_read = Mock()
-        metrics_read.average_total_task_completion_time_s = 4.0
+        metrics_read.average_task_completion_excl_backpressure_time_s = 4.0
         metrics_read.average_rows_inputs_per_task = 10
         metrics_read.average_rows_outputs_per_task = 1000
         metrics_read.average_bytes_inputs_per_task = 500  # Small input (file listing)
@@ -839,7 +839,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Map: tasks submitted but none finished yet (all metrics are None)
         metrics_map = Mock()
-        metrics_map.average_total_task_completion_time_s = None
+        metrics_map.average_task_completion_excl_backpressure_time_s = None
         metrics_map.average_rows_inputs_per_task = None
         metrics_map.average_rows_outputs_per_task = None
         metrics_map.average_bytes_inputs_per_task = None
@@ -899,7 +899,7 @@ class TestThroughputBasedResourceAllocator:
         allocator = ThroughputBasedResourceAllocator(create_mock_resource_manager())
 
         metrics_a = Mock()
-        metrics_a.average_total_task_completion_time_s = 10.0
+        metrics_a.average_task_completion_excl_backpressure_time_s = 10.0
         metrics_a.average_rows_inputs_per_task = 100
         metrics_a.average_rows_outputs_per_task = 100
         metrics_a.average_bytes_inputs_per_task = 1000 * MiB
@@ -913,7 +913,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Shuffle operator with real metrics (non-zero task time and CPU allocation)
         metrics_shuffle = Mock()
-        metrics_shuffle.average_total_task_completion_time_s = 8.0
+        metrics_shuffle.average_task_completion_excl_backpressure_time_s = 8.0
         metrics_shuffle.average_rows_inputs_per_task = 100
         metrics_shuffle.average_rows_outputs_per_task = 100
         metrics_shuffle.average_bytes_inputs_per_task = 1000 * MiB
@@ -931,7 +931,7 @@ class TestThroughputBasedResourceAllocator:
 
         # Operator B - downstream from shuffle, cannot run until shuffle completes
         metrics_b = Mock()
-        metrics_b.average_total_task_completion_time_s = 5.0
+        metrics_b.average_task_completion_excl_backpressure_time_s = 5.0
         metrics_b.average_rows_inputs_per_task = 100
         metrics_b.average_rows_outputs_per_task = 50
         metrics_b.average_bytes_inputs_per_task = 1000 * MiB
@@ -1440,7 +1440,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         # Set up mock metrics to get deterministic allocations
         # o2: 10s task time, 1000 bytes in, 2000 bytes out (2x expansion)
         o2_metrics = Mock()
-        o2_metrics.average_total_task_completion_time_s = 10.0
+        o2_metrics.average_task_completion_excl_backpressure_time_s = 10.0
         o2_metrics.average_bytes_inputs_per_task = 1000
         o2_metrics.average_rows_inputs_per_task = 10
         o2_metrics.average_bytes_outputs_per_task = 2000
@@ -1450,7 +1450,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # o3: 5s task time, 2000 bytes in, 2000 bytes out (1x expansion)
         o3_metrics = Mock()
-        o3_metrics.average_total_task_completion_time_s = 5.0
+        o3_metrics.average_task_completion_excl_backpressure_time_s = 5.0
         o3_metrics.average_bytes_inputs_per_task = 2000
         o3_metrics.average_rows_inputs_per_task = 20
         o3_metrics.average_bytes_outputs_per_task = 2000
@@ -1526,7 +1526,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Set up mock metrics for deterministic allocations
         o2_metrics = Mock()
-        o2_metrics.average_total_task_completion_time_s = 10.0
+        o2_metrics.average_task_completion_excl_backpressure_time_s = 10.0
         o2_metrics.average_bytes_inputs_per_task = 1000
         o2_metrics.average_rows_inputs_per_task = 10
         o2_metrics.average_bytes_outputs_per_task = 2000
@@ -1624,7 +1624,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Set up mock metrics - only o2 is running (has outputs), o3 hasn't started
         o2_metrics = Mock()
-        o2_metrics.average_total_task_completion_time_s = 10.0
+        o2_metrics.average_task_completion_excl_backpressure_time_s = 10.0
         o2_metrics.average_bytes_inputs_per_task = 1000
         o2_metrics.average_rows_inputs_per_task = 10
         o2_metrics.average_bytes_outputs_per_task = 2000
@@ -1634,7 +1634,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # o3 hasn't started yet (no outputs)
         o3_metrics = Mock()
-        o3_metrics.average_total_task_completion_time_s = None
+        o3_metrics.average_task_completion_excl_backpressure_time_s = None
         o3_metrics.average_bytes_inputs_per_task = None
         o3_metrics.average_rows_inputs_per_task = None
         o3_metrics.average_bytes_outputs_per_task = None
@@ -1801,7 +1801,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Set up mock metrics for o2
         o2_metrics = Mock()
-        o2_metrics.average_total_task_completion_time_s = 10.0
+        o2_metrics.average_task_completion_excl_backpressure_time_s = 10.0
         o2_metrics.average_bytes_inputs_per_task = 1000
         o2_metrics.average_rows_inputs_per_task = 10
         o2_metrics.average_bytes_outputs_per_task = 2000
@@ -1818,7 +1818,7 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         # Set up mock metrics for o3 (GPU operator)
         o3_metrics = Mock()
-        o3_metrics.average_total_task_completion_time_s = 5.0
+        o3_metrics.average_task_completion_excl_backpressure_time_s = 5.0
         o3_metrics.average_bytes_inputs_per_task = 2000
         o3_metrics.average_rows_inputs_per_task = 20
         o3_metrics.average_bytes_outputs_per_task = 2000
@@ -1930,6 +1930,10 @@ class TestThroughputBasedResourceAllocatorE2E:
         # For operators not in budgets (InputDataBuffer), should return None
         assert allocator.max_task_output_bytes_to_read(o1) is None
 
+        # Set up some output memory usage (needed for throttling to be active)
+        resource_manager._mem_op_outputs[o2] = 100
+        resource_manager._mem_op_outputs[o3] = 100
+
         # o2's downstream hash-shuffle is *eligible*, hence it gets finite budget
         assert allocator.max_task_output_bytes_to_read(o2) == 500
 
@@ -1962,6 +1966,9 @@ class TestThroughputBasedResourceAllocatorE2E:
 
         global_limits = ExecutionResources(cpu=10, object_store_memory=1000)
         allocator.update_budgets(limits=global_limits)
+
+        # Set up some output memory usage (needed for throttling to be active)
+        resource_manager._mem_op_outputs[o2] = 100
 
         # o2 has downstream ineligible `AllToAllOperator`
         # so it gets infinite object store budget
