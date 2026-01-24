@@ -40,7 +40,8 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
     _DEFAULT_EWMA_FACTOR = 0.5
 
     _ALLOCATION_PERIOD_S = 0.5
-    _DUMP_DEBUG_STATE_PERIOD_S = 5
+    # TODO increase to 5s
+    _DUMP_DEBUG_STATE_PERIOD_S = 2
 
     """
     Water-filling resource allocator that equalizes throughput across operators.
@@ -70,7 +71,13 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         self._ema_factor = self._DEFAULT_EWMA_FACTOR
 
         self._last_allocated_at = 0
-        self._last_logged_state_at = 0
+
+        self._allocation_round = 0
+        # NOTE: For consistency of logging and avoid time-jitter we're basing
+        #       debug logging on the allocation rounds
+        self._debug_log_freq_rounds = math.ceil(
+            self._DUMP_DEBUG_STATE_PERIOD_S / self._ALLOCATION_PERIOD_S
+        )
 
     def can_submit_new_task(self, op: PhysicalOperator) -> bool:
         if op not in self._op_budgets:
@@ -229,6 +236,8 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         Perform water-filling allocation to equalize throughput across operators.
         Target throughput is expressed in MiB/second.
         """
+
+        self._allocation_round += 1
 
         op_allocations: Dict[PhysicalOperator, ExecutionResources] = {}
 
@@ -429,7 +438,7 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
 
         final_target_rate = min(target_rate, *max_rate_caps)
 
-        if logger.isEnabledFor(logging.DEBUG):
+        if self._should_debug_log():
             logger.debug("=== Water-Filling Allocator: Computing Target Rate ===")
             logger.debug(
                 f"Computed target throughput: {memory_string(final_target_rate)}/s (CPU={memory_string(cpu_limited_rate)}/s / GPU={memory_string(gpu_limited_rate)}/s)"
@@ -660,7 +669,7 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
             for op, w in zip(allocatable_ops, weights)
         }
 
-        if logger.isEnabledFor(logging.DEBUG):
+        if self._should_debug_log():
             logger.debug("=== Water-Filling Allocator: Object Store ===")
             logger.debug("Allocations:")
             for idx, op in enumerate(allocatable_ops):
@@ -680,11 +689,7 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         eligible_ops: list[PhysicalOperator],
         op_byte_expansion_ratios: Dict[PhysicalOperator, Optional[float]],
     ):
-        if (
-            not logger.isEnabledFor(logging.DEBUG)
-            or time.perf_counter() - self._last_logged_state_at
-            < self._DUMP_DEBUG_STATE_PERIOD_S
-        ):
+        if not self._should_debug_log():
             return
 
         logger.debug("=== Water-Filling Allocator: Allocation Complete ===")
@@ -723,6 +728,12 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
                 f"    Budget: CPU={budget.cpu:.1f} GPU={budget.gpu:.1f} "
                 f"Mem={budget.memory / GiB:.1f}GB OS={budget.object_store_memory / GiB:.1f}GB"
             )
+
+    def _should_debug_log(self):
+        return (
+            logger.isEnabledFor(logging.DEBUG)
+            and self._allocation_round % self._debug_log_freq_rounds == 1
+        )
 
 
 def _get_baseline_allocatable_ratios(
