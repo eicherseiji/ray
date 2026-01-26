@@ -452,6 +452,11 @@ def test_autoscaler_requests_correct_bundle_count(
     for bundle in result:
         assert bundle == expected_bundle
 
+    # Trigger scaling with low utilization. The cluster autoscaler should re-request the previous resources.
+    autoscaler._utility_calculator = StubUtilizationGauge(ExecutionResources(cpu=0.1))
+    requested_resources_low_util = autoscaler.try_trigger_scaling()
+    assert requested_resources_low_util == result
+
 
 @pytest.mark.parametrize(
     "max_resource_requirements,current_op_usage,min_scheduling_resources,should_scale",
@@ -520,7 +525,7 @@ def test_autoscaler_skips_scaling_when_at_max_schedulable_tasks(
         # Should scale - return non-empty list
         assert len(requested_resources) > 0
     else:
-        # Should not scale - return empty list because adding one more task would exceed max_op_limits
+        # Should not scale - return empty list
         assert requested_resources == []
 
 
