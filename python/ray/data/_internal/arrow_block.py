@@ -19,6 +19,10 @@ from packaging.version import parse as parse_version
 
 from ray._private.arrow_utils import get_pyarrow_version
 from ray._private.ray_constants import env_integer
+from ray.anyscale.data._internal.arrow_block import (
+    OptimizedArrowBlockMixin,
+    _OptimizedArrowRow,
+)
 from ray.data._internal.arrow_ops import transform_polars, transform_pyarrow
 from ray.data._internal.arrow_ops.transform_pyarrow import shuffle
 from ray.data._internal.row import row_repr, row_repr_pretty, row_str
@@ -210,8 +214,8 @@ def _get_max_chunk_size(
         return max(1, int(max_chunk_size_bytes / avg_row_size))
 
 
-class ArrowBlockAccessor(TableBlockAccessor):
-    ROW_TYPE = ArrowRow
+class ArrowBlockAccessor(OptimizedArrowBlockMixin, TableBlockAccessor):
+    ROW_TYPE = _OptimizedArrowRow
 
     def __init__(self, table: "pyarrow.Table"):
         if pyarrow is None:
@@ -219,9 +223,8 @@ class ArrowBlockAccessor(TableBlockAccessor):
         super().__init__(table)
         self._max_chunk_size: Optional[int] = None
 
-    def _get_row(self, index: int) -> ArrowRow:
-        base_row = self.slice(index, index + 1, copy=False)
-        return ArrowRow(base_row)
+    def _get_row(self, index: int) -> _OptimizedArrowRow:
+        return self.ROW_TYPE(self._table, index)
 
     def column_names(self) -> List[str]:
         return self._table.column_names
@@ -250,7 +253,7 @@ class ArrowBlockAccessor(TableBlockAccessor):
 
     @staticmethod
     def _build_tensor_row(
-        row: ArrowRow, row_idx: int, col_name: str = TENSOR_COLUMN_NAME
+        row: _OptimizedArrowRow, row_idx: int, col_name: str = TENSOR_COLUMN_NAME
     ) -> np.ndarray:
 
         element = row[col_name][row_idx]
@@ -612,5 +615,5 @@ class ArrowBlockColumnAccessor(BlockColumnAccessor):
 
         return self._column.to_numpy(zero_copy_only=zero_copy_only)
 
-    def _as_arrow_compatible(self) -> Union[List[Any], "pyarrow.Array"]:
+    def _to_arrow_compatible_container(self) -> Union[List[Any], "pyarrow.Array"]:
         return self._column
