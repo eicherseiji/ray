@@ -4,7 +4,9 @@ from .base import (
     BaseBundleQueue,
     QueueWithRemoval,
 )
+from .fifo import FIFOBundleQueue
 from .hash_link import HashLinkedQueue
+from .ordered import ReorderingBundleQueue
 from ray.data.context import DataContext
 
 
@@ -30,6 +32,8 @@ def create_bundle_queue() -> QueueWithRemoval:
 __all__ = [
     "BaseBundleQueue",
     "create_bundle_queue",
+    "ReorderingBundleQueue",
+    "FIFOBundleQueue",
     "QueueWithRemoval",
     "HashLinkedQueue",
 ]
