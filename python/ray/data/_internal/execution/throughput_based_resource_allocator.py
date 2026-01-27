@@ -403,11 +403,11 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         #
         # Which yields:
         #
-        #   target_rate * sum(resource-productivity-factor_i) = total-resource
+        #   target_rate_mib_s * sum(resource-productivity-factor_i) = total-resource
         #
         # And hence:
         #
-        #   target_rate = total-resource / sum(resource-productivity-factor_i)
+        #   target_rate_mib_s = total-resource / sum(resource-productivity-factor_i)
         #
         # Where
         #   - resource-alloc_i: Allocation of resource R to an i-th operator
@@ -419,16 +419,16 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
         cumulative_beta = sum(op_productivity_rates[op][1] for op in allocatable_ops)
 
         # Calculate target rate (throughput) based on available CPUs
-        cpu_limited_rate = (
+        cpu_limited_rate_mib_s = (
             limits.cpu / cumulative_alpha if cumulative_alpha > 0 else float("inf")
         )
         # Cap it based on available GPUs
         if limits.gpu and limits.gpu > 0 and cumulative_beta > 0:
-            gpu_limited_rate = limits.gpu / cumulative_beta
+            gpu_limited_rate_mib_s = limits.gpu / cumulative_beta
         else:
-            gpu_limited_rate = float("inf")
+            gpu_limited_rate_mib_s = float("inf")
 
-        target_rate = min(cpu_limited_rate, gpu_limited_rate)
+        target_rate_mib_s = min(cpu_limited_rate_mib_s, gpu_limited_rate_mib_s)
 
         # Apply operator-specific rate caps
         max_rate_caps = [
@@ -436,20 +436,20 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
             for op in allocatable_ops
         ]
 
-        final_target_rate = min(target_rate, *max_rate_caps)
+        final_target_rate_mib_s = min(target_rate_mib_s, *max_rate_caps)
 
         if self._should_debug_log():
             logger.debug("=== Water-Filling Allocator: Computing Target Rate ===")
             logger.debug(
-                f"Computed target throughput: {memory_string(final_target_rate)}/s (CPU={memory_string(cpu_limited_rate)}/s / GPU={memory_string(gpu_limited_rate)}/s)"
+                f"Computed target throughput: {memory_string(final_target_rate_mib_s * MiB)}/s (CPU={memory_string(cpu_limited_rate_mib_s * MiB)}/s / GPU={memory_string(gpu_limited_rate_mib_s * MiB)}/s)"
             )
             logger.debug(
-                f"Target throughput (before capping): {memory_string(target_rate)}/s"
+                f"Target throughput (before capping): {memory_string(target_rate_mib_s * MiB)}/s"
             )
             for op, cap in zip(allocatable_ops, max_rate_caps):
                 logger.debug(f"  {op}: {cap:.5f}")
 
-        return final_target_rate
+        return final_target_rate_mib_s
 
     @classmethod
     def _estimate_temporal_productivity(
