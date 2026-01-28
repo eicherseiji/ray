@@ -5,12 +5,12 @@ import numpy as np
 import pyarrow as pa
 from packaging.version import parse as parse_version
 
-from ray._private.arrow_utils import get_pyarrow_version
 from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_FILE_FRAGMENTS_TYPE,
     CheckpointFragmentsInfo,
 )
 from ray.data._internal.logical.interfaces import LogicalOperator, SourceOperator
+from ray.data._internal.utils.arrow_utils import get_pyarrow_version
 from ray.data.block import Block, BlockAccessor, BlockColumnAccessor
 from ray.data.datasource import PathPartitionFilter
 from ray.data.datasource.file_based_datasource import FileShuffleConfig

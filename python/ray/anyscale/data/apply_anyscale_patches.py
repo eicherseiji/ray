@@ -1,8 +1,8 @@
 from dataclasses import fields
 
 import ray
-from ray._private.arrow_utils import get_pyarrow_version
 from ray._private.ray_constants import env_bool
+from ray.data._internal.utils.arrow_utils import get_pyarrow_version
 
 ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS = env_bool(
     "ANYSCALE_ENABLE_AGGREGATION_BASED_PREPROCESSORS", True

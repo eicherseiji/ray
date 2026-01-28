@@ -13,7 +13,6 @@ from typing import (
 
 import numpy as np
 
-from ray._private.arrow_utils import get_pyarrow_version
 from ray.anyscale.data._internal.util.numpy import find_insertion_index
 from ray.anyscale.data.aggregate_vectorized import (
     MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS,
@@ -23,6 +22,7 @@ from ray.data._internal.arrow_ops.transform_pyarrow import (
     concat_and_sort,
 )
 from ray.data._internal.table_block import TableBlockAccessor
+from ray.data._internal.utils.arrow_utils import get_pyarrow_version
 from ray.data.aggregate import AggregateFn
 from ray.data.block import (
     AggType,

@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import ray
-from ray._private.arrow_utils import get_pyarrow_version
 from ray.anyscale.data._internal.location_aware_bundle_queue import (
     LocationAwareBundleQueue,
 )
@@ -25,6 +24,7 @@ from ray.data._internal.execution.bundle_queue import (
 from ray.data._internal.execution.execution_callback import (
     EXECUTION_CALLBACKS_CONFIG_KEY,
 )
+from ray.data._internal.utils.arrow_utils import get_pyarrow_version
 from ray.tests.conftest import *  # noqa
 
 

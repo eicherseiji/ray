@@ -7,7 +7,6 @@ import pytest
 from pyarrow import compute as pac
 
 import ray
-from ray._private.arrow_utils import get_pyarrow_version
 from ray.anyscale.data._internal.block import OptimizedTableBlockMixin
 from ray.anyscale.data.aggregate_vectorized import (
     MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS,
@@ -19,6 +18,7 @@ from ray.data._internal.execution.operators.hash_aggregate import (
 )
 from ray.data._internal.logical.interfaces import LogicalOperator
 from ray.data._internal.tensor_extensions.arrow import _convert_to_pyarrow_native_array
+from ray.data._internal.utils.arrow_utils import get_pyarrow_version
 from ray.data.aggregate import (
     AbsMax,
     Count,

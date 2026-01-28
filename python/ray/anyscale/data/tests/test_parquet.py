@@ -11,7 +11,6 @@ from packaging.version import parse as parse_version
 from pyarrow.fs import FileSystemHandler, LocalFileSystem, PyFileSystem
 
 import ray
-from ray._private.arrow_utils import get_pyarrow_version
 from ray.anyscale.data._internal.logical.operators.list_files_operator import (
     FileManifest,
 )
@@ -27,6 +26,7 @@ from ray.anyscale.data.checkpoint.util import (
     get_checkpoint_fragments_info_for_file,
     normalize_id,
 )
+from ray.data._internal.utils.arrow_utils import get_pyarrow_version
 from ray.data.context import MAX_SAFE_BLOCK_SIZE_FACTOR
 from ray.data.tests.conftest import *  # noqa
 

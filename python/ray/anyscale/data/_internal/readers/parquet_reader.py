@@ -29,7 +29,6 @@ from .in_memory_size_estimator import (
     InMemorySizeEstimator,
 )
 from .supports_metadata import MetadataType, SupportsMetadata, SupportsSchema
-from ray._private.arrow_utils import get_pyarrow_version
 from ray._private.ray_constants import env_bool, env_integer
 from ray.anyscale.data._internal.file_indexer import (
     ChunkMetadata,
@@ -61,6 +60,7 @@ from ray.data._internal.util import (
     iterate_with_retry,
     make_async_gen,
 )
+from ray.data._internal.utils.arrow_utils import get_pyarrow_version
 from ray.data.block import Block, BlockMetadata, DataBatch, Schema
 from ray.data.context import MAX_SAFE_BLOCK_SIZE_FACTOR, DataContext
 from ray.data.datasource import Partitioning, PathPartitionParser
