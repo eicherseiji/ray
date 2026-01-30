@@ -13,8 +13,10 @@ import grpc
 import pytest
 from ray._common.test_utils import SignalActor
 from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
+)
+from ray.serve._private.constants import (
+    RAY_SERVE_ENABLE_DIRECT_INGRESS,
 )
 from ray.serve._private.test_utils import get_application_url
 import httpx
@@ -472,7 +474,7 @@ def test_tracing_e2e(
     assert replica_filename and proxy_filename and upstream_filename
 
     upstream_spans = load_spans(os.path.join(spans_dir, upstream_filename))
-    if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if not RAY_SERVE_ENABLE_DIRECT_INGRESS:
         proxy_spans = load_spans(os.path.join(spans_dir, proxy_filename))
     else:
         proxy_spans = []
@@ -482,7 +484,7 @@ def test_tracing_e2e(
     validate_span_associations_in_trace(entire_trace)
 
     expected_upstream_spans = load_json_fixture(expected_upstream_spans_path)
-    if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if not RAY_SERVE_ENABLE_DIRECT_INGRESS:
         expected_proxy_spans = load_json_fixture(expected_proxy_spans_path)
     else:
         expected_proxy_spans = []
@@ -673,7 +675,7 @@ def test_tracing_e2e_with_errors(
     assert replica_filename and proxy_filename and upstream_filename
 
     # Load and check spans
-    if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if not RAY_SERVE_ENABLE_DIRECT_INGRESS:
         proxy_spans = load_spans(os.path.join(spans_dir, proxy_filename))
     else:
         proxy_spans = []

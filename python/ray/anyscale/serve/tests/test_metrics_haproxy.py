@@ -5,7 +5,7 @@ These tests verify that Ray Serve metrics work correctly when HAProxy is enabled
 as a replacement for the default Serve HTTP proxy.
 
 Key differences from the default Serve proxy:
-1. When HAProxy is enabled, ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS is automatically set.
+1. When HAProxy is enabled, RAY_SERVE_ENABLE_DIRECT_INGRESS is automatically set.
 2. HTTP proxy metrics (serve_num_http_requests, etc.) are emitted from replicas when
    they receive direct ingress requests from HAProxy.
 3. 404 errors for non-existent routes are handled by HAProxy itself (not forwarded to

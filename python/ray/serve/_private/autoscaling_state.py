@@ -3,9 +3,6 @@ import time
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
-)
 from ray.serve._private.common import (
     RUNNING_REQUESTS_KEY,
     ApplicationName,
@@ -21,6 +18,7 @@ from ray.serve._private.common import (
 )
 from ray.serve._private.constants import (
     RAY_SERVE_AGGREGATE_METRICS_AT_CONTROLLER,
+    RAY_SERVE_ENABLE_DIRECT_INGRESS,
     RAY_SERVE_MIN_HANDLE_METRICS_TIMEOUT_S,
     SERVE_LOGGER_NAME,
 )
@@ -654,8 +652,7 @@ class DeploymentAutoscalingState:
             True if metrics should be aggregated at the controller, False otherwise.
         """
         return (
-            RAY_SERVE_AGGREGATE_METRICS_AT_CONTROLLER
-            or ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
+            RAY_SERVE_AGGREGATE_METRICS_AT_CONTROLLER or RAY_SERVE_ENABLE_DIRECT_INGRESS
         )
 
     def get_total_num_requests(self) -> float:

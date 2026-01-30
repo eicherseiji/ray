@@ -1,17 +1,18 @@
 import asyncio
+
 import httpx
 import pytest
 
 from ray import serve
 from ray._common.test_utils import SignalActor
-from ray.serve.config import HTTPOptions
-from ray.serve.tests.conftest import *  # noqa
 from ray.serve._private.constants import (
     RAY_SERVE_ENABLE_DIRECT_INGRESS,
     SERVE_HTTP_REQUEST_DISCONNECT_DISABLED_HEADER,
     SERVE_HTTP_REQUEST_TIMEOUT_S_HEADER,
 )
 from ray.serve._private.test_utils import get_application_url
+from ray.serve.config import HTTPOptions
+from ray.serve.tests.conftest import *  # noqa
 
 
 @pytest.fixture

@@ -9,7 +9,10 @@ import pytest
 import ray
 from ray import serve
 from ray._common.test_utils import SignalActor
-from ray.serve._private.constants import SERVE_NAMESPACE
+from ray.serve._private.constants import (
+    RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    SERVE_NAMESPACE,
+)
 from ray.serve._private.test_utils import (
     get_application_url,
     ping_fruit_stand,
@@ -25,13 +28,6 @@ from ray.serve.config import gRPCOptions
 from ray.serve.generated import serve_pb2, serve_pb2_grpc
 from ray.serve.grpc_util import RayServegRPCContext
 from ray.serve.tests.test_config_files.grpc_deployment import g, g2
-
-# isort: off
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
-)
-
-# isort: on
 
 
 def test_serving_grpc_requests(ray_cluster):
@@ -239,7 +235,7 @@ def test_grpc_request_timeouts(ray_instance, ray_shutdown, streaming: bool):
     unary and streaming request.
     """
     # TODO(landscapepainter): This skipping mechanism needs to be removed when gRPC streaming for DI is implemented.
-    if streaming and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if streaming and RAY_SERVE_ENABLE_DIRECT_INGRESS:
         pytest.skip()
 
     grpc_port = 9000
@@ -305,7 +301,7 @@ def test_grpc_request_internal_error(ray_instance, ray_shutdown, streaming: bool
     message in the response for both unary and streaming request.
     """
     # TODO(landscapepainter): This skipping mechanism needs to be removed when gRPC streaming for DI is implemented.
-    if streaming and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if streaming and RAY_SERVE_ENABLE_DIRECT_INGRESS:
         pytest.skip()
 
     grpc_port = 9000
@@ -356,7 +352,7 @@ async def test_grpc_request_cancellation(ray_instance, ray_shutdown, streaming: 
     When the request is canceled, gRPC proxy should cancel the underlying task.
     """
     # TODO(landscapepainter): This skipping mechanism needs to be removed when gRPC streaming for DI is implemented.
-    if streaming and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if streaming and RAY_SERVE_ENABLE_DIRECT_INGRESS:
         pytest.skip()
 
     grpc_port = 9000
@@ -421,7 +417,7 @@ def test_using_grpc_context(ray_instance, ray_shutdown, streaming: bool):
     the response will reflect those values.
     """
     # TODO(landscapepainter): This skipping mechanism needs to be removed when gRPC streaming for DI is implemented.
-    if streaming and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if streaming and RAY_SERVE_ENABLE_DIRECT_INGRESS:
         pytest.skip()
 
     grpc_port = 9000
@@ -492,7 +488,7 @@ def test_using_grpc_context_exception(ray_instance, ray_shutdown, streaming: boo
     exception, the user-defined status code should be preserved in the response.
     """
     # TODO(landscapepainter): This skipping mechanism needs to be removed when gRPC streaming for DI is implemented.
-    if streaming and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if streaming and RAY_SERVE_ENABLE_DIRECT_INGRESS:
         pytest.skip()
 
     grpc_port = 9000
@@ -620,7 +616,7 @@ def test_using_grpc_context_bad_function_signature(
     the response will reflect those values.
     """
     # TODO(landscapepainter): This skipping mechanism needs to be removed when gRPC streaming for DI is implemented.
-    if streaming and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if streaming and RAY_SERVE_ENABLE_DIRECT_INGRESS:
         pytest.skip()
 
     grpc_port = 9000

@@ -37,6 +37,7 @@ from ray.serve._private.config import DeploymentConfig
 from ray.serve._private.constants import (
     DEFAULT_LATENCY_BUCKET_MS,
     MAX_PER_REPLICA_RETRY_COUNT,
+    RAY_SERVE_ENABLE_DIRECT_INGRESS,
     RAY_SERVE_ENABLE_TASK_EVENTS,
     RAY_SERVE_FAIL_ON_RANK_ERROR,
     RAY_SERVE_FORCE_STOP_UNHEALTHY_REPLICAS,
@@ -80,7 +81,6 @@ from ray.util.placement_group import PlacementGroup
 
 # isort: off
 from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
     ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S,
 )
 
@@ -271,7 +271,7 @@ if _ray_serve_disable_force_kill_env is not None:
         _ray_serve_disable_force_kill_env == "1"
     )
     if (
-        ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
+        RAY_SERVE_ENABLE_DIRECT_INGRESS
         and not RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY
     ):
         logger.warning(
@@ -280,11 +280,11 @@ if _ray_serve_disable_force_kill_env is not None:
         )
 else:
     # If not explicitly set, default based on direct ingress mode
-    if ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+    if RAY_SERVE_ENABLE_DIRECT_INGRESS:
         RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = True
         logger.info(
             "Setting RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY to True "
-            "because ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS is set to True."
+            "because RAY_SERVE_ENABLE_DIRECT_INGRESS is set to True."
         )
     else:
         RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = False

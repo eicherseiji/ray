@@ -1,37 +1,35 @@
 import asyncio
-import grpc
-import httpx
 import json
 import os
-import pytest
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI
-from starlette.requests import Request
-from starlette.responses import PlainTextResponse
 from typing import Optional, Tuple
 from uuid import UUID
 
+import grpc
+import httpx
+import pytest
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
+
 import ray
 from ray import serve
-from ray.actor import ActorHandle
-from ray._common.test_utils import SignalActor, Semaphore
+from ray._common.test_utils import Semaphore, SignalActor
 from ray._private.test_utils import wait_for_condition
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
-    RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT,
-    RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT,
-    RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT,
-    RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
-    RAY_SERVE_ENABLE_DIRECT_INGRESS,
-)
+from ray.actor import ActorHandle
 from ray.dashboard.modules.serve.sdk import ServeSubmissionClient
 from ray.serve._private.common import DeploymentID
 from ray.serve._private.config import DeploymentConfig
 from ray.serve._private.constants import (
     DEFAULT_AUTOSCALING_POLICY_NAME,
     HEALTHY_MESSAGE,
+    RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT,
+    RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT,
+    RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT,
+    RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
+    RAY_SERVE_ENABLE_DIRECT_INGRESS,
     SERVE_DEFAULT_APP_NAME,
 )
 from ray.serve._private.deployment_info import DeploymentInfo
@@ -39,10 +37,10 @@ from ray.serve._private.test_utils import (
     check_deployment_status,
     check_num_replicas_gte,
     check_num_replicas_lte,
-    get_application_urls,
     get_application_url,
-    send_signal_on_cancellation,
+    get_application_urls,
     ping_grpc_list_applications,
+    send_signal_on_cancellation,
 )
 from ray.serve.autoscaling_policy import default_autoscaling_policy
 from ray.serve.config import ProxyLocation
@@ -81,9 +79,9 @@ def _skip_if_ff_not_enabled():
 
 @pytest.fixture
 def _skip_if_haproxy_enabled():
-    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+    if False:
         pytest.skip(
-            reason="ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY is set.",
+            reason="HAProxy is enabled.",
         )
 
 
@@ -94,7 +92,7 @@ def _shared_serve_instance():
     env_var_name = "RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S"
     original_value = os.environ.get(env_var_name)
 
-    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+    if False:
         # Setting a longer minimum draining period ensures that the client connecting
         # to the uvicorn server closes the connection first. This prevents the socket
         # used by the uvicorn server from entering the TIME_WAIT tcp state, which blocks
@@ -833,8 +831,8 @@ def test_crashed_replica_port_is_released_and_reused(
     pids = [replica.pid for replica in replicas]
 
     # kill the replicas
-    import signal
     import os
+    import signal
 
     # force kill the replicas
     os.kill(pids[0], signal.SIGKILL)
@@ -1064,16 +1062,8 @@ def test_only_running_apps_are_used_for_target_groups(
     grpc_ports = get_grpc_ports(first_only=False)
     # In HAProxy mode, we don't return itself or the Serve proxy as a target yet.
     # This will change when we support scale to/from zero.
-    assert (
-        set(http_ports) == {30000, 30001}
-        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
-        else {30000, 30001, 8000}
-    )
-    assert (
-        set(grpc_ports) == {40000, 40001}
-        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
-        else {40000, 40001, 9000}
-    )
+    assert set(http_ports) == {30000, 30001} if False else {30000, 30001, 8000}
+    assert set(grpc_ports) == {40000, 40001} if False else {40000, 40001, 9000}
 
     ray.get(signal_actor.send.remote())
 
@@ -2386,35 +2376,31 @@ def test_get_serve_instance_details_json_serializable(
                     "targets": [
                         {
                             "ip": node_ip,
-                            "port": 8000
-                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
-                            else 30000,
+                            "port": 8000 if False else 30000,
                             "instance_id": node_instance_id,
                             "name": proxy_details.actor_name
-                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+                            if False
                             else replica.actor_name,
                         },
                     ],
                     "route_prefix": "/",
                     "protocol": "HTTP",
-                    "app_name": "" if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY else "default",
+                    "app_name": "" if False else "default",
                 },
                 {
                     "targets": [
                         {
                             "ip": node_ip,
-                            "port": 9000
-                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
-                            else 40000,
+                            "port": 9000 if False else 40000,
                             "instance_id": node_instance_id,
                             "name": proxy_details.actor_name
-                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+                            if False
                             else replica.actor_name,
                         },
                     ],
                     "route_prefix": "/",
                     "protocol": "gRPC",
-                    "app_name": "" if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY else "default",
+                    "app_name": "" if False else "default",
                 },
             ],
         }

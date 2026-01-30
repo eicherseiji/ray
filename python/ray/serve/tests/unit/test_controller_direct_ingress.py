@@ -1,9 +1,9 @@
 import asyncio
-from unittest import mock
-import pytest
 from typing import Dict, List, Optional
+from unittest import mock
 
-from ray.anyscale.serve._private.controller import AnyscaleServeController
+import pytest
+
 from ray.serve._private.common import (
     DeploymentID,
     DeploymentStatus,
@@ -13,6 +13,7 @@ from ray.serve._private.common import (
     RequestProtocol,
     RunningReplicaInfo,
 )
+from ray.serve._private.controller import ServeController
 from ray.serve._private.node_port_manager import NodePortManager
 from ray.serve.config import HTTPOptions, gRPCOptions
 from ray.serve.schema import (
@@ -181,7 +182,7 @@ class FakeDeploymentStateManager:
 
 
 # Test Controller that overrides methods and dependencies
-class FakeDirectIngressController(AnyscaleServeController):
+class FakeDirectIngressController(ServeController):
     def __init__(
         self,
         kv_store,
@@ -197,7 +198,6 @@ class FakeDirectIngressController(AnyscaleServeController):
         self.deployment_state_manager = deployment_state_manager
         self.proxy_state_manager = proxy_state_manager
         self._direct_ingress_enabled = True
-        self._ha_proxy_enabled = False
         self._controller_node_id = "head_node_id"
 
         self._shutting_down = False
@@ -262,7 +262,6 @@ def test_direct_ingress_is_disabled(
 ):
     """Test that get_target_groups returns empty list when direct ingress is disabled."""
     direct_ingress_controller._direct_ingress_enabled = False
-    direct_ingress_controller._ha_proxy_enabled = False
     target_groups = direct_ingress_controller.get_target_groups()
     assert target_groups == []
 

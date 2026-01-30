@@ -162,8 +162,13 @@ RAY_SERVE_PRESTART_PG_WORKERS_KEEP_ALIVE_S = int(
 
 # Feature flag to enable a limited form of direct ingress where ingress applications
 # listen on port 8000 (HTTP) and 9000 (gRPC). No proxies will be started.
-ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = (
-    os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "0") == "1"
+# Check OSS env var first, then anyscale-specific one for backwards compatibility.
+RAY_SERVE_ENABLE_DIRECT_INGRESS = (
+    os.environ.get(
+        "RAY_SERVE_ENABLE_DIRECT_INGRESS",
+        os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "0"),
+    )
+    == "1"
 )
 RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT = int(
     os.environ.get("RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT", "30000")
@@ -181,8 +186,12 @@ RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT = int(
     os.environ.get("RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT", "100")
 )
 # The minimum drain period for a HTTP proxy.
-ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S = float(
-    os.environ.get("ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S", "30")
+# Check OSS env var first, then anyscale-specific one for backwards compatibility.
+RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S = float(
+    os.environ.get(
+        "RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S",
+        os.environ.get("ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S", "30"),
+    )
 )
 
 # Feature flag to enable freezing the garbage collector on startup.
@@ -192,13 +201,17 @@ ANYSCALE_FREEZE_GC_ON_STARTUP = (
 
 # Direct ingress must be enabled if HAProxy is enabled.
 if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
-    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = True
+    RAY_SERVE_ENABLE_DIRECT_INGRESS = True
 
 # If throughput optimized Ray Serve is enabled, enable the following flags
 # unless they are explicitly set.
 if os.environ.get("RAY_SERVE_THROUGHPUT_OPTIMIZED", "0") == "1":
-    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS = (
-        os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "1") == "1"
+    RAY_SERVE_ENABLE_DIRECT_INGRESS = (
+        os.environ.get(
+            "RAY_SERVE_ENABLE_DIRECT_INGRESS",
+            os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "1"),
+        )
+        == "1"
     )
     ANYSCALE_FREEZE_GC_ON_STARTUP = (
         os.environ.get("ANYSCALE_FREEZE_GC_ON_STARTUP", "1") == "1"

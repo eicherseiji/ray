@@ -28,9 +28,9 @@ import ray
 from ray.anyscale.serve._private.http_util import ASGIDIReceiveProxy
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
-    ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S,
     RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
-    ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S,
+    RAY_SERVE_ENABLE_DIRECT_INGRESS,
 )
 from ray.anyscale.serve._private.tracing_utils import (
     TraceContextManager,
@@ -239,7 +239,7 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
 
     @property
     def _is_direct_ingress(self) -> bool:
-        return self._ingress and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS
+        return self._ingress and RAY_SERVE_ENABLE_DIRECT_INGRESS
 
     def _init_ingress_request_counter(self, protocol: str):
         return metrics.Counter(
@@ -516,7 +516,7 @@ class AnyscaleReplica(ReplicaBase):
         return self._deployment_config.max_queued_requests
 
     async def _maybe_start_direct_ingress_servers(self):
-        if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS:
+        if not RAY_SERVE_ENABLE_DIRECT_INGRESS:
             return
 
         if not self._ingress:
@@ -733,7 +733,7 @@ class AnyscaleReplica(ReplicaBase):
                     multiplexed_model_id=request_metadata.multiplexed_model_id,
                     grpc_context=request_metadata.grpc_context,
                     cancel_on_parent_request_cancel=self._ingress
-                    and ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS,
+                    and RAY_SERVE_ENABLE_DIRECT_INGRESS,
                     _ray_trace_ctx=ray_trace_ctx,
                 )
             )
@@ -752,17 +752,9 @@ class AnyscaleReplica(ReplicaBase):
         super()._record_errors_and_metrics(
             user_exception, status_code, latency_ms, request_metadata
         )
-        if request_metadata.is_direct_ingress and status_code is not None:
-            self._metrics_manager.record_ingress_request_metrics(
-                protocol=RequestProtocol.HTTP,
-                method=request_metadata._http_method,
-                route=self._route_prefix,
-                app_name=self._deployment_id.app_name,
-                deployment_name=self._deployment_id.name,
-                latency_ms=latency_ms,
-                was_error=status_code.startswith(("4", "5")),
-                status_code=status_code,
-            )
+        # NOTE: Direct ingress metrics are now recorded by the base class
+        # ReplicaBase._record_errors_and_metrics() after the OSS direct ingress port.
+        # The duplicate recording here was removed to avoid double-counting.
 
         if is_span_recording():
             http_route = request_metadata.route
@@ -1323,7 +1315,7 @@ class AnyscaleReplica(ReplicaBase):
                 raise asyncio.CancelledError
 
     async def perform_graceful_shutdown(self):
-        if not ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS or not self._ingress:
+        if not RAY_SERVE_ENABLE_DIRECT_INGRESS or not self._ingress:
             # if direct ingress is not enabled or the replica is not an ingress replica,
             # we can just call the super method to perform the graceful shutdown.
             await super().perform_graceful_shutdown()
@@ -1347,7 +1339,7 @@ class AnyscaleReplica(ReplicaBase):
             # The correct way to handle is this we start the cooldown period since
             # the last request finished and wait for the cooldown period to pass.
             await asyncio.gather(
-                asyncio.sleep(ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S),
+                asyncio.sleep(RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S),
                 self._drain_ongoing_requests(),
             )
             logger.info(

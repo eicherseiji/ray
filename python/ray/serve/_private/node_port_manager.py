@@ -2,14 +2,14 @@ import heapq
 import logging
 from typing import Dict, List, Optional, Set, Tuple
 
-from ray.anyscale.serve._private.constants import (
+from ray.serve._private.common import RequestProtocol
+from ray.serve._private.constants import (
     RAY_SERVE_DIRECT_INGRESS_MAX_GRPC_PORT,
     RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT,
     RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT,
     RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT,
+    SERVE_LOGGER_NAME,
 )
-from ray.serve._private.common import RequestProtocol
-from ray.serve._private.constants import SERVE_LOGGER_NAME
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
 

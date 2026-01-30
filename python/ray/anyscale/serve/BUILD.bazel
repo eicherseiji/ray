@@ -149,7 +149,7 @@ py_test_module_list(
     data = glob(["tests/fixtures/*.*"]),
     env = {
         "ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY": "1",
-        "ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
+        "RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
     },
     files = [
         "tests/test_haproxy.py",
