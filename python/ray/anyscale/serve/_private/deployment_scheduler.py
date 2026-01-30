@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple
 import warnings
 
+from ray._raylet import node_labels_match_selector
 from ray.anyscale._private.constants import ANYSCALE_RAY_NODE_AVAILABILITY_ZONE_LABEL
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_COMPACTION_TIMEOUT_S,
@@ -27,6 +28,8 @@ from ray.serve._private.deployment_scheduler import (
     ReplicaSchedulingRequest,
     AvailableNodeResources,
     RequestedResources,
+    Resources,
+    _flatten,
 )
 from ray.serve._private.usage import ServeUsageTag
 from ray.util.scheduling_strategies import In
@@ -121,17 +124,14 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
         upscales: Dict[DeploymentID, List[ReplicaSchedulingRequest]],
         downscales: Dict[DeploymentID, DeploymentDownscaleRequest],
     ) -> Dict[DeploymentID, Set[ReplicaID]]:
-        # Schedule spread deployments.
+        # Update pending replicas from upscales.
         for upscale in upscales.values():
             for scheduling_request in upscale:
                 replica_id = scheduling_request.replica_id
                 deployment_id = replica_id.deployment_id
                 self._pending_replicas[deployment_id][replica_id] = scheduling_request
 
-        non_strict_pack_pgs_exist = any(
-            d.is_non_strict_pack_pg() for d in self._deployments.values()
-        )
-        # Schedule replicas using compact strategy.
+        # Check for deprecated environment variable usage
         if RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY:
             warnings.warn(
                 "The environment variable 'RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY' "
@@ -140,61 +140,26 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
                 DeprecationWarning,
                 stacklevel=2,
             )
-        if RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY and not non_strict_pack_pgs_exist:
-            # Flatten dict of deployment replicas into all replicas,
-            # then sort by decreasing resource size
-            all_scheduling_requests = sorted(
-                [
-                    scheduling_request
-                    for replicas in self._pending_replicas.values()
-                    for scheduling_request in replicas.values()
-                ],
-                key=lambda r: r.requested_resources,
-                reverse=True,
-            )
 
-            # Schedule each replica
-            for scheduling_request in all_scheduling_requests:
-                target_node = self._find_best_available_node(
-                    scheduling_request.requested_resources,
-                    self._get_available_resources_per_node(),
-                )
+        # Determine scheduling strategy
+        non_strict_pack_pgs_exist = any(
+            d.is_non_strict_pack_pg() for d in self._deployments.values()
+        )
+        use_pack_strategy = (
+            RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY and not non_strict_pack_pgs_exist
+        )
 
-                self._schedule_replica(
-                    scheduling_request,
-                    default_scheduling_strategy="DEFAULT",
-                    target_node_id=target_node,
-                )
-
+        if use_pack_strategy:
+            # This branch is only reached if each deployment either:
+            # 1. Use STRICT_PACK placement group strategy, or
+            # 2. Do not use placement groups at all.
+            # This ensures Serve's best-fit node selection is respected by Ray Core
+            # (since _soft_target_node_id only works with STRICT_PACK).
+            self._schedule_with_pack_strategy()
         else:
-            for deployment_id, pending_replicas in self._pending_replicas.items():
-                if not pending_replicas:
-                    continue
+            self._schedule_with_spread_strategy()
 
-                az_to_num_replicas = self._calculate_az_to_num_replicas_mapping(
-                    deployment_id
-                )
-                for scheduling_request in list(pending_replicas.values()):
-                    target_labels = None
-                    if az_to_num_replicas:
-                        # Prefer the AZ with fewest replicas.
-                        az, _ = min(az_to_num_replicas.items(), key=lambda r: r[1])
-                        # Use soft node label scheduling strategy so that if the AZ has
-                        # available resources, the replica will run there. Otherwise, it
-                        # will run in other AZs that have available resources, and a new
-                        # node will only upscale when there are no available resources
-                        # in the entire cluster.
-                        target_labels = {
-                            ANYSCALE_RAY_NODE_AVAILABILITY_ZONE_LABEL: In(az)
-                        }
-                        az_to_num_replicas[az] = az_to_num_replicas[az] + 1
-
-                    self._schedule_replica(
-                        scheduling_request=scheduling_request,
-                        default_scheduling_strategy="SPREAD",
-                        target_labels=target_labels,
-                    )
-
+        # Handle downscales
         deployment_to_replicas_to_stop = {}
         for downscale in downscales.values():
             deployment_id = downscale.deployment_id
@@ -203,6 +168,147 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
             )
 
         return deployment_to_replicas_to_stop
+
+    def _schedule_with_pack_strategy(self):
+        """Tries to schedule pending replicas using PACK strategy."""
+        # Flatten dict of deployment replicas into all replicas,
+        # then sort by decreasing resource size
+        all_scheduling_requests = sorted(
+            _flatten(self._pending_replicas).values(),
+            key=lambda r: r.requested_resources,
+            reverse=True,
+        )
+
+        # Fetch node labels for active nodes.
+        active_nodes = self._cluster_node_info_cache.get_active_node_ids()
+        all_node_labels = {
+            node_id: self._cluster_node_info_cache.get_node_labels(node_id)
+            for node_id in active_nodes
+        }
+
+        for scheduling_request in all_scheduling_requests:
+            self._pack_schedule_replica(scheduling_request, all_node_labels)
+
+    def _schedule_with_spread_strategy(self):
+        """Tries to schedule pending replicas using AZ-aware SPREAD strategy."""
+        for deployment_id, pending_replicas in self._pending_replicas.items():
+            if not pending_replicas:
+                continue
+
+            az_to_num_replicas = self._calculate_az_to_num_replicas_mapping(
+                deployment_id
+            )
+            for scheduling_request in list(pending_replicas.values()):
+                target_labels = None
+                if az_to_num_replicas:
+                    # Prefer the AZ with fewest replicas.
+                    az, _ = min(az_to_num_replicas.items(), key=lambda r: r[1])
+                    # Use soft node label scheduling strategy so that if the AZ has
+                    # available resources, the replica will run there. Otherwise, it
+                    # will run in other AZs that have available resources, and a new
+                    # node will only upscale when there are no available resources
+                    # in the entire cluster.
+                    target_labels = {ANYSCALE_RAY_NODE_AVAILABILITY_ZONE_LABEL: In(az)}
+                    az_to_num_replicas[az] = az_to_num_replicas[az] + 1
+
+                self._schedule_replica(
+                    scheduling_request=scheduling_request,
+                    default_scheduling_strategy="SPREAD",
+                    target_labels=target_labels,
+                )
+
+    def _pack_schedule_replica(
+        self,
+        scheduling_request: ReplicaSchedulingRequest,
+        all_node_labels: Dict[str, Dict[str, str]],
+    ):
+        """Attempts to schedule a single request on the best available node."""
+
+        placement_candidates = self._build_pack_placement_candidates(scheduling_request)
+
+        target_node = None
+        for required_resources, required_labels in placement_candidates:
+            target_node = self._find_best_fit_node_for_pack(
+                required_resources,
+                self._get_available_resources_per_node(),
+                required_labels_list=required_labels,
+                node_labels=all_node_labels,
+            )
+            if target_node:
+                break
+
+        self._schedule_replica(
+            scheduling_request,
+            default_scheduling_strategy="DEFAULT",
+            target_node_id=target_node,
+        )
+
+    def _build_pack_placement_candidates(
+        self, scheduling_request: ReplicaSchedulingRequest
+    ) -> List[Tuple[Resources, List[Dict[str, str]]]]:
+        """Returns a list of (resources, labels) tuples to attempt for scheduling."""
+
+        # Collect a list of required resources and labels to try to schedule to
+        # support replica compaction when fallback strategies are provided.
+        placement_candidates = []
+        primary_labels = []
+        primary_bundles = scheduling_request.placement_group_bundles
+
+        if primary_bundles:
+            # PG: Use PG bundle_label_selector
+            if scheduling_request.placement_group_bundle_label_selector:
+                pg_strategy = scheduling_request.placement_group_strategy or None
+                if pg_strategy == "STRICT_PACK":
+                    # All bundle_label_selectors must be satisfied on same node.
+                    primary_labels = (
+                        scheduling_request.placement_group_bundle_label_selector
+                    )
+                else:
+                    # TODO(ryanaoleary@): Support PACK strategy with bundle label selectors.
+                    raise NotImplementedError(
+                        "Placement Group strategy 'PACK' with bundle_label_selector "
+                        "is not yet supported in the Serve scheduler."
+                    )
+        else:
+            # Actor: Use Actor label selector
+            if "label_selector" in scheduling_request.actor_options:
+                primary_labels = [
+                    scheduling_request.actor_options["label_selector"] or {}
+                ]
+
+        # If PG is defined on scheduling request, then `requested_resources` represents the sum across all bundles.
+        placement_candidates.append(
+            (scheduling_request.requested_resources, primary_labels)
+        )
+
+        if scheduling_request.placement_group_fallback_strategy:
+            # TODO(ryanaoleary@): Add support for placement group fallback_strategy when it's added to options.
+            raise NotImplementedError(
+                "Placement Group fallback strategies are not yet supported in the Serve scheduler."
+            )
+
+        elif scheduling_request.actor_options.get("fallback_strategy"):
+            # Fallback strategy provided for Ray Actor.
+            for fallback in scheduling_request.actor_options["fallback_strategy"]:
+                fallback_labels = [fallback.get("label_selector", {}) or {}]
+                placement_candidates.append(
+                    (scheduling_request.requested_resources, fallback_labels)
+                )
+
+        return placement_candidates
+
+    def _filter_nodes_by_label_selector(
+        self,
+        available_nodes: Dict[str, Resources],
+        required_labels: Dict[str, str],
+        node_labels: Dict[str, Dict[str, str]],
+    ) -> Dict[str, Resources]:
+        """Filters available nodes based on label selector constraints."""
+        return {
+            node_id: resources
+            for node_id, resources in available_nodes.items()
+            if node_labels_match_selector(node_labels.get(node_id, {}), required_labels)
+        }
 
     def _calculate_az_to_num_replicas_mapping(
         self, deployment_id: DeploymentID
@@ -308,10 +414,12 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
 
         return replicas_to_stop
 
-    def _find_best_available_node(
+    def _find_best_fit_node_for_pack(
         self,
         required_resources: RequestedResources,
         available_resources_per_node: Dict[str, AvailableNodeResources],
+        required_labels_list: Optional[List[Dict[str, str]]] = None,
+        node_labels: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> Optional[str]:
         """Chooses best available node to schedule the required resources.
 
@@ -319,6 +427,16 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
         available node, minimizing fragmentation. Prefers non-idle nodes
         over idle nodes.
         """
+
+        # Filter feasible nodes by provided label selectors if provided.
+        if required_labels_list and node_labels:
+            for required_labels in required_labels_list:
+                available_resources_per_node = self._filter_nodes_by_label_selector(
+                    available_resources_per_node, required_labels, node_labels
+                )
+                if not available_resources_per_node:
+                    return None
+
         node_to_running_replicas = self._get_node_to_running_replicas()
 
         target_compact = None
@@ -342,7 +460,7 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
             return chosen_node
 
         # 2. Prefer target node being compacted
-        if target_compact:
+        if target_compact and target_compact in available_resources_per_node:
             chosen_node = self._best_fit_node(
                 required_resources,
                 {target_compact: available_resources_per_node[target_compact]},
@@ -577,7 +695,7 @@ class AnyscaleDeploymentScheduler(DeploymentScheduler):
                 # 2. For each replica, find a node that would minimize fragmentation.
                 deployment_id = replica_id.deployment_id
                 required_resources = self._deployments[deployment_id].required_resources
-                chosen_node = self._find_best_available_node(
+                chosen_node = self._find_best_fit_node_for_pack(
                     required_resources, available_resources
                 )
 
