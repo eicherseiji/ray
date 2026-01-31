@@ -62,7 +62,7 @@ class ResourceManager:
     # store memory limit for the streaming executor,
     # when `OpResourceAllocator` is enabled.
     DEFAULT_OBJECT_STORE_MEMORY_LIMIT_FRACTION = env_float(
-        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.5
+        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.75
     )
 
     # The fraction of the object store capacity that will be used as the default object
@@ -700,6 +700,7 @@ class OpResourceAllocator(ABC):
         for downstream_op in self._get_downstream_eligible_ops(op):
             # To maintain liveness of the pipeline, we relax output backpressure
             # in one of the following cases
+            # TODO this doesn't work for V2 b/c of under-allocation
             if downstream_op.num_active_tasks() == 0:
                 downstream_op_state = self._topology[downstream_op]
 

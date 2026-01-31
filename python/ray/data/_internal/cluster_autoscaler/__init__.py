@@ -19,10 +19,12 @@ if TYPE_CHECKING:
 
 
 CLUSTER_AUTOSCALER_ENV_KEY = "RAY_DATA_CLUSTER_AUTOSCALER"
-CLUSTER_AUTOSCALER_ENV_DEFAULT_VALUE = "V2"
+CLUSTER_AUTOSCALER_ENV_DEFAULT_VALUE = "RAYTURBO"
 
 
 class ClusterAutoscalerVersion(Enum):
+    RAYTURBO = "RAYTURBO"
+    OSS = "OSS"  # Same as V1. Kept for backwards compatibility.
     V2 = "V2"
     V1 = "V1"
 
@@ -35,16 +37,29 @@ def create_cluster_autoscaler(
     execution_id: str,
 ) -> ClusterAutoscaler:
     selected_autoscaler = _get_cluster_autoscaler_version()
-    resource_limits = data_context.execution_options.resource_limits
+    execution_options = data_context.execution_options
+    resource_limits = execution_options.resource_limits
 
-    if selected_autoscaler == ClusterAutoscalerVersion.V2:
+    if selected_autoscaler == ClusterAutoscalerVersion.RAYTURBO:
+        from ray.anyscale.data._internal.cluster_autoscaler import (
+            RateBasedClusterAutoscaler,
+        )
+
+        return RateBasedClusterAutoscaler.create(
+            topology, execution_options, resource_manager, execution_id=execution_id
+        )
+
+    elif selected_autoscaler == ClusterAutoscalerVersion.V2:
         return DefaultClusterAutoscalerV2(
             resource_manager,
             execution_id=execution_id,
             resource_limits=resource_limits,
         )
 
-    elif selected_autoscaler == ClusterAutoscalerVersion.V1:
+    elif (
+        selected_autoscaler == ClusterAutoscalerVersion.V1
+        or selected_autoscaler == ClusterAutoscalerVersion.OSS
+    ):
         return DefaultClusterAutoscaler(
             topology,
             resource_limits=resource_limits,

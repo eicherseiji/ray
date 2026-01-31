@@ -48,7 +48,10 @@ from ray.serve._private.constants import (
 from ray.serve._private.controller_health_metrics_tracker import (
     ControllerHealthMetricsTracker,
 )
-from ray.serve._private.default_impl import create_cluster_node_info_cache
+from ray.serve._private.default_impl import (
+    create_cluster_node_info_cache,
+    get_proxy_actor_class,
+)
 from ray.serve._private.deployment_info import DeploymentInfo
 from ray.serve._private.deployment_state import (
     DeploymentReplica,
@@ -188,7 +191,13 @@ class ServeController:
         self.cluster_node_info_cache.update()
 
         self._direct_ingress_enabled = RAY_SERVE_ENABLE_DIRECT_INGRESS
-        if self._direct_ingress_enabled:
+        # Only force HeadOnly when direct ingress is enabled WITHOUT HAProxy.
+        # HAProxy mode uses direct ingress for replicas but still needs the
+        # HAProxy proxy on potentially multiple nodes for load balancing.
+        ha_proxy_enabled = (
+            os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
+        )
+        if self._direct_ingress_enabled and not ha_proxy_enabled:
             logger.info(
                 "Direct ingress is enabled in ServeController, enabling proxy "
                 "on head node only."
@@ -203,6 +212,7 @@ class ServeController:
             cluster_node_info_cache=self.cluster_node_info_cache,
             logging_config=self.global_logging_config,
             grpc_options=set_proxy_default_grpc_options(grpc_options),
+            proxy_actor_class=get_proxy_actor_class(),
         )
         # We modify the HTTP and gRPC options above, so delete them to avoid
         del http_options, grpc_options
@@ -1257,6 +1267,7 @@ class ServeController:
                     protocol=RequestProtocol.HTTP,
                     route_prefix="/",
                     targets=self.proxy_state_manager.get_targets(RequestProtocol.HTTP),
+                    app_name="",
                 )
             )
             if is_grpc_enabled(self.get_grpc_config()):
@@ -1267,6 +1278,7 @@ class ServeController:
                         targets=self.proxy_state_manager.get_targets(
                             RequestProtocol.GRPC
                         ),
+                        app_name="",
                     )
                 )
         return target_groups

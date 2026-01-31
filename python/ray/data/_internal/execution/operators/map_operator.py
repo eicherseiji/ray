@@ -398,9 +398,9 @@ class MapOperator(InternalQueueOperatorMixin, OneToOneOperator, ABC):
             )
 
         if isinstance(compute_strategy, TaskPoolStrategy):
-            from ray.data._internal.execution.operators.task_pool_map_operator import (
+            from ray.anyscale.data._internal.execution.operators.task_pool_map_operator import (
                 TaskPoolMapOperator,
-            )
+            )  # noqa: E501
 
             return TaskPoolMapOperator(
                 map_transformer,
@@ -418,9 +418,9 @@ class MapOperator(InternalQueueOperatorMixin, OneToOneOperator, ABC):
                 on_start=on_start,
             )
         elif isinstance(compute_strategy, ActorPoolStrategy):
-            from ray.data._internal.execution.operators.actor_pool_map_operator import (
+            from ray.anyscale.data._internal.execution.operators.actor_pool_map_operator import (
                 ActorPoolMapOperator,
-            )
+            )  # noqa: E501
 
             return ActorPoolMapOperator(
                 map_transformer,
@@ -751,7 +751,14 @@ def _map_task(
     TaskContext.set_current(ctx)
 
     stats = BlockExecStats.builder()
-    map_transformer.override_target_max_block_size(ctx.target_max_block_size_override)
+
+    # NOTE: Only override target max-block size of the transformer in case it's
+    #       required by the operator
+    if ctx.target_max_block_size_override is not None:
+        map_transformer.override_target_max_block_size(
+            ctx.target_max_block_size_override
+        )
+
     block_iter: Iterable[Block]
     if slices:
         block_iter = _iter_sliced_blocks(blocks, slices)

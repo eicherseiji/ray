@@ -233,6 +233,7 @@ class CustomArrowCollateFn(ArrowBatchCollateFn):
         # However, for CPU transfer, we need to combine the chunked arrays first
         # before converting to numpy format and then to Tensors.
         combine_chunks = self.device is not None and self.device.type == "cpu"
+        batch = batch.select(["image", "label"])
         tensors = arrow_batch_to_tensors(
             batch,
             dtypes=self.dtypes,
