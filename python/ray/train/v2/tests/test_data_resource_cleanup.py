@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, create_autospec
 import pytest
 
 import ray
-from ray.data._internal.cluster_autoscaler.default_autoscaling_coordinator import (
-    get_or_create_autoscaling_coordinator,
-)
 from ray.data._internal.cluster_autoscaler import (
     CLUSTER_AUTOSCALER_ENV_KEY,
     ClusterAutoscalerVersion,
+)
+from ray.data._internal.cluster_autoscaler.default_autoscaling_coordinator import (
+    get_or_create_autoscaling_coordinator,
 )
 from ray.data._internal.iterator.stream_split_iterator import (
     SplitCoordinator,
