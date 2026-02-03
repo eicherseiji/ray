@@ -1,5 +1,6 @@
 import abc
 import math
+from logging import getLogger
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 import numpy as np
@@ -12,6 +13,10 @@ from ray.util.metrics import Gauge
 
 if TYPE_CHECKING:
     from ray.data._internal.execution.resource_manager import ResourceManager
+
+
+logger = getLogger(__name__)
+PRODUCTIVITY_RELATIVE_TOLERANCE = 0.01  # 1%
 
 
 class BottleneckDetector(abc.ABC):
@@ -98,6 +103,22 @@ class NormalizedThroughputBottleneckDetector(BottleneckDetector):
         # Return the bottleneck operator (the one with lowest productivity).
         if not defined_productivities:
             return None
+
+        # If all productivity scores are approximately equal, then there is no
+        # meaningful bottleneck. This happens on CPU-only clusters where the
+        # throughput-balanced allocation distributes CPUs proportionally to each
+        # operator's needs, resulting in nearly identical productivity scores.
+        # In this case, we return None so the autoscaler can make a deliberate choice
+        # (e.g., scale the most-upstream operator) rather than picking an arbitrary
+        # operator based on floating-point noise.
+        scores = list(defined_productivities.values())
+        if len(scores) > 1:
+            if np.allclose(scores, max(scores), rtol=PRODUCTIVITY_RELATIVE_TOLERANCE):
+                logger.debug(
+                    "Productivity scores approximately equal (within tolerance). "
+                    "No clear bottleneck, returning the most upstream operator."
+                )
+                return ops[0]
 
         return min(defined_productivities, key=defined_productivities.get)
 

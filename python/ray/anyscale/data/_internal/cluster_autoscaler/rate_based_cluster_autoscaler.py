@@ -266,6 +266,12 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         return resource_request
 
     def try_trigger_scaling(self):
+        # If there are no operators to scale, send the previous resource request
+        # to renew our registration with the autoscaling coordinator.
+        if not self._ops:
+            logger.debug("No operators to scale -- skipping cluster autoscaling.")
+            self._send_resource_request(self._last_resource_request)
+            return self._last_resource_request
         # Limit the frequency of autoscaling requests.
         now = time.time()
         if now - self._last_request_time < self._min_gap_between_autoscaling_requests:
@@ -277,9 +283,6 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         # 2. Identify the bottleneck operator.
         bottleneck_op = self._bottleneck_detector.get_bottleneck(self._ops)
 
-        # 3. Send the previous resource request if we couldn't identify a bottleneck.
-        # This is necessary to renew our registration with the autoscaling coordinator
-        # and ensure we maintain the current resource allocation for the dataset.
         if not bottleneck_op:
             logger.debug(
                 "Bottleneck Operator not identified yet -- skipping cluster autoscaling."
@@ -292,7 +295,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             f"Bottleneck operator: {bottleneck_op} requires {min_scheduling_resources} per task/actor"
         )
 
-        # 4. Calculate the average utilization across CPU, GPU and Object Store
+        # 3. Calculate the average utilization across CPU, GPU and Object Store
         util = self._utility_calculator.get()
 
         logger.debug(
@@ -315,7 +318,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             self._send_resource_request(self._last_resource_request)
             return self._last_resource_request
 
-        # 5. Check bottleneck operator is at scheduling capacity.
+        # 4. Check bottleneck operator is at scheduling capacity.
         op_usage = self._resource_manager.get_op_usage(bottleneck_op)
         max_op_limits = bottleneck_op.min_max_resource_requirements()[1]
         op_usage_with_additional_task = op_usage.add(min_scheduling_resources)
@@ -333,7 +336,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             self._send_resource_request(self._last_resource_request)
             return self._last_resource_request
 
-        # 6. Calculate the additional task num needed to scale up.
+        # 5. Calculate the additional task num needed to scale up.
         allocated_resources = (
             self._resource_manager.op_resource_allocator.get_allocation(bottleneck_op)
         )
@@ -345,7 +348,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         )
         additional_task_num = target_task_num - maximum_task_capacity
 
-        # 7. Cap the additional bundles based on max resource deltas
+        # 6. Cap the additional bundles based on max resource deltas
         max_additional_by_cpu = (
             math.floor(
                 self._cluster_scaling_up_max_cpu_resource_delta
@@ -368,7 +371,7 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         # Ensure at least 1 additional bundle if we have a bottleneck
         capped_additional = max(capped_additional, 1)
 
-        # 8. Calculate total bundle count (current + capped additional)
+        # 7. Calculate total bundle count (current + capped additional)
         # AutoscalingCoordinator expects total resources, not incremental.
         # We need to request resources for ALL operators, not just the bottleneck one.
         resource_request = self._get_allocated_resource_bundles(self._topology)

@@ -253,8 +253,34 @@ class TestNormalizedThroughputBottleneckDetector:
         # With a single operator, that operator is the bottleneck.
         assert bottleneck == op
 
+    def test_get_bottleneck_productivity_scores_approximately_equal(self):
+        op2 = StubClusterAutoscalingOperator(
+            _per_task_resource_allocation=ExecutionResources(cpu=1),
+            metrics=StubClusterAutoscalingMetrics(
+                num_output_blocks_per_task_s=1,
+            ),
+        )
+        op1 = StubClusterAutoscalingOperator(
+            output_dependencies=[op2],
+            _per_task_resource_allocation=ExecutionResources(cpu=1),
+            metrics=StubClusterAutoscalingMetrics(
+                num_output_blocks_per_task_s=1,
+            ),
+        )
+        resource_manager = StubResourceManager(global_limits=ExecutionResources(cpu=2))
+        detector = NormalizedThroughputBottleneckDetector(
+            resource_manager, "test-requester"
+        )
+
+        bottleneck = detector.get_bottleneck([op1, op2])
+
+        # We choose the most upstream operator to be the bottleneck when the scores are approximately equal.
+        assert bottleneck == op1
+
     def test_get_bottleneck_identifies_slower_operator(self):
         # op2 is fast (produces 12 blocks/s per task)
+        # Normalization factor = 1.0 (sink)
+        # Normalized rate = 12 * 1.0 = 12.0
         op2 = StubClusterAutoscalingOperator(
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
@@ -264,12 +290,27 @@ class TestNormalizedThroughputBottleneckDetector:
             ),
         )
         # op1 is slower (produces 2 blocks/s per task, which become 6 sink outputs/s)
+        # Normalization factor = 6/2 = 3.0 (from op2 ratio)
+        # Normalized rate = 2 * 3.0 = 6.0
+        #
+        # Optimal Allocation (Total CPU=2):
+        # - Op1 needs 2x more CPU than Op2 to match rates (6.0 vs 12.0).
+        # - Allocation: Op1=1.33 CPU, Op2=0.67 CPU.
+        #
+        # Scores:
+        # - Op2: 0.67 tasks * 12.0 = 8.0
+        # - Op1 (with limit=1): min(1.33, 1.0) tasks * 6.0 = 6.0
+        # Result: 6.0 < 8.0 -> Op1 is bottleneck.
         op1 = StubClusterAutoscalingOperator(
             output_dependencies=[op2],
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
                 num_output_blocks_per_task_s=2,
             ),
+            # Set a concurrency limit so op1 is a real bottleneck; otherwise
+            # 1.33 * 6.0 ≈ 8 and the scores are nearly equal, so no bottleneck
+            # would be detected.
+            _get_max_concurrency_limit=1,
         )
         resource_manager = StubResourceManager(global_limits=ExecutionResources(cpu=2))
         detector = NormalizedThroughputBottleneckDetector(
