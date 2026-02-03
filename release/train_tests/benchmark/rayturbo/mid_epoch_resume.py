@@ -39,10 +39,12 @@ class TorchRunnerWithDataCheckpointing(VanillaTorchRunner):
             return
 
         ds = ray.train.get_dataset_shard(DatasetKey.TRAIN)
+        # Ensure that all workers have flushed their checkpoint rows.
+        data_state_dict = ds.state_dict()
         if ray.train.get_context().get_world_rank() == 0:
             with open(os.path.join(local_dir, "data_state.json"), "w") as f:
-                json.dump(ds.state_dict(), f)
-            logger.info(f"Saved data state dict: {ds.state_dict()}")
+                json.dump(data_state_dict, f)
+            logger.info(f"Saved data state dict: {data_state_dict}")
 
     def _load_training_state(self, local_dir: str):
         super()._load_training_state(local_dir)
@@ -69,6 +71,9 @@ class TorchRunnerWithDataCheckpointing(VanillaTorchRunner):
 
     def _checkpoint(self, *args, **kwargs):
         super()._checkpoint(*args, **kwargs)
+
+        # Ensure that all workers have registered their checkpoint
+        ray.train.collective.barrier()
 
         if (
             self._global_rows_processed_this_epoch >= 750_000
