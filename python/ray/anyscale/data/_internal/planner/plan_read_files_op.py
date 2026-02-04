@@ -78,7 +78,7 @@ def plan_read_files_op(
         input_op,
         data_context,
         name="ReadFiles",
-        compute_strategy=op._compute,
+        compute_strategy=op.compute,
         supports_fusion=(
             # NOTE: By default fusion of the Read ops is turned off for now
             #       until we can reliably estimate whether fusing read op
@@ -90,7 +90,7 @@ def plan_read_files_op(
             if data_context._enable_read_files_fusion_override is None
             else data_context._enable_read_files_fusion_override
         ),
-        ray_remote_args=op._ray_remote_args,
+        ray_remote_args=op.ray_remote_args,
     )
 
     return map_operator
