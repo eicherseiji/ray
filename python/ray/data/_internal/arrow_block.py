@@ -41,7 +41,6 @@ from ray.data.block import (
     BlockType,
     U,
 )
-from ray.data.constants import TENSOR_COLUMN_NAME
 from ray.data.context import DEFAULT_TARGET_MAX_BLOCK_SIZE, DataContext
 from ray.data.expressions import Expr
 
@@ -253,7 +252,7 @@ class ArrowBlockAccessor(OptimizedArrowBlockMixin, TableBlockAccessor):
 
     @staticmethod
     def _build_tensor_row(
-        row: _OptimizedArrowRow, row_idx: int, col_name: str = TENSOR_COLUMN_NAME
+        row: _OptimizedArrowRow, row_idx: int, col_name: str
     ) -> np.ndarray:
 
         element = row[col_name][row_idx]

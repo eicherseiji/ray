@@ -37,8 +37,5 @@ class Write(AbstractMap):
             ray_remote_args=ray_remote_args,
             compute=compute,
         )
-        self._datasink_or_legacy_datasource = datasink_or_legacy_datasource
-        self._write_args = write_args
-
-    def can_modify_num_rows(self) -> bool:
-        return False
+        self.datasink_or_legacy_datasource = datasink_or_legacy_datasource
+        self.write_args = write_args
