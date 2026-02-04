@@ -64,6 +64,9 @@ elif [[ "${PY_VERSION}" == "3.11" ]]; then
 elif [[ "${PY_VERSION}" == "3.12" ]]; then
     PY_VERSION_CODE="py312"
     WHEEL_PYTHON_CODE="cp312-cp312"
+elif [[ "${PY_VERSION}" == "3.13" ]]; then
+    PY_VERSION_CODE="py313"
+    WHEEL_PYTHON_CODE="cp313-cp313"
 else
     echo "Unknown python version code: ${PY_VERSION}" >/dev/stderr
     exit 1
