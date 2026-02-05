@@ -37,6 +37,7 @@ from ray.serve._private.config import DeploymentConfig
 from ray.serve._private.constants import (
     DEFAULT_LATENCY_BUCKET_MS,
     MAX_PER_REPLICA_RETRY_COUNT,
+    RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S,
     RAY_SERVE_ENABLE_DIRECT_INGRESS,
     RAY_SERVE_ENABLE_TASK_EVENTS,
     RAY_SERVE_FAIL_ON_RANK_ERROR,
@@ -259,35 +260,6 @@ SLOW_STARTUP_WARNING_PERIOD_S = int(
 
 ALL_REPLICA_STATES = list(ReplicaState)
 _SCALING_LOG_ENABLED = os.environ.get("SERVE_ENABLE_SCALING_LOG", "0") != "0"
-# Feature flag to disable forcibly shutting down replicas.
-# Check if the environment variable is explicitly set
-_ray_serve_disable_force_kill_env = os.environ.get(
-    "RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY"
-)
-
-if _ray_serve_disable_force_kill_env is not None:
-    # If explicitly set, respect the environment variable.
-    RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = (
-        _ray_serve_disable_force_kill_env == "1"
-    )
-    if (
-        RAY_SERVE_ENABLE_DIRECT_INGRESS
-        and not RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY
-    ):
-        logger.warning(
-            "RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY is explicitly set to 0 "
-            "in direct ingress mode."
-        )
-else:
-    # If not explicitly set, default based on direct ingress mode
-    if RAY_SERVE_ENABLE_DIRECT_INGRESS:
-        RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = True
-        logger.info(
-            "Setting RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY to True "
-            "because RAY_SERVE_ENABLE_DIRECT_INGRESS is set to True."
-        )
-    else:
-        RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY = False
 
 
 def print_verbose_scaling_log():
@@ -790,7 +762,7 @@ class ActorReplicaWrapper:
         self._rank = rank
         return updating
 
-    def recover(self) -> bool:
+    def recover(self, ingress: bool = False) -> bool:
         """Recover replica version from a live replica actor.
 
         When controller dies, the deployment state loses the info on the version that's
@@ -799,12 +771,17 @@ class ActorReplicaWrapper:
 
         Also confirm that actor is allocated and initialized before marking as running.
 
-        Returns: False if the replica actor is no longer alive; the
+        Args:
+            ingress: Whether this replica is an ingress replica.
+
+        Returns:
+            False if the replica actor is no longer alive; the
             actor could have been killed in the time between when the
             controller fetching all Serve actors in the cluster and when
             the controller tries to recover it. Otherwise, return True.
         """
         logger.info(f"Recovering {self.replica_id}.")
+        self._ingress = ingress
         try:
             self._actor_handle = ray.get_actor(
                 self._actor_name, namespace=SERVE_NAMESPACE
@@ -1221,20 +1198,8 @@ class ActorReplicaWrapper:
 
         return self._routing_stats
 
-    def force_stop(self, log_shutdown_message: bool = False):
+    def force_stop(self):
         """Force the actor to exit without shutting down gracefully."""
-        if (
-            self._ingress
-            and RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY
-        ):
-            if log_shutdown_message:
-                logger.info(
-                    f"{self.replica_id} did not shut down because it had not finished draining requests. "
-                    "Going to wait until the draining is complete. You can force-stop the replica by "
-                    "setting RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY to 0."
-                )
-            return
-
         try:
             ray.kill(ray.get_actor(self._actor_name, namespace=SERVE_NAMESPACE))
         except ValueError:
@@ -1267,7 +1232,6 @@ class DeploymentReplica:
         )
         self._multiplexed_model_ids: List[str] = []
         self._routing_stats: Dict[str, Any] = {}
-        self._logged_shutdown_message = False
 
     def get_running_replica_info(
         self, cluster_node_info_cache: ClusterNodeInfoCache
@@ -1398,7 +1362,6 @@ class DeploymentReplica:
             deployment_info, assign_rank_callback=assign_rank_callback
         )
         self._start_time = time.time()
-        self._logged_shutdown_message = False
         self.update_actor_details(start_time_s=self._start_time)
         return replica_scheduling_request
 
@@ -1415,16 +1378,20 @@ class DeploymentReplica:
         """
         return self._actor.reconfigure(version, rank=rank)
 
-    def recover(self) -> bool:
+    def recover(self, deployment_info: DeploymentInfo) -> bool:
         """
         Recover states in DeploymentReplica instance by fetching running actor
         status
 
-        Returns: False if the replica is no longer alive at the time
-            when this method is called.
+        Args:
+            deployment_info: The deployment info for this replica.
+
+        Returns:
+            True if the replica actor is alive and recovered successfully.
+            False if the replica actor is no longer alive.
         """
         # If replica is no longer alive
-        if not self._actor.recover():
+        if not self._actor.recover(ingress=deployment_info.ingress):
             return False
 
         self._start_time = time.time()
@@ -1474,6 +1441,11 @@ class DeploymentReplica:
         timeout_s = self._actor.graceful_stop()
         if not graceful:
             timeout_s = 0
+        elif self._actor._ingress and RAY_SERVE_ENABLE_DIRECT_INGRESS:
+            # In direct ingress mode, ensure we wait at least
+            # RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S to give external
+            # load balancers (e.g., ALB) time to deregister the replica.
+            timeout_s = max(timeout_s, RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S)
         self._shutdown_deadline = time.time() + timeout_s
 
     def check_stopped(self) -> bool:
@@ -1483,19 +1455,11 @@ class DeploymentReplica:
 
         timeout_passed = time.time() >= self._shutdown_deadline
         if timeout_passed:
-            if (
-                not self._logged_shutdown_message
-                and not RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY
-            ):
-                logger.info(
-                    f"{self.replica_id} did not shut down after grace "
-                    "period, force-killing it. "
-                )
-
-            self._actor.force_stop(
-                log_shutdown_message=not self._logged_shutdown_message
+            logger.info(
+                f"{self.replica_id} did not shut down after grace "
+                "period, force-killing it."
             )
-            self._logged_shutdown_message = True
+            self._actor.force_stop()
         return False
 
     def check_health(self) -> bool:
@@ -2374,7 +2338,7 @@ class DeploymentState:
             )
             # If replica is no longer alive, simply don't add it to the
             # deployment state manager to track.
-            if not new_deployment_replica.recover():
+            if not new_deployment_replica.recover(self._target_state.info):
                 logger.warning(f"{replica_id} died before controller could recover it.")
                 continue
 
