@@ -211,8 +211,7 @@ def construct_input_output_datasets(
             elif isinstance(logical_op, ReadOperator):
                 try:
                     datasource = (
-                        logical_op._datasource
-                        or logical_op._datasource_or_legacy_reader
+                        logical_op.datasource or logical_op.datasource_or_legacy_reader
                     )
                     (
                         processed_input_datasets,
@@ -230,7 +229,7 @@ def construct_input_output_datasets(
 
             elif isinstance(logical_op, WriteOperator):
                 try:
-                    datasink = logical_op._datasink_or_legacy_datasource
+                    datasink = logical_op.datasink_or_legacy_datasource
                     (
                         processed_output_datasets,
                         updated_seen_output_uris,
