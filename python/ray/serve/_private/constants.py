@@ -318,6 +318,12 @@ SERVE_MULTIPLEXED_MODEL_ID = "serve_multiplexed_model_id"
 # HTTP request ID
 SERVE_HTTP_REQUEST_ID_HEADER = "x-request-id"
 
+# HTTP request timeout
+SERVE_HTTP_REQUEST_TIMEOUT_S_HEADER = "x-request-timeout-seconds"
+
+# HTTP request disconnect disabled
+SERVE_HTTP_REQUEST_DISCONNECT_DISABLED_HEADER = "x-request-disconnect-disabled"
+
 # Feature flag to turn on node locality routing for proxies. On by default.
 RAY_SERVE_PROXY_PREFER_LOCAL_NODE_ROUTING = get_env_bool(
     "RAY_SERVE_PROXY_PREFER_LOCAL_NODE_ROUTING", "1"
@@ -450,7 +456,11 @@ RAY_SERVE_GRPC_MAX_MESSAGE_SIZE = get_env_int(
 RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH = get_env_int(
     # Default max message length in gRPC is 4MB, we keep that default
     "RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH",
-    4 * 1024 * 1024,
+    int(
+        os.environ.get(
+            "ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH", 4 * 1024 * 1024
+        )
+    ),
 )
 
 # Default options passed when constructing gRPC servers.
@@ -467,13 +477,13 @@ RAY_SERVE_ENABLE_TASK_EVENTS = get_env_bool("RAY_SERVE_ENABLE_TASK_EVENTS", "0")
 
 # This is deprecated and will be removed in the future.
 RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY = get_env_bool(
-    "RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "0"
+    "RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "1"
 )
 
 # Use pack instead of spread scheduling strategy.
 RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY = get_env_bool(
     "RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY",
-    os.environ.get("RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "0"),
+    os.environ.get("RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "1"),
 )
 
 # Comma-separated list of custom resources prioritized in scheduling. Sorted from highest to lowest priority.
@@ -547,6 +557,7 @@ RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP = get_env_bool(
 # use gRPC to send requests, we flip this flag on.
 RAY_SERVE_USE_GRPC_BY_DEFAULT = (
     os.environ.get("RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
+    or os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
 )
 
 RAY_SERVE_PROXY_USE_GRPC = os.environ.get("RAY_SERVE_PROXY_USE_GRPC") == "1" or (
@@ -568,11 +579,21 @@ RAY_SERVE_FAIL_ON_RANK_ERROR = get_env_bool("RAY_SERVE_FAIL_ON_RANK_ERROR", "0")
 
 # The message to return when the replica is healthy.
 HEALTHY_MESSAGE = "success"
+NO_ROUTES_MESSAGE = "Route table is not populated yet."
+NO_REPLICAS_MESSAGE = "No replicas are available yet."
+DRAINING_MESSAGE = "This node is being drained."
 
 # Feature flag to enable a limited form of direct ingress where ingress applications
 # listen on port 8000 (HTTP) and 9000 (gRPC). No proxies will be started.
+# Check OSS env var first, then anyscale-specific one for backwards compatibility.
+# Also enabled when HAProxy mode is enabled.
 RAY_SERVE_ENABLE_DIRECT_INGRESS = (
-    os.environ.get("RAY_SERVE_ENABLE_DIRECT_INGRESS", "0") == "1"
+    os.environ.get(
+        "RAY_SERVE_ENABLE_DIRECT_INGRESS",
+        os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "0"),
+    )
+    == "1"
+    or os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
 )
 RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT = int(
     os.environ.get("RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT", "30000")
@@ -590,15 +611,13 @@ RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT = int(
     os.environ.get("RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT", "100")
 )
 # The minimum drain period for a HTTP proxy.
+# Check OSS env var first, then anyscale-specific one for backwards compatibility.
 RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S = float(
-    os.environ.get("RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S", "30")
+    os.environ.get(
+        "RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S",
+        os.environ.get("ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S", "30"),
+    )
 )
-
-# HTTP request timeout
-SERVE_HTTP_REQUEST_TIMEOUT_S_HEADER = "x-request-timeout-seconds"
-
-# HTTP request disconnect disabled
-SERVE_HTTP_REQUEST_DISCONNECT_DISABLED_HEADER = "x-request-disconnect-disabled"
 
 # If throughput optimized Ray Serve is enabled, set the following constants.
 # This should be at the end.
@@ -614,6 +633,14 @@ if RAY_SERVE_THROUGHPUT_OPTIMIZED:
         "RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP", "0"
     )
     RAY_SERVE_LOG_TO_STDERR = get_env_bool("RAY_SERVE_LOG_TO_STDERR", "0")
+    RAY_SERVE_USE_GRPC_BY_DEFAULT = (
+        get_env_bool("RAY_SERVE_USE_GRPC_BY_DEFAULT", "1")
+        and os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "1") == "1"
+    )
+    RAY_SERVE_ENABLE_DIRECT_INGRESS = (
+        get_env_bool("RAY_SERVE_ENABLE_DIRECT_INGRESS", "1")
+        and os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "1") == "1"
+    ) or os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
 
 # The maximum allowed RPC latency in milliseconds.
 # This is used to detect and warn about long RPC latencies

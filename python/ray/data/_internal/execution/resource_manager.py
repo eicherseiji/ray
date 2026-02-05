@@ -62,7 +62,7 @@ class ResourceManager:
     # store memory limit for the streaming executor,
     # when `OpResourceAllocator` is enabled.
     DEFAULT_OBJECT_STORE_MEMORY_LIMIT_FRACTION = env_float(
-        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.5
+        "RAY_DATA_OBJECT_STORE_MEMORY_LIMIT_FRACTION", 0.75
     )
 
     # The fraction of the object store capacity that will be used as the default object
@@ -700,6 +700,7 @@ class OpResourceAllocator(ABC):
         for downstream_op in self._get_downstream_eligible_ops(op):
             # To maintain liveness of the pipeline, we relax output backpressure
             # in one of the following cases
+            # TODO this doesn't work for V2 b/c of under-allocation
             if downstream_op.num_active_tasks() == 0:
                 downstream_op_state = self._topology[downstream_op]
 
@@ -862,13 +863,17 @@ class ReservationOpResourceAllocator(OpResourceAllocator):
         if budget is None:
             return True
 
+        # NOTE: We're falling back to 1 to make sure that the budget is non-zero
+        expected_pending_task_outputs_bytes = (
+            op.metrics.obj_store_mem_max_pending_output_per_task or 1
+        )
+
         return (
             op.incremental_resource_usage().satisfies_limit(budget)
             and
-            # Avoid scheduling if there's no more Object Store budget (for
-            # task outputs)
-            budget.object_store_memory
-            >= (op.metrics.obj_store_mem_max_pending_output_per_task or 0)
+            # Avoid scheduling if there's not enough Object Store budget to at least
+            # accommodate pending task outputs
+            budget.object_store_memory >= expected_pending_task_outputs_bytes
         )
 
     def get_budget(self, op: PhysicalOperator) -> Optional[ExecutionResources]:
