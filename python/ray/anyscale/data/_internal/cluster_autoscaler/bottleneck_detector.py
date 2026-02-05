@@ -118,7 +118,7 @@ class NormalizedThroughputBottleneckDetector(BottleneckDetector):
                     "Productivity scores approximately equal (within tolerance). "
                     "No clear bottleneck, returning the most upstream operator."
                 )
-                return ops[0]
+                return list(defined_productivities)[0]
 
         return min(defined_productivities, key=defined_productivities.get)
 

@@ -105,7 +105,7 @@ class StubClusterAutoscalingOperator(SupportsClusterAutoscaling):
     def min_scheduling_resources(self) -> ExecutionResources:
         return self._min_scheduling_resources
 
-    def completed(self) -> bool:
+    def has_completed(self) -> bool:
         return self._completed
 
 
@@ -252,8 +252,15 @@ class TestNormalizedThroughputBottleneckDetector:
         # With a single operator, that operator is the bottleneck.
         assert bottleneck == op
 
-    def test_get_bottleneck_productivity_scores_approximately_equal(self):
+    def test_returns_first_running_operator_when_scores_approximately_equal(self):
+        op3 = StubClusterAutoscalingOperator(
+            _per_task_resource_allocation=ExecutionResources(cpu=1),
+            metrics=StubClusterAutoscalingMetrics(
+                num_output_blocks_per_task_s=1,
+            ),
+        )
         op2 = StubClusterAutoscalingOperator(
+            output_dependencies=[op3],
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
                 num_output_blocks_per_task_s=1,
@@ -265,16 +272,22 @@ class TestNormalizedThroughputBottleneckDetector:
             metrics=StubClusterAutoscalingMetrics(
                 num_output_blocks_per_task_s=1,
             ),
+            _completed=True,
         )
         resource_manager = StubResourceManager(global_limits=ExecutionResources(cpu=2))
         detector = NormalizedThroughputBottleneckDetector(
             resource_manager, "test-requester"
         )
 
-        bottleneck = detector.get_bottleneck([op1, op2])
+        bottleneck = detector.get_bottleneck([op1, op2, op3])
 
-        # We choose the most upstream operator to be the bottleneck when the scores are approximately equal.
-        assert bottleneck == op1
+        # When the scores are approximately equal, it's ambiguous which operator should
+        # be the bottleneck. In this case, we expect the detector to return the most
+        # upstream operator that is running rather than an arbitrary operator.
+        #
+        # In this example, op1 has completed, so op2 is the most upstream operator that
+        # is running. Therefore, op2 is the bottleneck.
+        assert bottleneck == op2
 
     def test_get_bottleneck_identifies_slower_operator(self):
         # op2 is fast (produces 12 blocks/s per task)
