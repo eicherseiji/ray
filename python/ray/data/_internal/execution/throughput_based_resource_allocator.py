@@ -85,10 +85,9 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
 
         op_task_resource_req = op.incremental_resource_usage()
 
+        budget = self._op_budgets[op]
         # Check if operator has enough resources to submit one new task
-        has_sufficient_budget = op_task_resource_req.satisfies_limit(
-            self._op_budgets[op]
-        )
+        has_sufficient_budget = op_task_resource_req.satisfies_limit(budget)
 
         # Handle the case when operator is allocated less than its incremental usage,
         # and can't therefore utilize its budget
@@ -106,23 +105,27 @@ class ThroughputBasedResourceAllocator(OpResourceAllocator):
             # Verify that operator's task have corresponding non-zero budget
             # available
             if op_task_resource_req.cpu > 0 and op_task_resource_req.gpu > 0:
-                non_zero_budget = (
-                    self._op_budgets[op].cpu > 0 and self._op_budgets[op].gpu > 0
-                )
+                non_zero_budget = budget.cpu > 0 and budget.gpu > 0
             elif op_task_resource_req.cpu > 0:
-                non_zero_budget = self._op_budgets[op].cpu > 0
+                non_zero_budget = budget.cpu > 0
             elif op_task_resource_req.gpu > 0:
-                non_zero_budget = self._op_budgets[op].gpu > 0
+                non_zero_budget = budget.gpu > 0
             else:
                 non_zero_budget = False
 
             has_sufficient_budget = not has_sufficient_allocation and non_zero_budget
 
+        # NOTE: We're falling back to 1 to make sure that the budget is non-zero
+        expected_pending_task_outputs_bytes = (
+            op.metrics.obj_store_mem_max_pending_output_per_task or 1
+        )
+
         return (
             has_sufficient_budget
             and
-            # Avoid scheduling if there's no more Object Store budget (for task outputs)
-            self._op_budgets[op].object_store_memory > 0
+            # Avoid scheduling if there's not enough Object Store budget to at least
+            # accommodate pending task outputs
+            budget.object_store_memory >= expected_pending_task_outputs_bytes
         )
 
     def max_task_output_bytes_to_read(self, op: PhysicalOperator) -> Optional[int]:

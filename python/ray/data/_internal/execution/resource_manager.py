@@ -863,13 +863,17 @@ class ReservationOpResourceAllocator(OpResourceAllocator):
         if budget is None:
             return True
 
+        # NOTE: We're falling back to 1 to make sure that the budget is non-zero
+        expected_pending_task_outputs_bytes = (
+            op.metrics.obj_store_mem_max_pending_output_per_task or 1
+        )
+
         return (
             op.incremental_resource_usage().satisfies_limit(budget)
             and
-            # Avoid scheduling if there's no more Object Store budget (for
-            # task outputs)
-            budget.object_store_memory
-            >= (op.metrics.obj_store_mem_max_pending_output_per_task or 0)
+            # Avoid scheduling if there's not enough Object Store budget to at least
+            # accommodate pending task outputs
+            budget.object_store_memory >= expected_pending_task_outputs_bytes
         )
 
     def get_budget(self, op: PhysicalOperator) -> Optional[ExecutionResources]:

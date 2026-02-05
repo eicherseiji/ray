@@ -1532,6 +1532,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         o2_metrics.average_bytes_outputs_per_task = 2000
         o2_metrics.average_rows_outputs_per_task = 20
         o2_metrics.num_tasks_submitted = 0
+        o2_metrics.obj_store_mem_max_pending_output_per_task = None
         o2._metrics = o2_metrics
 
         topo = build_streaming_topology(o2, ExecutionOptions())
@@ -1630,6 +1631,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         o2_metrics.average_bytes_outputs_per_task = 2000
         o2_metrics.average_rows_outputs_per_task = 20
         o2_metrics.num_tasks_submitted = 1
+        o2_metrics.obj_store_mem_max_pending_output_per_task = None
         o2._metrics = o2_metrics
 
         # o3 hasn't started yet (no outputs)
@@ -1640,6 +1642,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         o3_metrics.average_bytes_outputs_per_task = None
         o3_metrics.average_rows_outputs_per_task = None
         o3_metrics.num_tasks_submitted = 1  # Submitted but no outputs yet
+        o3_metrics.obj_store_mem_max_pending_output_per_task = None
         o3._metrics = o3_metrics
 
         topo = build_streaming_topology(o3, ExecutionOptions())
@@ -1725,6 +1728,10 @@ class TestThroughputBasedResourceAllocatorE2E:
             ray_remote_args={"num_cpus": 4, "num_gpus": 2},
             incremental_resource_usage=ExecutionResources(4, 2, 100),
         )
+
+        # Set target_max_block_size to None so obj_store_mem_max_pending_output_per_task
+        # returns None (making the budget check just > 0)
+        DataContext.get_current().target_max_block_size = None
 
         topo = build_streaming_topology(cpu_gpu_op, ExecutionOptions())
         # With baseline allocation, ops get exponentially decreasing shares
