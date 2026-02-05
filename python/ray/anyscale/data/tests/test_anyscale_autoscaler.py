@@ -29,12 +29,12 @@ def patch_autoscaling_coordinator():
     mock_coordinator = MagicMock()
 
     with patch(
-        "ray.anyscale.air._internal.autoscaling_coordinator.get_or_create_autoscaling_coordinator",
+        "ray.data._internal.cluster_autoscaler.default_autoscaling_coordinator.get_or_create_autoscaling_coordinator",
         return_value=mock_coordinator,
     ):
         # Patch ray.get in the autoscaling_coordinator module to avoid issues with MagicMock ObjectRefs
         with patch(
-            "ray.anyscale.air._internal.autoscaling_coordinator.ray.get",
+            "ray.data._internal.cluster_autoscaler.default_autoscaling_coordinator.ray.get",
             return_value=None,
         ):
             yield

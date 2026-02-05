@@ -4,9 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ray.anyscale.air._internal.autoscaling_coordinator import (
-    FakeAutoscalingCoordinator,
-)
 from ray.anyscale.data._internal.cluster_autoscaler import (
     BottleneckDetector,
     ClusterAutoscalingMetrics,
@@ -21,6 +18,9 @@ from ray.data._internal.cluster_autoscaler import (
     DefaultClusterAutoscaler,
     DefaultClusterAutoscalerV2,
     create_cluster_autoscaler,
+)
+from ray.data._internal.cluster_autoscaler.fake_autoscaling_coordinator import (
+    FakeAutoscalingCoordinator,
 )
 from ray.data._internal.cluster_autoscaler.resource_utilization_gauge import (
     ResourceUtilizationGauge,

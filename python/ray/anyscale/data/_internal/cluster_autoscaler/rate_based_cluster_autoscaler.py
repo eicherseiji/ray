@@ -9,7 +9,7 @@ from .bottleneck_detector import (
 )
 from .supports_cluster_autoscaling import SupportsClusterAutoscaling
 from ray._private.ray_constants import env_float, env_integer
-from ray.anyscale.air._internal.autoscaling_coordinator import (
+from ray.data._internal.cluster_autoscaler import (
     AutoscalingCoordinator,
     DefaultAutoscalingCoordinator,
 )

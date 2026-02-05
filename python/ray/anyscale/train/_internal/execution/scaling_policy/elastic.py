@@ -4,7 +4,7 @@ from functools import cached_property
 from typing import Dict, List, Optional
 
 import ray
-from ray.anyscale.air._internal.autoscaling_coordinator import (
+from ray.data._internal.cluster_autoscaler import (
     ResourceDict,
     ResourceRequestPriority,
     get_or_create_autoscaling_coordinator,

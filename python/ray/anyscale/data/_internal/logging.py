@@ -56,7 +56,7 @@ RAY_TURBO_DEFAULT_CONFIG = {
             "handlers": ["file", "console", "error_file"],
             "propagate": False,
         },
-        "ray.anyscale.air._internal.autoscaling_coordinator": {
+        "ray.data._internal.cluster_autoscaler.default_autoscaling_coordinator": {
             "level": "DEBUG",
             "handlers": ["file", "console", "error_file"],
             "propagate": False,

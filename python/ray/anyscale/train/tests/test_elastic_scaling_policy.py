@@ -4,11 +4,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from freezegun import freeze_time
 
-from ray.anyscale.air._internal.autoscaling_coordinator import ResourceRequestPriority
 from ray.anyscale.train._internal.execution.scaling_policy.elastic import (
     ElasticScalingPolicy,
 )
 from ray.anyscale.train.api.config import ScalingConfig
+from ray.data._internal.cluster_autoscaler import ResourceRequestPriority
 from ray.train.v2._internal.execution.callback import ControllerCallback
 from ray.train.v2._internal.execution.scaling_policy import NoopDecision, ResizeDecision
 from ray.train.v2._internal.execution.worker_group import (

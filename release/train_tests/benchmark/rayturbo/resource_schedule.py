@@ -9,9 +9,9 @@ from typing import List
 import psutil
 
 import ray
-from ray.anyscale.air._internal.autoscaling_coordinator import (
-    get_or_create_autoscaling_coordinator,
+from ray.data._internal.cluster_autoscaler import (
     ResourceRequestPriority,
+    get_or_create_autoscaling_coordinator,
 )
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 from ray.util.state import list_actors
