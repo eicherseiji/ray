@@ -640,7 +640,7 @@ if RAY_SERVE_THROUGHPUT_OPTIMIZED:
     RAY_SERVE_ENABLE_DIRECT_INGRESS = (
         get_env_bool("RAY_SERVE_ENABLE_DIRECT_INGRESS", "1")
         and os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "1") == "1"
-    )
+    ) or os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
 
 # The maximum allowed RPC latency in milliseconds.
 # This is used to detect and warn about long RPC latencies
