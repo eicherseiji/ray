@@ -26,8 +26,8 @@ from starlette.types import Receive, Scope, Send
 
 import ray
 from ray.anyscale.serve._private.http_util import ASGIDIReceiveProxy
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
+from ray.serve._private.constants import (
+    RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
     RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S,
     RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
     RAY_SERVE_ENABLE_DIRECT_INGRESS,
@@ -472,7 +472,7 @@ class AnyscaleReplica(ReplicaBase):
             options=[
                 (
                     "grpc.max_receive_message_length",
-                    ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
+                    RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
                 )
             ]
         )

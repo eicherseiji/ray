@@ -4,10 +4,10 @@ from typing import List, Optional
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_FREEZE_GC_ON_STARTUP,
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
-    RAY_SERVE_ENABLE_DIRECT_INGRESS,
 )
 from ray.serve._private.common import RequestProtocol
 from ray.serve._private.constants import (
+    RAY_SERVE_ENABLE_DIRECT_INGRESS,
     RAY_SERVE_LOG_TO_STDERR,
     RAY_SERVE_REQUEST_PATH_LOG_BUFFER_SIZE,
     RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP,

@@ -20,6 +20,8 @@ from ray._common.test_utils import SignalActor, Semaphore
 from ray._private.test_utils import wait_for_condition
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
+)
+from ray.serve._private.constants import (
     RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT,
     RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT,
     RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT,

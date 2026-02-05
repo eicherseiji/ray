@@ -1,7 +1,7 @@
 import grpc
 
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
+from ray.serve._private.constants import (
+    RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
 )
 from ray.serve._private.common import RunningReplicaInfo
 from ray.serve._private.request_router.common import PendingRequest
@@ -34,7 +34,7 @@ class AnyscaleRunningReplica(RunningReplica):
                 options=[
                     (
                         "grpc.max_receive_message_length",
-                        ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
+                        RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
                     )
                 ],
             )
