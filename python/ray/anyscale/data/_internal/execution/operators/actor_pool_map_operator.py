@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 from ray.actor import ActorHandle
 from ray.anyscale.data._internal.util.cached_ray_internals import (
@@ -8,7 +8,7 @@ from ray.anyscale.data._internal.util.cached_ray_internals import (
     get_local_ongoing_lineage_reconstruction_tasks,
 )
 from ray.anyscale.data._internal.util.heapdict import heapdict
-from ray.data._internal.execution.bundle_queue import BaseBundleQueue
+from ray.data._internal.execution.bundle_queue import QueueWithRemoval
 from ray.data._internal.execution.interfaces import (
     ExecutionResources,
     ReportsExtraResourceUsage,
@@ -73,33 +73,42 @@ class _ActorTaskSelectorImpl(_ActorTaskSelector):
     ):
         super().__init__(actor_pool)
 
-    def _valid_actors_in_pool(self) -> List[ActorHandle]:
-        # Filter out actors that are invalid, i.e. actors with number of tasks in
-        # flight >= _max_tasks_in_flight or actor_state is not ALIVE.
+        self._draining_actors: Set[ActorHandle] = set()
+        self._actor_node_id_map: Dict[str, str] = dict()
 
-        draining_node_ids = get_draining_nodes()
-        actor_locations = get_actor_locations(tuple(self._actor_pool.get_logical_ids()))
-        draining_actors = {
+    def refresh_state(self):
+        self._actor_node_id_map = get_actor_locations(
+            tuple(self._actor_pool.get_logical_ids())
+        )
+
+        draining_nodes = get_draining_nodes()
+        # Filter out actors that are invalid, i.e. actors that are running on
+        # draining nodes
+        self._draining_actors = {
             actor
             for actor in self._actor_pool.running_actors()
-            if actor_locations[self._actor_pool._actor_to_logical_id[actor]]
-            in draining_node_ids
+            if self._get_actor_node_id(actor) in draining_nodes
         }
 
+    def _valid_actors_in_pool(self) -> List[ActorHandle]:
         return [
             actor
             for actor in self._actor_pool.running_actors()
             if self._actor_pool.running_actors()[actor].num_tasks_in_flight
             < self._actor_pool.max_tasks_in_flight_per_actor()
             and not self._actor_pool.running_actors()[actor].is_restarting
-            and actor not in draining_actors
+            and actor not in self._draining_actors
         ]
+
+    def _get_actor_node_id(self, actor: ActorHandle) -> Optional[str]:
+        return self._actor_node_id_map.get(self._actor_pool.get_actor_id(actor), None)
 
     def _build_node_to_actor_map(
         self, valid_actors: List[ActorHandle]
     ) -> Dict[str, List[ActorHandle]]:
         node_to_actor_map: Dict[str, List[ActorHandle]] = defaultdict(list)
         for actor in valid_actors:
+            # TODO this location is never updated
             actor_node = self._actor_pool.running_actors()[actor].actor_location
             node_to_actor_map[actor_node].append(actor)
         return node_to_actor_map
@@ -194,24 +203,33 @@ class _ActorTaskSelectorImpl(_ActorTaskSelector):
             ):
                 actor_busyness_rank_heap[actor] = actor_busyness_rank_heap[actor] + 1
 
+    def can_schedule_task(self) -> bool:
+        # NOTE: This method can only depend on snapshotted state, refreshed
+        #       inside `refresh_state(...)` method, so that it's consistent
+        #       with `select_actors(...)` method.
+        #
+        # TODO(DATA-1848) revisit scheduling protocol to make invariants explicit
+        schedulable_actors = self._valid_actors_in_pool()
+
+        return len(schedulable_actors) > 0
+
     # NOTE: This implementation has an implicit assumption that the actor pool map operator
     # will launch a task with the selected actors emitted from the operator as they are emitted.
     # E.g. for every actor selected, a task should be submitted and the pool's on_task_submitted
     # method should be called with the actor. If the operator doesn't, there might be correctness
     # issues.
     def select_actors(
-        self, input_queue: BaseBundleQueue, actor_locality_enabled: bool
+        self,
+        input_queue: QueueWithRemoval,
+        actor_locality_enabled: bool,
+        strict: bool,
     ) -> Iterator[Tuple[RefBundle, ActorHandle]]:
-        if not self._actor_pool.running_actors():
-            # Actor pool is empty or all actors are still pending.
-            return
 
-        # Initialize various data structures to enable more efficient task selection
+        assert (
+            not strict or self.can_schedule_task()
+        ), "select_actors(...) might not be invoked unless can_schedule_task(...) returns true"
+
         valid_actors = self._valid_actors_in_pool()
-
-        if len(valid_actors) == 0:
-            # No valid actors, return immediately.
-            return
 
         # Initialized node to actor mapping if actor locality is enabled.
         if actor_locality_enabled:

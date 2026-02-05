@@ -25,7 +25,7 @@ def get_draining_nodes() -> Dict[str, int]:
 
 
 @timed_cache(ttl=1)
-def get_actor_locations(logical_actor_ids: Tuple[str]):
+def get_actor_locations(logical_actor_ids: Tuple[str]) -> Dict[str, str]:
     """Get the actor locations from logical actor ids.
     NOTE: This function is not thread-safe"""
     return ray.get(

@@ -53,10 +53,10 @@ def test_construct_input_output_datasets_merges_common_facets(
     class FakeOperator:
         def __init__(self, schema_names, schema_types, is_read=True):
             if is_read:
-                self._datasource = SimpleNamespace()
-                self._datasource_or_legacy_reader = SimpleNamespace()
+                self.datasource = SimpleNamespace()
+                self.datasource_or_legacy_reader = SimpleNamespace()
             else:
-                self._datasink_or_legacy_datasource = SimpleNamespace()
+                self.datasink_or_legacy_datasource = SimpleNamespace()
             self.schema_names = schema_names
             self.schema_types = schema_types
 

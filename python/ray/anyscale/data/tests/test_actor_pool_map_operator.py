@@ -11,16 +11,123 @@ from ray.anyscale.data._internal.execution.operators.actor_pool_map_operator imp
     ActorPoolMapOperator,
     _ActorTaskSelectorImpl,
 )
+from ray.data._internal.execution.bundle_queue import HashLinkedQueue
 from ray.data._internal.execution.operators.actor_pool_map_operator import (
     _ActorPool,
     _ActorTaskSelector,
 )
+from ray.data._internal.execution.util import make_ref_bundles
 from ray.data.tests.conftest import *  # noqa: F403
 
 
 class AnyscaleTestActorPool(oss_test_module.TestActorPool):
     def _create_task_selector(self, pool: _ActorPool) -> _ActorTaskSelector:
         return ActorPoolMapOperator._create_task_selector(pool)
+
+    @patch(
+        "ray.anyscale.data._internal.execution.operators."
+        "actor_pool_map_operator.get_draining_nodes"
+    )
+    @patch(
+        "ray.anyscale.data._internal.execution.operators."
+        "actor_pool_map_operator.get_actor_locations"
+    )
+    def test_selector_excludes_actors_on_draining_nodes(
+        self, mock_get_actor_locations, mock_get_draining_nodes
+    ):
+        """Test that actors on draining nodes are excluded from scheduling.
+
+        Verifies that:
+            - can_schedule_task() returns False when all actors are on draining nodes
+            - can_schedule_task() returns True when at least one actor is on non-draining node
+            - select_actors() does not yield actors on draining nodes
+        """
+
+        pool = self._create_actor_pool(max_tasks_in_flight=1)
+
+        # Add actors on different nodes
+        actor1 = self._add_ready_actor(pool, node_id="node1")
+        actor2 = self._add_ready_actor(pool, node_id="node2")
+
+        assert pool.num_running_actors() == 2
+
+        # Set up mock to return actor locations
+        mock_get_actor_locations.return_value = {
+            pool.get_actor_id(actor1): "node1",
+            pool.get_actor_id(actor2): "node2",
+        }
+
+        selector = self._create_task_selector(pool)
+
+        def make_queue(n):
+            bundles = make_ref_bundles([[i] for i in range(n)])
+            queue = HashLinkedQueue()
+            for bundle in bundles:
+                queue.add(bundle)
+            return queue
+
+        # Case 1: No draining nodes, both actors should be schedulable
+        mock_get_draining_nodes.return_value = set()
+        selector.refresh_state()
+        assert selector.can_schedule_task()
+
+        # Verify select_actors yields both actors
+        queue = make_queue(2)
+        results = list(
+            selector.select_actors(queue, actor_locality_enabled=False, strict=True)
+        )
+        assert len(results) == 2
+        selected_actors = {actor for _, actor in results}
+        assert selected_actors == {actor1, actor2}
+
+        # Case 2: node1 is draining, only actor2 should be schedulable
+        mock_get_draining_nodes.return_value = {"node1"}
+        selector.refresh_state()
+        assert selector.can_schedule_task()
+
+        # Verify select_actors only yields actor2
+        queue = make_queue(1)
+        results = list(
+            selector.select_actors(queue, actor_locality_enabled=False, strict=True)
+        )
+        assert len(results) == 1
+        selected_actors = {actor for _, actor in results}
+
+        assert selected_actors == {actor2}
+
+        # Case 3: Both nodes draining - no actors should be schedulable
+        mock_get_draining_nodes.return_value = {"node1", "node2"}
+        selector.refresh_state()
+        assert not selector.can_schedule_task()
+
+        # select_actors(strict=True), should raise
+        queue = make_queue(1)
+        with pytest.raises(AssertionError):
+            list(
+                selector.select_actors(queue, actor_locality_enabled=False, strict=True)
+            )
+
+        # select_actors(strict=False) returns empty iter
+        queue = make_queue(1)
+        results = list(
+            selector.select_actors(queue, actor_locality_enabled=False, strict=False)
+        )
+        assert len(results) == 0
+
+        # Case 4: node1 stops draining (actor1 becomes schedulable again)
+        mock_get_draining_nodes.return_value = {"node2"}
+        selector.refresh_state()
+        assert selector.can_schedule_task()
+
+        # Verify select_actors only yields actor1
+        queue = make_queue(1)
+        results = list(
+            selector.select_actors(queue, actor_locality_enabled=False, strict=True)
+        )
+        assert len(results) == 1
+        selected_actors = {actor for _, actor in results}
+
+        assert selected_actors == {actor1}
 
 
 class TestActorTaskSelectorImpl(unittest.TestCase):

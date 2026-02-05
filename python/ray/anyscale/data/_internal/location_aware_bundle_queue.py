@@ -155,3 +155,6 @@ class LocationAwareBundleQueue(QueueWithRemoval):
     @override
     def num_rows(self) -> int:
         return self._hash_linked.num_rows()
+
+    def num_bundles(self) -> int:
+        return self._hash_linked.num_bundles()

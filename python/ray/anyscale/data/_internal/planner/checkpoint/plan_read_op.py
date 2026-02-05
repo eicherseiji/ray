@@ -21,9 +21,9 @@ def plan_read_op_with_checkpoint_filter(
         data_context.checkpoint_config is not None
         and data_context.checkpoint_config.generated_id_column
     ):
-        assert isinstance(op._datasource_or_legacy_reader, ParquetReader), (
+        assert isinstance(op.datasource_or_legacy_reader, ParquetReader), (
             f"For checkpointing with `generated_id_column`, Read operator must use a "
-            f"ParquetReader, but got {type(op._datasource_or_legacy_reader)}"
+            f"ParquetReader, but got {type(op.datasource_or_legacy_reader)}"
         )
 
     # Delegate to OSS implementation
