@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -18,7 +18,6 @@ from ray.anyscale.data._internal.cluster_autoscaler.rate_based_cluster_autoscale
     _to_resource_bundle,
 )
 from ray.data._internal.cluster_autoscaler import (
-    CLUSTER_AUTOSCALER_ENV_KEY,
     DefaultClusterAutoscaler,
     DefaultClusterAutoscalerV2,
     create_cluster_autoscaler,
@@ -323,9 +322,11 @@ class TestNormalizedThroughputBottleneckDetector:
         assert bottleneck == op1
 
 
-def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):
-    monkeypatch.setenv(CLUSTER_AUTOSCALER_ENV_KEY, "invalid")
-
+@patch(
+    "ray.data._internal.cluster_autoscaler.DEFAULT_CLUSTER_AUTOSCALER_VERSION",
+    "invalid",
+)
+def test_invalid_cluster_autoscaler_env_value_raises_value_error():
     with pytest.raises(ValueError):
         create_cluster_autoscaler(
             topology={},
@@ -344,18 +345,20 @@ def test_invalid_cluster_autoscaler_env_value_raises_value_error(monkeypatch):
     ],
 )
 def test_cluster_autoscaler_env_value_creates_correct_autoscaler(
-    monkeypatch, cluster_autoscaler_env_value, expected_autoscaler_type
+    cluster_autoscaler_env_value, expected_autoscaler_type
 ):
-    monkeypatch.setenv(CLUSTER_AUTOSCALER_ENV_KEY, cluster_autoscaler_env_value)
+    with patch(
+        "ray.data._internal.cluster_autoscaler.DEFAULT_CLUSTER_AUTOSCALER_VERSION",
+        cluster_autoscaler_env_value,
+    ):
+        autoscaler = create_cluster_autoscaler(
+            topology={},
+            data_context=DataContext(execution_options=ExecutionOptions()),
+            resource_manager=MagicMock(spec=ResourceManager),
+            execution_id="test",
+        )
 
-    autoscaler = create_cluster_autoscaler(
-        topology={},
-        data_context=DataContext(execution_options=ExecutionOptions()),
-        resource_manager=MagicMock(spec=ResourceManager),
-        execution_id="test",
-    )
-
-    assert isinstance(autoscaler, expected_autoscaler_type)
+        assert isinstance(autoscaler, expected_autoscaler_type)
 
 
 @pytest.mark.parametrize("cpu_usage", [0.25, 0.9])
