@@ -198,6 +198,19 @@ def _patch_anyscale_checkpoint():
         CheckpointConfig.generated_id_column = None
 
 
+def _patch_databricks_credentials():
+    """Patch Databricks credential resolution to support Anyscale file-based credentials."""
+    from .datasource.databricks_file_credentials import (
+        FileCredentialProvider,
+        resolve_credential_provider,
+    )
+    from ray.data._internal.datasource import databricks_credentials
+
+    # Make FileCredentialProvider available in OSS module for external access
+    databricks_credentials.FileCredentialProvider = FileCredentialProvider
+    databricks_credentials.resolve_credential_provider = resolve_credential_provider
+
+
 def apply_anyscale_patches():
     """Apply Anyscale-specific patches for Ray Data.
 
@@ -232,8 +245,11 @@ def apply_anyscale_patches():
     # Register Anyscale lineage tracking callback
     _register_anyscale_lineage_tracking_callback()
 
-    # Patch Anyscale checkpoing
+    # Patch Anyscale checkpoint
     _patch_anyscale_checkpoint()
+
+    # Patch Databricks credentials to support Anyscale file-based credentials
+    _patch_databricks_credentials()
 
     from .api.context_mixin import DataContextMixin
     from .api.dataset_mixin import DatasetMixin
