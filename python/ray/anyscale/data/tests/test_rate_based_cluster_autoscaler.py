@@ -252,7 +252,7 @@ class TestNormalizedThroughputBottleneckDetector:
         # With a single operator, that operator is the bottleneck.
         assert bottleneck == op
 
-    def test_returns_first_running_operator_when_scores_approximately_equal(self):
+    def test_returns_op_with_least_osm_when_scores_approximately_equal(self):
         op3 = StubClusterAutoscalingOperator(
             _per_task_resource_allocation=ExecutionResources(cpu=1),
             metrics=StubClusterAutoscalingMetrics(
@@ -274,7 +274,14 @@ class TestNormalizedThroughputBottleneckDetector:
             ),
             _completed=True,
         )
-        resource_manager = StubResourceManager(global_limits=ExecutionResources(cpu=2))
+        op_usage = {
+            op1: ExecutionResources.zero(),
+            op2: ExecutionResources(cpu=1, object_store_memory=0),
+            op3: ExecutionResources(cpu=1, object_store_memory=1),
+        }
+        resource_manager = StubResourceManager(
+            global_limits=ExecutionResources(cpu=2), op_usage=op_usage
+        )
         detector = NormalizedThroughputBottleneckDetector(
             resource_manager, "test-requester"
         )
@@ -282,11 +289,11 @@ class TestNormalizedThroughputBottleneckDetector:
         bottleneck = detector.get_bottleneck([op1, op2, op3])
 
         # When the scores are approximately equal, it's ambiguous which operator should
-        # be the bottleneck. In this case, we expect the detector to return the most
-        # upstream operator that is running rather than an arbitrary operator.
+        # be the bottleneck. In this case, we expect the detector to return the running
+        # operator with the least object store memory.
         #
-        # In this example, op1 has completed, so op2 is the most upstream operator that
-        # is running. Therefore, op2 is the bottleneck.
+        # In this example, op1 has completed, and op2 uses less object store memory than
+        # op3. Therefore, op2 is the bottleneck.
         assert bottleneck == op2
 
     def test_get_bottleneck_identifies_slower_operator(self):

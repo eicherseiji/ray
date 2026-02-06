@@ -108,17 +108,23 @@ class NormalizedThroughputBottleneckDetector(BottleneckDetector):
         # meaningful bottleneck. This happens on CPU-only clusters where the
         # throughput-balanced allocation distributes CPUs proportionally to each
         # operator's needs, resulting in nearly identical productivity scores.
-        # In this case, we return None so the autoscaler can make a deliberate choice
-        # (e.g., scale the most-upstream operator) rather than picking an arbitrary
-        # operator based on floating-point noise.
+        # In this case, we return the operator with the least object store memory rather
+        # than picking an arbitrary operator based on floating-point noise. We use
+        # object store memory as a heuristic because it's consistent with how we
+        # select which operators to run in the streaming executor.
         scores = list(defined_productivities.values())
         if len(scores) > 1:
             if np.allclose(scores, max(scores), rtol=PRODUCTIVITY_RELATIVE_TOLERANCE):
                 logger.debug(
                     "Productivity scores approximately equal (within tolerance). "
-                    "No clear bottleneck, returning the most upstream operator."
+                    "No clear bottleneck, returning the operator with the least "
+                    "object store memory."
                 )
-                return list(defined_productivities)[0]
+
+                def key(op: SupportsClusterAutoscaling) -> float:
+                    return self._resource_manager.get_op_usage(op).object_store_memory
+
+                return min(defined_productivities, key=key)
 
         return min(defined_productivities, key=defined_productivities.get)
 
@@ -175,7 +181,7 @@ class NormalizedThroughputBottleneckDetector(BottleneckDetector):
         valid_ops = [op for op in ops if op.metrics.num_output_blocks_per_task_s]
 
         if not valid_ops:
-            return {op: None for op in ops}
+            return dict.fromkeys(ops)
 
         global_limits = self._resource_manager.get_global_limits()
         assert global_limits is not None, "`get_global_limits` should never return None"
@@ -227,7 +233,7 @@ class NormalizedThroughputBottleneckDetector(BottleneckDetector):
         # resources to run the pipeline, then don't return any allocations. These edge
         # cases are unlikely.
         if math.isinf(optimal_rate) or optimal_rate == 0:
-            return {op: None for op in ops}
+            return dict.fromkeys(ops)
 
         optimal_num_tasks_per_op = optimal_rate / task_rate_per_op
         assert np.isfinite(optimal_num_tasks_per_op).all(), (optimal_num_tasks_per_op,)
