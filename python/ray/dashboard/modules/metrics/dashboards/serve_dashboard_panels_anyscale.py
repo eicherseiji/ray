@@ -617,7 +617,7 @@ DEPLOYMENT_DEEP_DIVE_PANELS = [
         unit="short",
         targets=[
             Target(
-                expr='max(rate(ray_serve_deployment_request_counter_total{{application=~"$Application", deployment=~"$Deployment", replica=~"$Replica",{global_filters}}}[5m])) by (application, deployment) / clamp_min(avg(rate(ray_serve_deployment_request_counter_total{{application=~"$Application", deployment=~"$Deployment", replica=~"$Replica",{global_filters}}}[5m])) by (application, deployment), 0.001)',
+                expr='max(sum(rate(ray_serve_deployment_request_counter_total{{application=~"$Application", deployment=~"$Deployment", replica=~"$Replica",{global_filters}}}[1m])) by (application, deployment, replica)) by (application, deployment) / clamp_min(avg(sum(rate(ray_serve_deployment_request_counter_total{{application=~"$Application", deployment=~"$Deployment", replica=~"$Replica",{global_filters}}}[1m])) by (application, deployment, replica)) by (application, deployment), 0.001)',
                 legend="{{application}} {{deployment}}",
             )
         ],
@@ -625,6 +625,23 @@ DEPLOYMENT_DEEP_DIVE_PANELS = [
         fill=0,
         stack=False,
         grid_pos=GridPos(16, 61, 8, 8),
+    ),
+    # Row 10: Request Distribution
+    Panel(
+        id=2025,
+        title="Request Rate Distribution Across Replicas",
+        description="Request rate (req/s) for each replica over 1m window. Each line represents a replica. Helps identify hot replicas or uneven load distribution. Recommend filtering for a specific deployment to see the request rate distribution for that deployment.",
+        unit="reqps",
+        targets=[
+            Target(
+                expr='sum(rate(ray_serve_deployment_request_counter_total{{application=~"$Application", deployment=~"$Deployment", replica=~"$Replica",{global_filters}}}[1m])) by (application, deployment, replica) > 0',
+                legend="{{replica}}",
+            ),
+        ],
+        template=PanelTemplate.GRAPH,
+        fill=0,
+        stack=False,
+        grid_pos=GridPos(0, 69, 24, 8),
     ),
 ]
 
