@@ -1,0 +1,40 @@
+load("@py_deps_py310//:requirements.bzl", ci_require = "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+py_binary(
+    name = "generate_and_copy_images",
+    srcs = ["generate_and_copy_images.py"],
+    data = ["anyscale_image_copy_job.py"],
+    exec_compatible_with = ["//bazel:py3"],
+    deps = [
+        ci_require("anyscale"),
+    ],
+)
+
+py_test(
+    name = "test_anyscale_image_copy_job",
+    srcs = ["test_anyscale_image_copy_job.py"],
+    data = ["anyscale_image_copy_job.py"],
+    exec_compatible_with = ["//bazel:py3"],
+    tags = [
+        "ci_unit",
+        "team:ci",
+    ],
+    deps = [
+        ci_require("pytest"),
+    ],
+)
+
+py_test(
+    name = "test_generate_and_copy_images",
+    srcs = ["test_generate_and_copy_images.py"],
+    data = ["generate_and_copy_images.py"],
+    exec_compatible_with = ["//bazel:py3"],
+    tags = [
+        "ci_unit",
+        "team:ci",
+    ],
+    deps = [
+        ci_require("pytest"),
+    ],
+)

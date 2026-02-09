@@ -15,6 +15,21 @@ from ray.exceptions import RayTaskError
 from ray.tests.conftest import *  # noqa
 
 
+@pytest.fixture(params=[True, False])
+def join_data_context(request):
+    """Fixture to handle join context in both OSS and RT.
+    In OSS: No-op (request.param is None)
+    In RT: Runs tests with both Polars (True) and Arrow (False) joins
+    """
+    ctx = DataContext.get_current()
+    original = ctx.use_polars_join
+    ctx.use_polars_join = request.param
+
+    yield request.param
+
+    ctx.use_polars_join = original
+
+
 @pytest.mark.parametrize(
     "num_rows_left,num_rows_right,partition_size_hint",
     [
@@ -28,6 +43,7 @@ from ray.tests.conftest import *  # noqa
 )
 def test_simple_inner_join(
     ray_start_regular_shared_2_cpus,
+    join_data_context,
     num_rows_left: int,
     num_rows_right: int,
     partition_size_hint: Optional[int],
@@ -94,6 +110,7 @@ def test_simple_inner_join(
 )
 def test_simple_left_right_outer_semi_anti_join(
     ray_start_regular_shared_2_cpus,
+    join_data_context,
     join_type,
     num_rows_left,
     num_rows_right,
@@ -182,6 +199,7 @@ def test_simple_left_right_outer_semi_anti_join(
 )
 def test_simple_full_outer_join(
     ray_start_regular_shared_2_cpus,
+    join_data_context,
     num_rows_left,
     num_rows_right,
 ):
@@ -232,7 +250,12 @@ def test_simple_full_outer_join(
 
 @pytest.mark.parametrize("left_suffix", [None, "_left"])
 @pytest.mark.parametrize("right_suffix", [None, "_right"])
-def test_simple_self_join(ray_start_regular_shared_2_cpus, left_suffix, right_suffix):
+def test_simple_self_join(
+    ray_start_regular_shared_2_cpus,
+    join_data_context,
+    left_suffix,
+    right_suffix,
+):
     # NOTE: We override max-block size to make sure that in cases when a partition
     #       size hint is not provided, we're not over-estimating amount of memory
     #       required for the aggregators
@@ -261,7 +284,12 @@ def test_simple_self_join(ray_start_regular_shared_2_cpus, left_suffix, right_su
         with pytest.raises(RayTaskError) as exc_info:
             joined.count()
 
-        assert 'Field "double" exists 2 times' in str(exc_info.value.cause)
+        if not join_data_context:
+            assert 'Field "double" exists 2 times' in str(exc_info.value.cause)
+        else:
+            assert "Left and right columns suffixes cannot be both None" in str(
+                exc_info.value.cause
+            )
     else:
         joined_pd = joined.to_pandas()
 
@@ -277,7 +305,10 @@ def test_simple_self_join(ray_start_regular_shared_2_cpus, left_suffix, right_su
         assert rows_same(expected_pd, joined_pd), "Expected contents to be same"
 
 
-def test_invalid_join_config(ray_start_regular_shared_2_cpus):
+def test_invalid_join_config(
+    ray_start_regular_shared_2_cpus,
+    join_data_context,
+):
     ds = ray.data.range(32)
 
     with pytest.raises(ValueError) as exc_info:
@@ -306,7 +337,9 @@ def test_invalid_join_config(ray_start_regular_shared_2_cpus):
 
 @pytest.mark.parametrize("join_type", [jt for jt in JoinType])  # noqa: C416
 def test_invalid_join_not_matching_key_columns(
-    ray_start_regular_shared_2_cpus, join_type
+    ray_start_regular_shared_2_cpus,
+    join_data_context,
+    join_type,
 ):
     # Case 1: Check on missing key column
     empty_ds = ray.data.range(0)

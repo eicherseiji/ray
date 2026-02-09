@@ -1,0 +1,46 @@
+# Unit tests for turbo.rules.txt (RayTurbo-specific rules)
+#
+# Format: file_path: tag1 tag2 tag3
+
+# === Rules file self-reference ===
+.buildkite/turbo.rules.txt: tools
+
+# === Anyscale Go directories ===
+anyscale/go/main.go: gotools
+anyscale/go/cmd/wanda/main.go: gotools
+
+# === Anyscale ML ===
+anyscale/ci/buildkite/ml.rayci.yml: ml ml-turbo
+python/ray/anyscale/train/trainer.py: ml ml-turbo
+
+# === Anyscale Serve ===
+anyscale/ci/buildkite/serve.rayci.yml: serve
+anyscale/ci/buildkite/serve_di_test_names.txt: serve
+python/ray/anyscale/serve/config.py: serve
+
+# === Anyscale Data ===
+anyscale/ci/buildkite/data.rayci.yml: data data-turbo ml ml-turbo train linux_wheels
+python/ray/anyscale/data/dataset.py: data data-turbo ml ml-turbo train linux_wheels
+
+# === Anyscale Lineage ===
+anyscale/ci/buildkite/lineage.rayci.yml: lineage
+python/ray/anyscale/lineage/tracker.py: lineage
+
+# === Anyscale Runtime ===
+anyscale/ci/buildkite/anyscaleruntime.rayci.yml: anyscaleruntime
+anyscaleruntime/main.py: anyscaleruntime
+
+# === Anyscale Core ===
+anyscale/ci/buildkite/core.rayci.yml: python core-turbo linux_wheels
+python/ray/anyscale/util.py: python core-turbo linux_wheels
+
+# === Anyscale Safetensors ===
+anyscale/ci/buildkite/safetensors.rayci.yml: safetensors
+python/ray/anyscale/safetensors/loader.py: safetensors
+
+# === Anyscale fallback (other anyscale/ files) ===
+anyscale/ci/config-premerge.yaml: docker tools
+
+# === Files not matching any rule (no tags) ===
+python/ray/core.py:
+some/random/file.txt:

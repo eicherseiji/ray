@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_object_dtype, is_scalar, is_string_dtype
 
+from ray.anyscale.data._internal.block import OptimizedTableBlockMixin
+from ray.anyscale.data._internal.pandas_block import _OptimizedPandasRow
 from ray.data._internal.numpy_support import convert_to_numpy
 from ray.data._internal.row import row_repr, row_repr_pretty, row_str
 from ray.data._internal.table_block import TableBlockAccessor, TableBlockBuilder
@@ -208,6 +210,9 @@ class PandasBlockColumnAccessor(BlockColumnAccessor):
         hashes = df.hash_rows().cast(pl.Int64, wrap_numerical=True)
         return hashes.to_pandas()
 
+    def top_k(self, k: int) -> BlockColumn:
+        return pd.Series(self._column.value_counts().head(k).index)
+
     def unique(self) -> BlockColumn:
 
         pd = lazy_import_pandas()
@@ -276,7 +281,7 @@ class PandasBlockColumnAccessor(BlockColumnAccessor):
 
         return self._column.to_numpy(copy=not zero_copy_only)
 
-    def _as_arrow_compatible(self) -> Union[List[Any], "pyarrow.Array"]:
+    def _to_arrow_compatible_container(self) -> Union[List[Any], "pyarrow.Array"]:
         return self.to_pylist()
 
     def _is_all_null(self):
@@ -350,15 +355,14 @@ class PandasBlockBuilder(TableBlockBuilder):
 PandasBlockSchema = collections.namedtuple("PandasBlockSchema", ["names", "types"])
 
 
-class PandasBlockAccessor(TableBlockAccessor):
-    ROW_TYPE = PandasRow
+class PandasBlockAccessor(OptimizedTableBlockMixin, TableBlockAccessor):
+    ROW_TYPE = _OptimizedPandasRow
 
     def __init__(self, table: "pandas.DataFrame"):
         super().__init__(table)
 
-    def _get_row(self, index: int) -> PandasRow:
-        base_row = self.slice(index, index + 1, copy=False)
-        return PandasRow(base_row)
+    def _get_row(self, index: int) -> _OptimizedPandasRow:
+        return self.ROW_TYPE(self._table, index)
 
     def column_names(self) -> List[str]:
         return self._table.columns.tolist()

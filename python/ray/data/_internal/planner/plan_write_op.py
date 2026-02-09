@@ -1,6 +1,6 @@
 import itertools
 import uuid
-from typing import Callable, Iterator, List, Union
+from typing import TYPE_CHECKING, Callable, Iterator, List, Union
 
 from ray.data._internal.execution.interfaces import PhysicalOperator
 from ray.data._internal.execution.interfaces.task_context import TaskContext
@@ -9,11 +9,13 @@ from ray.data._internal.execution.operators.map_transformer import (
     BlockMapTransformFn,
     MapTransformer,
 )
-from ray.data._internal.logical.operators import Write
 from ray.data.block import Block, BlockAccessor
 from ray.data.context import DataContext
 from ray.data.datasource.datasink import Datasink
 from ray.data.datasource.datasource import Datasource
+
+if TYPE_CHECKING:
+    from ray.data._internal.logical.operators import Write
 
 WRITE_UUID_KWARG_NAME = "write_uuid"
 
@@ -71,7 +73,7 @@ def generate_collect_write_stats_fn() -> BlockMapTransformFn:
 
 
 def plan_write_op(
-    op: Write,
+    op: "Write",
     physical_children: List[PhysicalOperator],
     data_context: DataContext,
 ) -> PhysicalOperator:
@@ -83,7 +85,7 @@ def plan_write_op(
 
 
 def _plan_write_op_internal(
-    op: Write,
+    op: "Write",
     physical_children: List[PhysicalOperator],
     data_context: DataContext,
     extra_transformations: List[BlockMapTransformFn],

@@ -80,6 +80,13 @@ from ray.serve.schema import (
 from ray.util import metrics as ray_metrics
 from ray.util.placement_group import PlacementGroup
 
+# isort: off
+from ray.anyscale.serve._private.constants import (
+    ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S,
+)
+
+# isort: on
+
 logger = logging.getLogger(SERVE_LOGGER_NAME)
 
 
@@ -3573,6 +3580,8 @@ class DeploymentStateManager:
 
         self._deployment_states: Dict[DeploymentID, DeploymentState] = {}
         self._app_deployment_mapping: Dict[str, Set[str]] = defaultdict(set)
+        self._all_deployments_healthy: bool = False
+        self._last_became_stable_at: Optional[float] = None
 
         # Metric for tracking deployment status
         self._deployment_status_gauge = ray_metrics.Gauge(
@@ -3944,8 +3953,7 @@ class DeploymentStateManager:
             deployment_state.check_curr_status()
 
         # STEP 3: Drain nodes
-        draining_nodes = self._cluster_node_info_cache.get_draining_nodes()
-        allow_new_compaction = len(draining_nodes) == 0 and all(
+        all_deployments_healthy = all(
             ds.curr_status_info.status == DeploymentStatus.HEALTHY
             # TODO(zcin): Make sure that status should never be healthy if
             # the number of running replicas at target version is not at
@@ -3956,7 +3964,24 @@ class DeploymentStateManager:
             and len(ds._replicas.get()) == ds.target_num_replicas
             for ds in self._deployment_states.values()
         )
+        if not self._all_deployments_healthy and all_deployments_healthy:
+            self._last_became_stable_at = time.time()
+
+        self._all_deployments_healthy = all_deployments_healthy
+
+        draining_nodes = self._cluster_node_info_cache.get_draining_nodes()
         if RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY:
+            # Only allow new compaction if there are no externally draining nodes,
+            # and all deployments have been stable for
+            # ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S seconds (5min by default)
+            allow_new_compaction = (
+                len(draining_nodes) == 0
+                and self._all_deployments_healthy
+                and (
+                    time.time() - self._last_became_stable_at
+                    > ANYSCALE_RAY_SERVE_NODE_COMPACTION_DELAY_S
+                )
+            )
             # Tuple of target node to compact, and its draining deadline
             node_info: Optional[
                 Tuple[str, float]
