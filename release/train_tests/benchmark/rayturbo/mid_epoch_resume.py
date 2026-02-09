@@ -5,6 +5,7 @@ import pprint
 import time
 
 import ray.train
+import ray.train.collective
 from ray._private.test_utils import safe_write_to_results_json
 from ray.train.torch import TorchTrainer
 from ray.train.v2._internal.util import date_str
