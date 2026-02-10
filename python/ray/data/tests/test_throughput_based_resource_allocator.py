@@ -989,8 +989,8 @@ class TestThroughputBasedResourceAllocator:
         """
         # Create a realistic pipeline: InputDataBuffer -> MapOp -> MapOp
         o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
-        o3 = mock_map_op(o2, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 1, "memory": 10})
+        o3 = mock_map_op(o2, ray_remote_args={"num_cpus": 1, "memory": 10})
 
         topo = build_streaming_topology(o3, ExecutionOptions())
 
@@ -1058,7 +1058,7 @@ class TestThroughputBasedResourceAllocator:
         """Test that shuffle operators get productivity-based allocation."""
         # Create a minimal ResourceManager to get an allocator instance
         o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 1, "memory": 10})
         topo = build_streaming_topology(o2, ExecutionOptions())
 
         resource_manager = ResourceManager(
@@ -1433,8 +1433,8 @@ class TestThroughputBasedResourceAllocatorE2E:
     def test_basic_allocation(self, restore_data_context):
         """Tests basic integration with ResourceManager"""
         o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 15))
-        o3 = mock_map_op(o2, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 1, "memory": 15})
+        o3 = mock_map_op(o2, ray_remote_args={"num_cpus": 1, "memory": 10})
         o4 = LimitOperator(1, o3, DataContext.get_current())
 
         # Set up mock metrics to get deterministic allocations
@@ -1482,7 +1482,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         # Verify exact allocation values
         # o2: expansion_ratio = 2000/1000 = 2.0, normalized_output = 2000 * 1.0 (o3 ratio) = 2000
         #     temporal_prod = 10.0s / 2000 = 0.005 s/byte
-        #     per_task_resource = 1 CPU (from incremental_resource_usage)
+        #     per_task_resource = 1 CPU (from ray_remote_args)
         #     alpha = 0.005 * 1 = 0.005 CPU-s/byte
         # o3: expansion_ratio = 2000/2000 = 1.0, normalized_output = 2000 * 1.0 = 2000
         #     temporal_prod = 5.0s / 2000 = 0.0025 s/byte
@@ -1522,7 +1522,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         - That can_submit_new_task/get_output_budget act based on accounted budget
         """
         o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(2, 0, 100))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 2, "memory": 100})
 
         # Set up mock metrics for deterministic allocations
         o2_metrics = Mock()
@@ -1620,8 +1620,8 @@ class TestThroughputBasedResourceAllocatorE2E:
         """
         o1 = InputDataBuffer(DataContext.get_current(), [])
         # Operator requires 6 CPU per task - more than its 50% baseline share
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(6, 0, 100))
-        o3 = mock_map_op(o2, incremental_resource_usage=ExecutionResources(6, 0, 100))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 6, "memory": 100})
+        o3 = mock_map_op(o2, ray_remote_args={"num_cpus": 6, "memory": 100})
 
         # Set up mock metrics - only o2 is running (has outputs), o3 hasn't started
         o2_metrics = Mock()
@@ -1711,22 +1711,18 @@ class TestThroughputBasedResourceAllocatorE2E:
         o1 = InputDataBuffer(DataContext.get_current(), [])
 
         # CPU operator: requires 6 CPU per task (will be under-allocated)
-        cpu_op = mock_map_op(
-            o1, incremental_resource_usage=ExecutionResources(6, 0, 100)
-        )
+        cpu_op = mock_map_op(o1, ray_remote_args={"num_cpus": 6, "memory": 100})
 
         # GPU operator: requires 2 GPU per task (will be under-allocated)
         gpu_op = mock_map_op(
             cpu_op,
-            ray_remote_args={"num_gpus": 2},
-            incremental_resource_usage=ExecutionResources(0, 2, 100),
+            ray_remote_args={"num_gpus": 2, "memory": 100},
         )
 
         # CPU+GPU operator: requires both 4 CPU and 2 GPU per task
         cpu_gpu_op = mock_map_op(
             gpu_op,
-            ray_remote_args={"num_cpus": 4, "num_gpus": 2},
-            incremental_resource_usage=ExecutionResources(4, 2, 100),
+            ray_remote_args={"num_cpus": 4, "num_gpus": 2, "memory": 100},
         )
 
         # Set target_max_block_size to None so obj_store_mem_max_pending_output_per_task
@@ -1804,7 +1800,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         o1 = InputDataBuffer(DataContext.get_current(), [])
 
         # Non-GPU operator (CPU only)
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 1, "memory": 10})
 
         # Set up mock metrics for o2
         o2_metrics = Mock()
@@ -1817,11 +1813,7 @@ class TestThroughputBasedResourceAllocatorE2E:
         o2._metrics = o2_metrics
 
         # GPU operator
-        o3 = mock_map_op(
-            o2,
-            ray_remote_args={"num_gpus": 1},
-            incremental_resource_usage=ExecutionResources(0, 1, 10),
-        )
+        o3 = mock_map_op(o2, ray_remote_args={"num_gpus": 1, "memory": 10})
 
         # Set up mock metrics for o3 (GPU operator)
         o3_metrics = Mock()
@@ -1915,7 +1907,7 @@ class TestThroughputBasedResourceAllocatorE2E:
     def test_max_task_output_bytes_to_read(self, restore_data_context):
         """Test max_task_output_bytes_to_read returns correct values."""
         o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 1, "memory": 10})
         # Shuffle operator gets infinite object store budget
         o3 = mock_shuffle_op(o2, name="Shuffle")
 
@@ -1956,9 +1948,9 @@ class TestThroughputBasedResourceAllocatorE2E:
         upstream operator gets infinite object store budget.
         """
         o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 1, "memory": 10})
         o3 = mock_all_to_all_op(o2, name="Sort")
-        o4 = mock_map_op(o3, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o4 = mock_map_op(o3, ray_remote_args={"num_cpus": 1, "memory": 10})
 
         topo = build_streaming_topology(o4, ExecutionOptions())
 
@@ -1992,14 +1984,12 @@ class TestThroughputBasedResourceAllocatorE2E:
     def test_complex_graph_union(self, restore_data_context):
         """Test allocator with union operator (multiple inputs)."""
         o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 1, "memory": 10})
 
         o3 = InputDataBuffer(DataContext.get_current(), [])
-        o4 = mock_map_op(o3, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o4 = mock_map_op(o3, ray_remote_args={"num_cpus": 1, "memory": 10})
 
-        o5 = mock_union_op(
-            [o2, o4], incremental_resource_usage=ExecutionResources(1, 0, 20)
-        )
+        o5 = mock_union_op([o2, o4])
 
         topo = build_streaming_topology(o5, ExecutionOptions())
 
@@ -2031,9 +2021,9 @@ class TestThroughputBasedResourceAllocatorE2E:
     def test_completed_ops_are_excluded(self, restore_data_context):
         """Test that completed operators are properly excluded from allocation."""
         o1 = InputDataBuffer(DataContext.get_current(), [])
-        o2 = mock_map_op(o1, incremental_resource_usage=ExecutionResources(1, 0, 10))
-        o3 = mock_map_op(o2, incremental_resource_usage=ExecutionResources(1, 0, 10))
-        o4 = mock_map_op(o3, incremental_resource_usage=ExecutionResources(1, 0, 10))
+        o2 = mock_map_op(o1, ray_remote_args={"num_cpus": 1, "memory": 10})
+        o3 = mock_map_op(o2, ray_remote_args={"num_cpus": 1, "memory": 10})
+        o4 = mock_map_op(o3, ray_remote_args={"num_cpus": 1, "memory": 10})
 
         topo = build_streaming_topology(o4, ExecutionOptions())
 
