@@ -2082,10 +2082,7 @@ def test_shutdown_replica_only_after_draining_requests(
     )
 
 
-# TODO: haproxy doesn't support /-/routes yet so skipping this test
-def test_http_routes_endpoint(
-    _skip_if_ff_not_enabled, _skip_if_haproxy_enabled, serve_instance
-):
+def test_http_routes_endpoint(_skip_if_ff_not_enabled, serve_instance):
     """Test that the routes endpoint returns pair of routes_prefix and
     app_name of which the replica is serving for.
     """
@@ -2104,12 +2101,20 @@ def test_http_routes_endpoint(
     serve.run(D2.bind(), name="app2", route_prefix="/hello/world")
 
     # Test routes endpoint on the replica running for app1 directly
-    url = get_application_url(app_name="app1", exclude_route_prefix=True)
+    url = get_application_url(
+        app_name="app1",
+        exclude_route_prefix=True,
+        from_proxy_manager=True,
+    )
     routes = httpx.get(f"{url}/-/routes").json()
     assert routes == {"/D1": "app1"}, routes
 
     # Test routes endpoint on the replica running for app2 directly
-    url = get_application_url(app_name="app2", exclude_route_prefix=True)
+    url = get_application_url(
+        app_name="app2",
+        exclude_route_prefix=True,
+        from_proxy_manager=True,
+    )
     routes = httpx.get(f"{url}/-/routes").json()
     assert routes == {"/hello/world": "app2"}, routes
 
