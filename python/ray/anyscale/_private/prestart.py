@@ -3,7 +3,8 @@ from typing import Dict, Optional, Union
 import ray
 from ray._private.utils import get_runtime_env_info, parse_runtime_env_for_task_or_actor
 from ray.runtime_env import RuntimeEnv
-from ray.util.placement_group import PlacementGroup, PlacementGroupSchedulingStrategy
+from ray.util.placement_group import PlacementGroup
+from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 """
 Prestart APIs. The prestarted workers are binded to the runtime_env and job_id. A future

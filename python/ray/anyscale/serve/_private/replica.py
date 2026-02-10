@@ -20,7 +20,7 @@ from typing import (
 )
 
 import grpc
-from ray.serve._private.proxy_request_response import ResponseStatus
+from ray.serve._private.proxy_request_response import ResponseStatus, gRPCStreamingType
 from ray.serve.config import HTTPOptions, gRPCOptions
 from starlette.types import Receive, Scope, Send
 
@@ -1044,21 +1044,31 @@ class AnyscaleReplica(ReplicaBase):
         raise NotImplementedError("unary_stream not implemented.")
 
     def _direct_ingress_service_handler_factory(
-        self, service_method: str, stream: bool
+        self, service_method: str, streaming_type: gRPCStreamingType
     ) -> Callable:
-        if stream:
+        if streaming_type == gRPCStreamingType.UNARY_STREAM:
 
             async def handler(*args, **kwargs):
                 return await self._direct_ingress_unary_stream(
                     service_method, *args, **kwargs
                 )
 
-        else:
+        elif streaming_type == gRPCStreamingType.UNARY_UNARY:
 
             async def handler(*args, **kwargs):
                 return await self._direct_ingress_unary_unary(
                     service_method, *args, **kwargs
                 )
+
+        elif streaming_type == gRPCStreamingType.STREAM_UNARY:
+
+            async def handler(*args, **kwargs):
+                raise NotImplementedError("stream_unary not implemented.")
+
+        elif streaming_type == gRPCStreamingType.STREAM_STREAM:
+
+            async def handler(*args, **kwargs):
+                raise NotImplementedError("stream_stream not implemented.")
 
         return handler
 
