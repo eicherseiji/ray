@@ -24,10 +24,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CLUSTER_AUTOSCALER_ENV_KEY = "RAY_DATA_CLUSTER_AUTOSCALER"
-DEFAULT_CLUSTER_AUTOSCALER_VERSION = "V2"
+DEFAULT_CLUSTER_AUTOSCALER_VERSION = "RAYTURBO"
 
 
 class ClusterAutoscalerVersion(str, enum.Enum):
+    RAYTURBO = "RAYTURBO"
     V2 = "V2"
     V1 = "V1"
 
@@ -45,7 +46,19 @@ def create_cluster_autoscaler(
     )
     logger.debug(f"Using cluster autoscaler version: {cluster_autoscaler_version!r}")
 
-    if cluster_autoscaler_version == ClusterAutoscalerVersion.V2:
+    if cluster_autoscaler_version == ClusterAutoscalerVersion.RAYTURBO:
+        from ray.anyscale.data._internal.cluster_autoscaler import (
+            RateBasedClusterAutoscaler,
+        )
+
+        return RateBasedClusterAutoscaler.create(
+            topology,
+            data_context.execution_options,
+            resource_manager,
+            execution_id=execution_id,
+        )
+
+    elif cluster_autoscaler_version == ClusterAutoscalerVersion.V2:
         return DefaultClusterAutoscalerV2(
             resource_manager,
             execution_id=execution_id,

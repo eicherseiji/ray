@@ -1,0 +1,5 @@
+name: "servehaproxybuild"
+froms: ["cr.ray.io/rayproject/servebuild-py3.10"]
+dockerfile: anyscale/ci/docker/serve.haproxy.build.Dockerfile
+tags:
+  - cr.ray.io/rayproject/servehaproxybuild

@@ -9,9 +9,7 @@ py_library(
 py_test_run_all_subdirectory(
     size = "small",
     include = glob(["test_*.py"]),
-    exclude = [
-        "test_controller_haproxy.py",  # Requires RAY_SERVE_ENABLE_HA_PROXY=1
-    ],
+    exclude = [],
     extra_srcs = [],
     tags = ["team:serve"],
     deps = [
@@ -21,18 +19,14 @@ py_test_run_all_subdirectory(
     ],
 )
 
-# HAProxy controller unit tests (require RAY_SERVE_ENABLE_HA_PROXY=1).
 py_test_module_list(
-    size = "small",
-    env = {
-        "RAY_SERVE_ENABLE_HA_PROXY": "1",
-        "RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
-    },
+    size = "medium",
+    env = {"RAY_SERVE_EAGERLY_START_REPLACEMENT_REPLICAS": "0"},
     files = [
-        "test_controller_haproxy.py",
+        "test_deployment_state.py",
     ],
+    name_suffix = "_with_stop_fully_then_start_behavior",
     tags = [
-        "haproxy",
         "no_windows",
         "team:serve",
     ],
