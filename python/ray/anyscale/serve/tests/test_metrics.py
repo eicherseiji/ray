@@ -5,8 +5,7 @@ import pytest
 
 import ray
 from ray import serve
-from ray._private.test_utils import fetch_prometheus_metrics
-from ray._common.test_utils import wait_for_condition
+from ray._common.test_utils import fetch_prometheus_metrics, wait_for_condition
 from ray.serve._private.constants import RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY
 from ray.serve._private.test_utils import check_num_alive_nodes
 from ray.serve.context import _get_global_client

@@ -16,8 +16,7 @@ from uuid import UUID
 import ray
 from ray import serve
 from ray.actor import ActorHandle
-from ray._common.test_utils import SignalActor, Semaphore
-from ray._private.test_utils import wait_for_condition
+from ray._common.test_utils import Semaphore, SignalActor, wait_for_condition
 from ray.anyscale.serve._private.constants import (
     ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
 )
