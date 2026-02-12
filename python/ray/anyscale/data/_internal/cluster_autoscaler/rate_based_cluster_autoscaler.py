@@ -267,19 +267,33 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         return resource_request
 
     def try_trigger_scaling(self):
+        # Observe and update the cluster utilization metrics.
+        #
+        # NOTE: We do this before checking the frequency of autoscaling requests to
+        # ensure our utilization metrics get smoothly updated.
+        self._utility_calculator.observe()
+
         # If there are no operators to scale, send the previous resource request
         # to renew our registration with the autoscaling coordinator.
         if not self._ops:
             logger.debug("No operators to scale -- skipping cluster autoscaling.")
             self._send_resource_request(self._last_resource_request)
             return self._last_resource_request
+
         # Limit the frequency of autoscaling requests.
         now = time.time()
         if now - self._last_request_time < self._min_gap_between_autoscaling_requests:
             return
 
-        # 1. update and report cluster utilization based on usages / limits
-        self._utility_calculator.observe()
+        # 1. Check the cluster utilization. If it's low, re-send the previous resource
+        # request.
+        utilization = self._utility_calculator.get()
+        self._log_cluster_utilization(utilization)
+        if self._is_cluster_utilization_low(utilization):
+            # We need utilization to be high enough for GPU, CPU, or Object Store
+            logger.debug("Cluster utilization is low -- skipping cluster autoscaling.")
+            self._send_resource_request(self._last_resource_request)
+            return self._last_resource_request
 
         # 2. Identify the bottleneck operator.
         bottleneck_op = self._bottleneck_detector.get_bottleneck(self._ops)
@@ -295,29 +309,6 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         logger.debug(
             f"Bottleneck operator: {bottleneck_op} requires {min_scheduling_resources} per task/actor"
         )
-
-        # 3. Calculate the average utilization across CPU, GPU and Object Store
-        util = self._utility_calculator.get()
-
-        logger.debug(
-            f"Average cluster util: (cpu={util.cpu}, "
-            f"gpu={util.gpu}, "
-            f"object_store={util.object_store_memory}), "
-            f"threshold={self._cluster_scaling_up_util_threshold}, "
-            f"gpu_threshold={self._cluster_scaling_up_gpu_util_threshold}"
-        )
-
-        gpu_util_high = util.gpu >= self._cluster_scaling_up_gpu_util_threshold
-        cpu_util_high = util.cpu >= self._cluster_scaling_up_util_threshold
-        obj_store_util_high = (
-            util.object_store_memory >= self._cluster_scaling_up_util_threshold
-        )
-
-        if not gpu_util_high and not cpu_util_high and not obj_store_util_high:
-            # We need utilization to high enough for GPU, CPU, or Object Store
-            logger.debug("Cluster utilization is low -- skipping cluster autoscaling.")
-            self._send_resource_request(self._last_resource_request)
-            return self._last_resource_request
 
         # 4. Check bottleneck operator is at scheduling capacity.
         op_usage = self._resource_manager.get_op_usage(bottleneck_op)
@@ -395,6 +386,23 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
         self._send_resource_request(resource_request)
 
         return resource_request
+
+    def _log_cluster_utilization(self, utilization: ExecutionResources) -> None:
+        logger.debug(
+            f"Average cluster util: (cpu={utilization.cpu}, "
+            f"gpu={utilization.gpu}, "
+            f"object_store={utilization.object_store_memory}), "
+            f"threshold={self._cluster_scaling_up_util_threshold}, "
+            f"gpu_threshold={self._cluster_scaling_up_gpu_util_threshold}"
+        )
+
+    def _is_cluster_utilization_low(self, utilization: ExecutionResources) -> bool:
+        return (
+            utilization.cpu < self._cluster_scaling_up_util_threshold
+            and utilization.gpu < self._cluster_scaling_up_gpu_util_threshold
+            and utilization.object_store_memory
+            < self._cluster_scaling_up_util_threshold
+        )
 
     @staticmethod
     def _log_resource_request(resource_request: List[Dict[str, float]]) -> None:
