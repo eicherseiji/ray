@@ -26,6 +26,9 @@ from ray.anyscale.data.checkpoint.interfaces import (
     CheckpointConfig,
     InvalidCheckpointingConfig,
 )
+from ray.anyscale.data.checkpoint.load_checkpoint_callback import (
+    LoadCheckpointCallback,
+)
 from ray.anyscale.data.checkpoint.util import (
     CHECKPOINTED_FILE_COLUMN_NAME,
     CHECKPOINTED_FILE_FRAGMENT_CHECKPOINTED_ROW_IDS_FIELD,
@@ -814,6 +817,39 @@ def test_skip_checkpoint_flag(
     checkpoint_files = read_ids_from_checkpoint_files(ctx.checkpoint_config)
 
     assert len(checkpoint_files) == SAMPLE_DATA_NUM_ROWS
+
+
+def test_should_restore_flag_skips_checkpoint_loading(
+    ray_start_10_cpus_shared,
+    tmp_path,
+):
+    """Test that _should_restore=False skips checkpoint loading.
+
+    This internal flag is used in training ingest to skip checkpoint restoration
+    for subsequent epochs or when starting a dataset execution from scratch without passing in a state dict.
+    """
+    ckpt_path = os.path.join(tmp_path, "checkpoints")
+
+    # Create a config with _should_restore=False
+    config = CheckpointConfig(
+        id_column=ID_COL,
+        checkpoint_path=ckpt_path,
+        delete_checkpoint_on_success=False,
+    )
+    config._should_restore = False
+
+    callback = LoadCheckpointCallback(config)
+
+    # Mock executor with matching checkpoint_config
+    executor = MagicMock()
+    executor._data_context.checkpoint_config = config
+
+    # Call before_execution_starts - should skip loading
+    callback.before_execution_starts(executor)
+
+    # Verify we get an empty table without errors
+    result = ray.get(callback.load_checkpoint())
+    assert result.num_rows == 0
 
 
 def test_checkpoint_with_missing_id_column(

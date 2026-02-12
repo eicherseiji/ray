@@ -187,15 +187,17 @@ def _register_anyscale_lineage_tracking_callback():
 
 
 def _patch_anyscale_checkpoint():
-    """Patch OSS CheckpointConfig to add generated_id_column attribute.
+    """Replace ray.data.checkpoint.CheckpointConfig with Anyscale CheckpointConfig.
 
-    This allows Anyscale code to directly access config.generated_id_column
-    without needing getattr().
+    Note that importing from ray.data.checkpoint.interfaces still resolves
+    to the OSS CheckpointConfig, but users should use the patched public import path.
     """
-    from ray.data.checkpoint.interfaces import CheckpointConfig
+    import ray.data.checkpoint as checkpoint_pkg
+    from ray.anyscale.data.checkpoint.interfaces import (
+        CheckpointConfig as AnyscaleCheckpointConfig,
+    )
 
-    if not hasattr(CheckpointConfig, "generated_id_column"):
-        CheckpointConfig.generated_id_column = None
+    checkpoint_pkg.CheckpointConfig = AnyscaleCheckpointConfig
 
 
 def _patch_databricks_credentials():

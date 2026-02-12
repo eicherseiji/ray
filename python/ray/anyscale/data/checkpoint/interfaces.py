@@ -94,6 +94,11 @@ class CheckpointConfig(OSSCheckpointConfig):
             # Use generated_id_column as the id_column
             id_column = generated_id_column
 
+        # Internal flag to disable checkpoint restoration.
+        # NOTE: This is only used for training ingest mid-epoch restoration
+        # to skip loading the checkpoint for subsequent epochs.
+        self._should_restore: bool = True
+
         # Call parent __init__ with the resolved id_column
         super().__init__(
             id_column=id_column,

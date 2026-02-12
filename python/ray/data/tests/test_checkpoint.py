@@ -24,6 +24,7 @@ from ray.data._internal.planner.checkpoint.plan_write_op import (
     _generate_prepare_checkpoint_transform,
 )
 from ray.data.block import BlockAccessor
+from ray.data.checkpoint import CheckpointConfig
 from ray.data.checkpoint.checkpoint_filter import (
     BatchBasedCheckpointFilter,
     _delete_matching_data_files,
@@ -36,7 +37,6 @@ from ray.data.checkpoint.checkpoint_writer import (
 )
 from ray.data.checkpoint.interfaces import (
     CheckpointBackend,
-    CheckpointConfig,
     InvalidCheckpointingConfig,
 )
 from ray.data.context import DataContext

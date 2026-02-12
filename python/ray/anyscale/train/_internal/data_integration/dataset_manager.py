@@ -129,7 +129,6 @@ class DatasetManager:
             )
 
         state_dict = None
-        epoch_idx = base_dataset.context._execution_idx
         if not dataset_info.state_dict:
             logger.info(
                 "Dataset checkpointing is enabled, but no dataset state passed "
@@ -140,13 +139,11 @@ class DatasetManager:
             )
         else:
             state_dict = RowIDBasedStateDict.from_dict(dataset_info.state_dict)
-            epoch_idx = state_dict.epoch_idx
+            base_dataset.context._execution_idx = state_dict.epoch_idx
 
         train_ingest_checkpoint_config = data_config.dataset_checkpoint_configs[
             dataset_name
         ]
-
-        base_dataset.context._execution_idx = epoch_idx
         base_dataset.context.checkpoint_config = (
             self._build_restoration_checkpoint_config(
                 train_ingest_checkpoint_config, state_dict
@@ -167,14 +164,15 @@ class DatasetManager:
         """
         from ray.data.datasource import PartitionStyle, PathPartitionFilter
 
-        checkpoint_path_partition_filter = PathPartitionFilter.of(
-            filter_fn=lambda _: False,
-            style=PartitionStyle.HIVE,
-        )
-        if state_dict and state_dict.should_restore():
-            checkpoint_path_partition_filter = (
-                state_dict.restoration_checkpoint_path_filter
+        should_restore = bool(state_dict and state_dict.should_restore())
+        checkpoint_path_partition_filter = (
+            state_dict.restoration_checkpoint_path_filter
+            if should_restore
+            else PathPartitionFilter.of(
+                filter_fn=lambda _: False,
+                style=PartitionStyle.HIVE,
             )
+        )
 
         id_column, generated_id_column = (
             (None, dataset_checkpoint_config.id_column)
@@ -182,7 +180,7 @@ class DatasetManager:
             else (dataset_checkpoint_config.id_column, None)
         )
 
-        return CheckpointConfig(
+        restore_checkpoint_config = CheckpointConfig(
             id_column=id_column,
             generated_id_column=generated_id_column,
             checkpoint_path=dataset_checkpoint_config.checkpoint_path,
@@ -192,6 +190,10 @@ class DatasetManager:
             # restore from checkpoints of previous epochs.
             delete_checkpoint_on_success=False,
         )
+        # Manually disable checkpoint restoration if there's no state dict provided,
+        # or if we're restoring from an epoch boundary.
+        restore_checkpoint_config._should_restore = should_restore
+        return restore_checkpoint_config
 
     def _create_dataset_iterators(
         self, dataset_info: DatasetShardMetadata, base_dataset: "Dataset"

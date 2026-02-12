@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Optional
 
 from ray._private.ray_constants import env_integer
-from ray.data.checkpoint import CheckpointBackend, CheckpointConfig
 from ray.data.context import (
     DEFAULT_TARGET_MAX_BLOCK_SIZE,
     DEFAULT_TARGET_MIN_BLOCK_SIZE,
@@ -36,10 +35,6 @@ DEFAULT_POLARS_GPU_RAISE_ON_FAIL = env_bool("RAY_TURBO_POLARS_GPU_RAISE_ON_FAIL"
 class DataContextMixin:
     """A mix-in class that allows adding Anyscale proprietary
     attributes and methods to :class:`~ray.data.DataContext`."""
-
-    # Configuration for Ray Data checkpointing.
-    # If None, checkpointing is disabled.
-    _checkpoint_config: Optional[CheckpointConfig] = None
 
     # Overrides viability of fusion for file reading ops
     _enable_read_files_fusion_override: Optional[bool] = None
@@ -79,31 +74,3 @@ class DataContextMixin:
     parquet_chunker_target_chunk_size: Optional[
         int
     ] = DEFAULT_PARQUET_READER_TARGET_CHUNK_SIZE
-
-    @property
-    def checkpoint_config(self) -> Optional[CheckpointConfig]:
-        """Get the checkpoint configuration."""
-        return self._checkpoint_config
-
-    @checkpoint_config.setter
-    def checkpoint_config(
-        self, value: Optional[Union[CheckpointConfig, Dict[str, Any]]]
-    ) -> None:
-        """Set the checkpoint configuration."""
-        if value is None:
-            self._checkpoint_config = None
-        elif isinstance(value, dict):
-            if "override_backend" in value:
-                if not isinstance(value["override_backend"], str):
-                    raise TypeError(
-                        "Expected 'override_backend' to be a string,"
-                        f" but got {type(value['override_backend'])}."
-                    )
-                value["override_backend"] = CheckpointBackend[value["override_backend"]]
-            self._checkpoint_config = CheckpointConfig(**value)
-        elif isinstance(value, CheckpointConfig):
-            self._checkpoint_config = value
-        else:
-            raise TypeError(
-                "checkpoint_config must be a CheckpointConfig instance, a dict, or None."
-            )

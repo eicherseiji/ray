@@ -94,8 +94,14 @@ def test_e2e_with_ray_train(
         ds_iter = ray.train.get_dataset_shard(
             "train", state_dict=state_dict if rank == 0 else None
         )
+        should_restore = state_dict is not None and not epoch_finished
+        assert ds_iter.get_context().checkpoint_config._should_restore == should_restore
 
         for epoch in range(start_epoch, num_epochs):
+            if epoch > start_epoch:
+                # Should have disabled checkpoint restoration for subsequent epochs.
+                assert ds_iter.get_context().checkpoint_config._should_restore is False
+
             consumed_batches_this_epoch = consumed_batches % num_batches_per_worker
 
             seen_ids = []
