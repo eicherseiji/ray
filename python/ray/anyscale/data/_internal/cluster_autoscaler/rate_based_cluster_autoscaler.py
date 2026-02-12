@@ -1,6 +1,7 @@
+import logging
 import math
 import time
-from logging import getLogger
+from collections import Counter
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .bottleneck_detector import (
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
     from ray.data._internal.execution.streaming_executor_state import Topology
 
 
-logger = getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _to_resource_bundle(resources: ExecutionResources) -> Dict[str, float]:
@@ -390,13 +391,32 @@ class RateBasedClusterAutoscaler(ClusterAutoscaler):
             f"resource_bundle={resource_bundle}"
         )
 
+        self._log_resource_request(resource_request)
         self._send_resource_request(resource_request)
 
         return resource_request
 
+    @staticmethod
+    def _log_resource_request(resource_request: List[Dict[str, float]]) -> None:
+        """Log the resource request with identical bundles grouped.
+
+        This method is static so it's easier to unit test.
+        """
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+
+        hashable_bundles = [
+            tuple(sorted(bundle.items())) for bundle in resource_request
+        ]
+        hashable_bundle_counts = Counter(hashable_bundles)
+        formatted_bundles = [
+            f"[{dict(bundle)}] * {count}"
+            for bundle, count in hashable_bundle_counts.items()
+        ]
+        logger.debug(f"Sending resource request: {', '.join(formatted_bundles)}")
+
     def _send_resource_request(self, resource_request: List[Dict[str, float]]):
         self._last_resource_request = [r.copy() for r in resource_request]
-        logger.debug(f"Sending Resource Request: {resource_request}")
         self._autoscaling_coordinator.request_resources(
             requester_id=self._requester_id,
             resources=[r.copy() for r in resource_request],

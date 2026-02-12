@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from unittest.mock import MagicMock, patch
@@ -678,6 +679,20 @@ def test_get_allocated_resource_bundles_aggregates_correctly():
     assert len(gpu1_bundles) == 2
     assert len(cpu1_bundles) == 4
     assert len(current_resources) == 9
+
+
+def test_log_resource_request_emits_correct_message(
+    propagate_logs, caplog  # noqa: F811
+):
+    resource_request = [{"CPU": 1}, {"CPU": 2, "GPU": 1}, {"CPU": 1}]
+
+    with caplog.at_level(logging.DEBUG):
+        RateBasedClusterAutoscaler._log_resource_request(resource_request)
+
+    expected_message = (
+        "Sending resource request: [{'CPU': 1}] * 2, [{'CPU': 2, 'GPU': 1}] * 1"
+    )
+    assert expected_message in caplog.text
 
 
 if __name__ == "__main__":
