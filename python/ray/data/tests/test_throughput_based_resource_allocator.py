@@ -2013,10 +2013,12 @@ class TestThroughputBasedResourceAllocatorE2E:
         assert allocator.get_budget(o1) is None
         assert allocator.get_budget(o3) is None
 
-        # Map and Union operators should have budgets
+        # Map operators should have budgets
         assert allocator.get_budget(o2) is not None
         assert allocator.get_budget(o4) is not None
-        assert allocator.get_budget(o5) is not None
+
+        # Union operator should not have a budget
+        assert allocator.get_budget(o5) is None
 
     def test_completed_ops_are_excluded(self, restore_data_context):
         """Test that completed operators are properly excluded from allocation."""
