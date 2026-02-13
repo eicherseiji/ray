@@ -69,7 +69,7 @@ steps:
       - bazel run //ci/ray_ci:test_in_docker -- $(cat anyscale/ci/buildkite/serve_hap_test_names.txt) serve
         --workers "$${BUILDKITE_PARALLEL_JOB_COUNT}" --worker-id "$${BUILDKITE_PARALLEL_JOB}"
         --build-name servehaproxybuild --python-version 3.10
-        --test-env=ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY=1
+        --test-env=RAY_SERVE_ENABLE_HA_PROXY=1
         --test-env=RAY_SERVE_ENABLE_DIRECT_INGRESS=0
         --test-env=RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S=0.01
         --test-env=RAY_SERVE_DISABLE_SHUTTING_DOWN_INGRESS_REPLICAS_FORCEFULLY=0

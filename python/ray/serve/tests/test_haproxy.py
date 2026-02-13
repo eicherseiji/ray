@@ -1,13 +1,14 @@
 import asyncio
-
-import httpx
 import logging
-import pytest
-import requests
+import subprocess
 import sys
 import threading
 import time
 from tempfile import NamedTemporaryFile
+
+import httpx
+import pytest
+import requests
 
 import ray
 from ray import serve
@@ -15,18 +16,14 @@ from ray._common.test_utils import (
     SignalActor,
     wait_for_condition,
 )
-import subprocess
-
 from ray.actor import ActorHandle
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
-)
-from ray.anyscale.serve._private.haproxy import HAProxyManager
 from ray.cluster_utils import Cluster
 from ray.serve._private.constants import (
     DEFAULT_UVICORN_KEEP_ALIVE_TIMEOUT_S,
+    RAY_SERVE_ENABLE_HA_PROXY,
     SERVE_NAMESPACE,
 )
+from ray.serve._private.haproxy import HAProxyManager
 from ray.serve._private.test_utils import get_application_url
 from ray.serve.context import _get_global_client
 from ray.serve.schema import (
@@ -43,8 +40,8 @@ logger = logging.getLogger(__name__)
 
 # Skip all tests in this module if the HAProxy feature flag is not enabled
 pytestmark = pytest.mark.skipif(
-    not ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
-    reason="ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY not set.",
+    not RAY_SERVE_ENABLE_HA_PROXY,
+    reason="RAY_SERVE_ENABLE_HA_PROXY not set.",
 )
 
 
@@ -707,8 +704,8 @@ def test_haproxy_manager_ready_with_application(ray_shutdown):
 
 def test_504_error_translated_to_500(ray_shutdown, monkeypatch):
     """Test that HAProxy translates 504 Gateway Timeout errors to 500 Internal Server Error."""
-    monkeypatch.setenv("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S", "2")
-    monkeypatch.setenv("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S", "1")
+    monkeypatch.setenv("RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S", "2")
+    monkeypatch.setenv("RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S", "1")
 
     ray.init(num_cpus=8)
     serve.start(http_options=dict(port=8003))
@@ -887,7 +884,7 @@ def test_haproxy_healthcheck_multiple_apps_and_backends(ray_shutdown):
 def test_haproxy_empty_backends_for_scaled_down_apps(ray_shutdown):
     """Test that HAProxy has no backend servers for deleted apps.
 
-    Verifies that when ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY is True and apps are
+    Verifies that when RAY_SERVE_ENABLE_HA_PROXY is True and apps are
     deleted, the HAProxy stats show the backend is removed or has no servers.
     """
     ray.init(num_cpus=4)

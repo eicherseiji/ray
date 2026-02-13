@@ -7,53 +7,50 @@ import logging
 import os
 import re
 import time
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from jinja2 import Environment
 from typing import Any, Dict, List, Optional, Set
 
-import ray
+from jinja2 import Environment
 
+import ray
 from ray._common.utils import get_or_create_event_loop
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG,
-    ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
-    ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S,
-    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL,
-    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE,
-    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER,
-    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER,
-    ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER,
-    ANYSCALE_RAY_SERVE_HAPROXY_SYSLOG_PORT,
-    ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN,
-    ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT,
-    ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD,
-    ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_BASE,
-    ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_FILE,
-    ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH,
-    ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S,
-    ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S,
-    ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S,
-)
-from ray.anyscale.serve._private.haproxy_templates import (
-    HAPROXY_CONFIG_TEMPLATE,
-    HAPROXY_HEALTHZ_RULES_TEMPLATE,
-)
 from ray.serve._private.common import (
     NodeId,
     ReplicaID,
     RequestMetadata,
 )
 from ray.serve._private.constants import (
+    DRAINING_MESSAGE,
+    HEALTHY_MESSAGE,
+    NO_REPLICAS_MESSAGE,
+    NO_ROUTES_MESSAGE,
     PROXY_MIN_DRAINING_PERIOD_S,
+    RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG,
+    RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
+    RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S,
+    RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER,
+    RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL,
+    RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER,
+    RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER,
+    RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE,
+    RAY_SERVE_HAPROXY_MAXCONN,
+    RAY_SERVE_HAPROXY_METRICS_PORT,
+    RAY_SERVE_HAPROXY_NBTHREAD,
+    RAY_SERVE_HAPROXY_SERVER_STATE_BASE,
+    RAY_SERVE_HAPROXY_SERVER_STATE_FILE,
+    RAY_SERVE_HAPROXY_SOCKET_PATH,
+    RAY_SERVE_HAPROXY_SYSLOG_PORT,
+    RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S,
+    RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S,
+    RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S,
     SERVE_CONTROLLER_NAME,
     SERVE_LOGGER_NAME,
     SERVE_NAMESPACE,
-    HEALTHY_MESSAGE,
-    DRAINING_MESSAGE,
-    NO_ROUTES_MESSAGE,
-    NO_REPLICAS_MESSAGE,
+)
+from ray.serve._private.haproxy_templates import (
+    HAPROXY_CONFIG_TEMPLATE,
+    HAPROXY_HEALTHZ_RULES_TEMPLATE,
 )
 from ray.serve._private.logging_utils import get_component_logger_file_path
 from ray.serve._private.long_poll import LongPollClient, LongPollNamespace
@@ -61,8 +58,8 @@ from ray.serve._private.proxy import ProxyActorInterface
 from ray.serve.config import HTTPOptions, gRPCOptions
 from ray.serve.schema import (
     LoggingConfig,
-    TargetGroup,
     Target,
+    TargetGroup,
 )
 
 logger = logging.getLogger(SERVE_LOGGER_NAME)
@@ -331,25 +328,25 @@ class BackendConfig:
 class HAProxyConfig:
     """Configuration for HAProxy."""
 
-    socket_path: str = ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH
-    server_state_base: str = ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_BASE
-    server_state_file: str = ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_FILE
+    socket_path: str = RAY_SERVE_HAPROXY_SOCKET_PATH
+    server_state_base: str = RAY_SERVE_HAPROXY_SERVER_STATE_BASE
+    server_state_file: str = RAY_SERVE_HAPROXY_SERVER_STATE_FILE
     # Enable HAProxy optimizations (server state persistence, etc.)
     # Disabled by default to prevent test suite interference
-    enable_hap_optimization: bool = ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG
-    maxconn: int = ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN
-    nbthread: int = ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD
+    enable_hap_optimization: bool = RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG
+    maxconn: int = RAY_SERVE_HAPROXY_MAXCONN
+    nbthread: int = RAY_SERVE_HAPROXY_NBTHREAD
     stats_port: int = 8404
     stats_uri: str = "/stats"
-    metrics_port: int = ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT
+    metrics_port: int = RAY_SERVE_HAPROXY_METRICS_PORT
     metrics_uri: str = "/metrics"
     # All timeout values are in seconds
     timeout_queue_s: Optional[int] = None
-    timeout_connect_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S
-    timeout_client_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S
-    timeout_server_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S
+    timeout_connect_s: Optional[int] = RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S
+    timeout_client_s: Optional[int] = RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S
+    timeout_server_s: Optional[int] = RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S
     timeout_http_request_s: Optional[int] = None
-    hard_stop_after_s: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S
+    hard_stop_after_s: Optional[int] = RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S
     custom_global: Dict[str, str] = field(default_factory=dict)
     custom_defaults: Dict[str, str] = field(default_factory=dict)
     inject_process_id_header: bool = False
@@ -363,29 +360,25 @@ class HAProxyConfig:
     health_check_endpoint: str = "/-/healthz"
     # Global health check parameters (used as defaults for backends)
     # Number of consecutive failed health checks that must occur before a service instance is marked as unhealthy
-    health_check_fall: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL
+    health_check_fall: Optional[int] = RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL
 
     # Number of consecutive successful health checks required to mark an unhealthy service instance as healthy again
-    health_check_rise: Optional[int] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE
+    health_check_rise: Optional[int] = RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE
 
     # Interval, or the amount of time, between each health check attempt
-    health_check_inter: Optional[str] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER
+    health_check_inter: Optional[str] = RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER
 
     # The interval between two consecutive health checks when the server is in any of the transition states: UP - transitionally DOWN or DOWN - transitionally UP
-    health_check_fastinter: Optional[
-        str
-    ] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER
+    health_check_fastinter: Optional[str] = RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER
 
     # The interval between two consecutive health checks when the server is in the DOWN state
-    health_check_downinter: Optional[
-        str
-    ] = ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER
+    health_check_downinter: Optional[str] = RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER
 
     health_check_path: Optional[str] = "/-/healthz"  # For HTTP health checks
 
     http_options: HTTPOptions = field(default_factory=HTTPOptions)
 
-    syslog_port: int = ANYSCALE_RAY_SERVE_HAPROXY_SYSLOG_PORT
+    syslog_port: int = RAY_SERVE_HAPROXY_SYSLOG_PORT
 
     @property
     def frontend_host(self) -> str:
@@ -489,7 +482,7 @@ class HAProxyApi(ProxyApi):
         self,
         cfg: HAProxyConfig,
         backend_configs: Dict[str, BackendConfig] = None,
-        config_file_path: str = ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
+        config_file_path: str = RAY_SERVE_HAPROXY_CONFIG_FILE_LOC,
     ):
         self.cfg = cfg
         self.backend_configs = backend_configs or {}

@@ -1,24 +1,25 @@
 import asyncio
 import logging
 import os
-import pytest
-import pytest_asyncio
-import requests
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-import uvicorn
-from fastapi import FastAPI, Request, Response
 from typing import Optional
 from unittest import mock
 
+import pytest
+import pytest_asyncio
+import requests
+import uvicorn
+from fastapi import FastAPI, Request, Response
+
 from ray._common.test_utils import async_wait_for_condition, wait_for_condition
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
+from ray.serve._private.constants import (
+    RAY_SERVE_ENABLE_HA_PROXY,
 )
-from ray.anyscale.serve._private.haproxy import (
+from ray.serve._private.haproxy import (
     BackendConfig,
     HAProxyApi,
     HAProxyConfig,
@@ -30,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Skip all tests in this module if the HAProxy feature flag is not enabled
 pytestmark = pytest.mark.skipif(
-    not ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
-    reason="ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY not set.",
+    not RAY_SERVE_ENABLE_HA_PROXY,
+    reason="RAY_SERVE_ENABLE_HA_PROXY not set.",
 )
 
 EXCLUDED_ACL_NAMES = ("healthcheck", "routes")
@@ -238,7 +239,7 @@ def test_generate_config_file_internal(haproxy_api_cleanup):
         }
 
         with mock.patch(
-            "ray.anyscale.serve._private.constants.ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC",
+            "ray.serve._private.constants.RAY_SERVE_HAPROXY_CONFIG_FILE_LOC",
             config_file_path,
         ):
 
@@ -400,7 +401,7 @@ def test_generate_backends_in_order(haproxy_api_cleanup):
         }
 
         with mock.patch(
-            "ray.anyscale.serve._private.constants.ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC",
+            "ray.serve._private.constants.RAY_SERVE_HAPROXY_CONFIG_FILE_LOC",
             config_file_path,
         ):
             api = HAProxyApi(

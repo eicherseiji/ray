@@ -12,11 +12,9 @@ import uuid
 import grpc
 import pytest
 from ray._common.test_utils import SignalActor
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
-)
 from ray.serve._private.constants import (
     RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    RAY_SERVE_ENABLE_HA_PROXY,
 )
 from ray.serve._private.test_utils import get_application_url
 import httpx
@@ -405,7 +403,7 @@ def test_tracing_e2e(
 
     elif serve_application == "grpc":
         # TODO: Remove this once HAProxy supports gRPC
-        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+        if RAY_SERVE_ENABLE_HA_PROXY:
             return
 
         grpc_port = 9000
@@ -452,14 +450,14 @@ def test_tracing_e2e(
 
     files = os.listdir(spans_dir)
 
-    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+    if RAY_SERVE_ENABLE_HA_PROXY:
         # We don't currently trace HAProxy.
         assert len(files) == 2
     else:
         assert len(files) == 3
 
     replica_filename = None
-    proxy_filename = None or ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+    proxy_filename = None or RAY_SERVE_ENABLE_HA_PROXY
     upstream_filename = None
     for file in files:
         if "replica" in file:
@@ -607,7 +605,7 @@ def test_tracing_e2e_with_errors(
 
     elif protocol == "grpc":
         # TODO: Remove this once HAProxy supports gRPC
-        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+        if RAY_SERVE_ENABLE_HA_PROXY:
             return
 
         grpc_port = 9000
@@ -653,14 +651,14 @@ def test_tracing_e2e_with_errors(
 
     files = os.listdir(spans_dir)
 
-    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+    if RAY_SERVE_ENABLE_HA_PROXY:
         # We don't currently trace HAProxy.
         assert len(files) == 2
     else:
         assert len(files) == 3  # proxy, replica, and upstream spans
 
     replica_filename = None
-    proxy_filename = None or ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+    proxy_filename = None or RAY_SERVE_ENABLE_HA_PROXY
     upstream_filename = None
     for file in files:
         if "replica" in file:

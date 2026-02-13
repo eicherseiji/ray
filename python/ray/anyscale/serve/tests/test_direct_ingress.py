@@ -17,15 +17,13 @@ import ray
 from ray import serve
 from ray.actor import ActorHandle
 from ray._common.test_utils import Semaphore, SignalActor, wait_for_condition
-from ray.anyscale.serve._private.constants import (
-    ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY,
-)
 from ray.serve._private.constants import (
     RAY_SERVE_DIRECT_INGRESS_MAX_HTTP_PORT,
     RAY_SERVE_DIRECT_INGRESS_MIN_GRPC_PORT,
     RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT,
     RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
     RAY_SERVE_ENABLE_DIRECT_INGRESS,
+    RAY_SERVE_ENABLE_HA_PROXY,
 )
 from ray.dashboard.modules.serve.sdk import ServeSubmissionClient
 from ray.serve._private.common import DeploymentID
@@ -82,9 +80,9 @@ def _skip_if_ff_not_enabled():
 
 @pytest.fixture
 def _skip_if_haproxy_enabled():
-    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+    if RAY_SERVE_ENABLE_HA_PROXY:
         pytest.skip(
-            reason="ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY is set.",
+            reason="RAY_SERVE_ENABLE_HA_PROXY is set.",
         )
 
 
@@ -95,7 +93,7 @@ def _shared_serve_instance():
     env_var_name = "RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S"
     original_value = os.environ.get(env_var_name)
 
-    if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY:
+    if RAY_SERVE_ENABLE_HA_PROXY:
         # Setting a longer minimum draining period ensures that the client connecting
         # to the uvicorn server closes the connection first. This prevents the socket
         # used by the uvicorn server from entering the TIME_WAIT tcp state, which blocks
@@ -1067,12 +1065,12 @@ def test_only_running_apps_are_used_for_target_groups(
     # This will change when we support scale to/from zero.
     assert (
         set(http_ports) == {30000, 30001}
-        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+        if RAY_SERVE_ENABLE_HA_PROXY
         else {30000, 30001, 8000}
     )
     assert (
         set(grpc_ports) == {40000, 40001}
-        if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+        if RAY_SERVE_ENABLE_HA_PROXY
         else {40000, 40001, 9000}
     )
 
@@ -2392,35 +2390,31 @@ def test_get_serve_instance_details_json_serializable(
                     "targets": [
                         {
                             "ip": node_ip,
-                            "port": 8000
-                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
-                            else 30000,
+                            "port": 8000 if RAY_SERVE_ENABLE_HA_PROXY else 30000,
                             "instance_id": node_instance_id,
                             "name": proxy_details.actor_name
-                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+                            if RAY_SERVE_ENABLE_HA_PROXY
                             else replica.actor_name,
                         },
                     ],
                     "route_prefix": "/",
                     "protocol": "HTTP",
-                    "app_name": "" if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY else "default",
+                    "app_name": "" if RAY_SERVE_ENABLE_HA_PROXY else "default",
                 },
                 {
                     "targets": [
                         {
                             "ip": node_ip,
-                            "port": 9000
-                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
-                            else 40000,
+                            "port": 9000 if RAY_SERVE_ENABLE_HA_PROXY else 40000,
                             "instance_id": node_instance_id,
                             "name": proxy_details.actor_name
-                            if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY
+                            if RAY_SERVE_ENABLE_HA_PROXY
                             else replica.actor_name,
                         },
                     ],
                     "route_prefix": "/",
                     "protocol": "gRPC",
-                    "app_name": "" if ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY else "default",
+                    "app_name": "" if RAY_SERVE_ENABLE_HA_PROXY else "default",
                 },
             ],
         }

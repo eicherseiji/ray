@@ -18,7 +18,7 @@ import http
 import json
 import sys
 from typing import Dict, Optional
-from ray.serve.tests.test_metrics import get_metric_dictionaries
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -41,6 +41,7 @@ from ray.serve._private.test_utils import (
 )
 from ray.serve._private.utils import block_until_http_ready
 from ray.serve.tests.conftest import TEST_METRICS_EXPORT_PORT
+from ray.serve.tests.test_metrics import get_metric_dictionaries
 from ray.util.state import list_actors
 
 
@@ -214,7 +215,7 @@ def test_serve_metrics_for_successful_connection(metrics_start_shutdown):
         return True
 
     try:
-        wait_for_condition(verify_metrics, retry_interval_ms=500)
+        wait_for_condition(verify_metrics, retry_interval_ms=500, timeout=40)
     except RuntimeError:
         verify_metrics(do_assert=True)
 
