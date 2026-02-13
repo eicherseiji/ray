@@ -282,8 +282,6 @@ class TestActorPoolAutoscaling:
                 actor_pool_util_upscaling_threshold=1.0,
                 actor_pool_util_downscaling_threshold=0.5,
             ),
-            actor_pool_util_check_interval_s=0,
-            actor_pool_util_avg_window_s=0.1,
             actor_pool_resizing_policy=RayTurboResizingPolicy(scaling_up_factor),
         )
 
@@ -400,8 +398,6 @@ class TestActorPoolAutoscaling:
             config=AutoscalingConfig(
                 actor_pool_util_upscaling_threshold=1.0,
             ),
-            actor_pool_util_check_interval_s=0,
-            actor_pool_util_avg_window_s=0.1,
             actor_pool_resizing_policy=RayTurboResizingPolicy(
                 capacity_based_scaling_config
             ),
@@ -525,8 +521,6 @@ class TestActorPoolAutoscaling:
                 actor_pool_util_upscaling_threshold=1.0,
                 actor_pool_util_downscaling_threshold=0.5,
             ),
-            actor_pool_util_check_interval_s=0,
-            actor_pool_util_avg_window_s=0.1,
             actor_pool_resizing_policy=RayTurboResizingPolicy(scaling_up_factor),
         )
 

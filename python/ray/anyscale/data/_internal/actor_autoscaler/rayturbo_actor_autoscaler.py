@@ -1,12 +1,7 @@
 import math
-import time
-from collections import defaultdict
 from logging import getLogger
 from typing import TYPE_CHECKING, Dict, Optional, OrderedDict, Union
 
-from ray.anyscale.data._internal.util.average_calculator import (
-    TimeWindowAverageCalculator,
-)
 from ray.data._internal.actor_autoscaler import (
     AutoscalingActorPool,
     DefaultActorAutoscaler,
@@ -116,69 +111,19 @@ class RayTurboResizingPolicy(ActorPoolResizingPolicy):
 
 
 class RayTurboActorAutoscaler(DefaultActorAutoscaler):
-    """Anyscale's proprietary Ray Data actor autoscaler implementation.
-
-    It works in the following way:
-
-      * For each actor pool, check the average actor pool utilization in a time window
-        (`actor_pool_util_avg_window_s`) and other factors (see
-        `_actor_pool_should_scale_up/down`) to decide whether to scale up or down
-        the actor pool.
-      * The actor pool size will be increased by `_scaling_up_factor`
-        each time when scaling up. And will be decreased by 1
-        each time when scaling down.
-    """
-
-    # Default interval in seconds to check actor pool utilization.
-    DEFAULT_ACTOR_POOL_UTIL_CHECK_INTERVAL_S: float = 0.5
-    # Default time window in seconds to calculate the average of
-    # actor pool utilization.
-    DEFAULT_ACTOR_POOL_UTIL_AVG_WINDOW_S: int = 10
-
     def __init__(
         self,
         topology: "Topology",
         resource_manager: "ResourceManager",
         *,
         config: AutoscalingConfig,
-        actor_pool_util_avg_window_s: float = DEFAULT_ACTOR_POOL_UTIL_AVG_WINDOW_S,
-        actor_pool_util_check_interval_s: float = DEFAULT_ACTOR_POOL_UTIL_CHECK_INTERVAL_S,
         actor_pool_resizing_policy: Optional[ActorPoolResizingPolicy] = None,
     ):
         super().__init__(
             topology,
             resource_manager,
             config=config,
-            actor_pool_resizing_policy=actor_pool_resizing_policy
-            or RayTurboResizingPolicy(),
+            actor_pool_resizing_policy=(
+                actor_pool_resizing_policy or RayTurboResizingPolicy()
+            ),
         )
-        assert actor_pool_util_avg_window_s > 0
-        self._actor_pool_util_calculators = defaultdict(
-            lambda: TimeWindowAverageCalculator(window_s=actor_pool_util_avg_window_s)
-        )
-        assert actor_pool_util_check_interval_s >= 0
-        self._actor_pool_util_check_interval_s = actor_pool_util_check_interval_s
-        # Last time when the actor pool utilization was checked.
-        self._last_actor_pool_util_check_time = 0
-
-    def try_trigger_scaling(self):
-        """Override to add check interval rate limiting."""
-        now = time.time()
-        if (
-            now - self._last_actor_pool_util_check_time
-            < self._actor_pool_util_check_interval_s
-        ):
-            return
-
-        self._last_actor_pool_util_check_time = now
-
-        super().try_trigger_scaling()
-
-    def _compute_utilization(self, actor_pool: AutoscalingActorPool) -> Optional[float]:
-        """Override to use time-windowed average utilization."""
-
-        util = actor_pool.get_pool_util()
-        if util == float("inf"):
-            return util
-        self._actor_pool_util_calculators[actor_pool].report(util)
-        return self._actor_pool_util_calculators[actor_pool].get_average()
