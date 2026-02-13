@@ -1,6 +1,8 @@
 import abc
 from typing import Optional
 
+import pyarrow.compute as pac
+
 from ray.data._internal.arrow_ops.transform_pyarrow import (
     MIN_PYARROW_VERSION_TYPE_PROMOTION,
 )
@@ -128,7 +130,17 @@ class UniqueVectorized(VectorizedAggregateFnV2, Unique):
 
 class TopKUniqueVectorized(UniqueVectorized):
     """
-    Computes unique values of the k most frequent elements.
+    Computes unique values of the k most frequent elements globally
+    using the vectorized aggregation path (Arrow >= 14).
+
+    Preserves all values (with duplicates) per block so that global frequencies
+    can be computed during ``_combine_column``. This mirrors the OSS approach in
+    ``compute_unique_value_indices`` which sums counts across all partitions
+    before selecting top-k, ensuring that a category appearing moderately across
+    many partitions is not missed.
+
+    This aggregator only supports the vectorized path. On Arrow < 14, the turbo
+    encoder falls back to the OSS ``compute_unique_value_indices`` instead.
     """
 
     def __init__(
@@ -142,12 +154,22 @@ class TopKUniqueVectorized(UniqueVectorized):
         self.k = k
 
     def aggregate_block(self, block: Block) -> AggType:
-
         column = block[self._target_col_name]
         column_accessor = BlockColumnAccessor.for_column(column)
         if column_accessor.is_composed_of_lists():
             column_accessor = BlockColumnAccessor.for_column(column_accessor.flatten())
             column_accessor = BlockColumnAccessor.for_column(column_accessor.dropna())
-        return BlockColumnAccessor.for_column(
-            column_accessor.top_k(self.k)
-        )._to_arrow_compatible_container()
+        # Return all values (not per-partition top-k) so that global frequency
+        # counts can be computed correctly during _combine_column.
+        return column_accessor._to_arrow_compatible_container()
+
+    def _combine_column(self, accumulator_col: BlockColumn) -> AggType:
+        column_accessor = BlockColumnAccessor.for_column(accumulator_col)
+        # Flatten per-block value lists into a single global list.
+        flattened = column_accessor.flatten()
+        # Compute global value counts, sort descending by count, and take top-k.
+        vc = pac.value_counts(flattened)
+        counts = vc.field("counts")
+        sorted_indices = pac.sort_indices(counts, sort_keys=[("x", "descending")])
+        top_indices = sorted_indices[: self.k]
+        return pac.take(vc.field("values"), top_indices)

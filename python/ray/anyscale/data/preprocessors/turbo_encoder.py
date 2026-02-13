@@ -4,10 +4,12 @@ import pandas as pd
 
 import ray.data.preprocessors as preprocessors_module
 from ray.anyscale.data.aggregate_vectorized import (
+    MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS,
     TopKUniqueVectorized,
     UniqueVectorized,
 )
 from ray.anyscale.data.preprocessors.turbo_preprocessor import TurboPreprocessor
+from ray.data._internal.utils.arrow_utils import get_pyarrow_version
 from ray.data.preprocessors.encoder import (
     unique_post_fn,
 )
@@ -46,6 +48,14 @@ class OrdinalEncoder(_OriginalOrdinalEncoder, TurboPreprocessor):
 @SerializablePreprocessor(version=1, identifier="io.ray.preprocessors.one_hot_encoder")
 class OneHotEncoder(_OriginalOneHotEncoder, TurboPreprocessor):
     def _fit(self, ds):
+        # TopKUniqueVectorized only supports the vectorized aggregation path.
+        # On old Arrow, fall back to the OSS implementation which handles
+        # max_categories correctly via compute_unique_value_indices.
+        if (
+            self.max_categories
+            and get_pyarrow_version() < MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS
+        ):
+            return _OriginalOneHotEncoder._fit(self, ds)
         self.stat_computation_plan.add_aggregator(
             aggregator_fn=lambda col: (
                 TopKUniqueVectorized(
@@ -70,6 +80,14 @@ class OneHotEncoder(_OriginalOneHotEncoder, TurboPreprocessor):
 )
 class MultiHotEncoder(_OriginalMultiHotEncoder, TurboPreprocessor):
     def _fit(self, ds):
+        # TopKUniqueVectorized only supports the vectorized aggregation path.
+        # On old Arrow, fall back to the OSS implementation which handles
+        # max_categories correctly via compute_unique_value_indices.
+        if (
+            self.max_categories
+            and get_pyarrow_version() < MIN_PYARROW_VERSION_VECTORIZED_AGGREGATIONS
+        ):
+            return _OriginalMultiHotEncoder._fit(self, ds)
         self.stat_computation_plan.add_aggregator(
             aggregator_fn=lambda col: (
                 TopKUniqueVectorized(
