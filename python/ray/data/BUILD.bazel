@@ -79,6 +79,19 @@ py_test_module_list(
     ],
 )
 
+py_test_module_list(
+    size = "small",
+    files = glob(["tests/anyscale/test_*.py"]),
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
 py_test(
     name = "test_arrow",
     size = "medium",
@@ -1596,6 +1609,20 @@ py_test(
 )
 
 py_test(
+    name = "test_throughput_based_resource_allocator",
+    size = "medium",
+    srcs = ["tests/test_throughput_based_resource_allocator.py"],
+    tags = [
+        "exclusive",
+        "team:data",
+    ],
+    deps = [
+        ":conftest",
+        "//:ray_lib",
+    ],
+)
+
+py_test(
     name = "test_streaming_executor_errored_blocks",
     size = "medium",
     srcs = ["tests/test_streaming_executor_errored_blocks.py"],
@@ -1754,6 +1781,7 @@ py_test(
     size = "large",
     srcs = ["tests/test_backpressure_e2e.py"],
     tags = [
+        "data_non_parallel",
         "exclusive",
         "team:data",
     ],

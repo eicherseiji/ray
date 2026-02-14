@@ -265,6 +265,25 @@ class ExecutionResources:
             memory=self.memory * f,
         )
 
+    def floordiv(self, other: "ExecutionResources") -> "ExecutionResources":
+        """Returns the floor division of resources."""
+
+        def _div(a, b):
+            if b == 0:
+                return float("inf")
+            if a == float("inf"):
+                return float("inf")
+            return math.floor(a / b)
+
+        return ExecutionResources(
+            cpu=_div(self.cpu, other.cpu),
+            gpu=_div(self.gpu, other.gpu),
+            object_store_memory=_div(
+                self.object_store_memory, other.object_store_memory
+            ),
+            memory=_div(self.memory, other.memory),
+        )
+
 
 @DeveloperAPI
 class ExecutionOptions:
@@ -357,6 +376,9 @@ class ExecutionOptions:
                     "resource_limits and exclude_resources cannot "
                     f" both be set for {attr} resource."
                 )
+
+    def max_cluster_limits(self) -> ExecutionResources:
+        return self.resource_limits.subtract(self.exclude_resources)
 
 
 def safe_or(value: Optional[Any], alt: Any) -> Any:

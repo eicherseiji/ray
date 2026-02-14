@@ -332,6 +332,12 @@ SERVE_MULTIPLEXED_MODEL_ID = "serve_multiplexed_model_id"
 # HTTP request ID
 SERVE_HTTP_REQUEST_ID_HEADER = "x-request-id"
 
+# HTTP request timeout
+SERVE_HTTP_REQUEST_TIMEOUT_S_HEADER = "x-request-timeout-seconds"
+
+# HTTP request disconnect disabled
+SERVE_HTTP_REQUEST_DISCONNECT_DISABLED_HEADER = "x-request-disconnect-disabled"
+
 # Feature flag to turn on node locality routing for proxies. On by default.
 RAY_SERVE_PROXY_PREFER_LOCAL_NODE_ROUTING = get_env_bool(
     "RAY_SERVE_PROXY_PREFER_LOCAL_NODE_ROUTING", "1"
@@ -476,7 +482,11 @@ RAY_SERVE_GRPC_MAX_MESSAGE_SIZE = get_env_int(
 RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH = get_env_int(
     # Default max message length in gRPC is 4MB, we keep that default
     "RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH",
-    4 * 1024 * 1024,
+    int(
+        os.environ.get(
+            "ANYSCALE_RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH", 4 * 1024 * 1024
+        )
+    ),
 )
 
 # Default options passed when constructing gRPC servers.
@@ -493,13 +503,13 @@ RAY_SERVE_ENABLE_TASK_EVENTS = get_env_bool("RAY_SERVE_ENABLE_TASK_EVENTS", "0")
 
 # This is deprecated and will be removed in the future.
 RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY = get_env_bool(
-    "RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "0"
+    "RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "1"
 )
 
 # Use pack instead of spread scheduling strategy.
 RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY = get_env_bool(
     "RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY",
-    os.environ.get("RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "0"),
+    os.environ.get("RAY_SERVE_USE_COMPACT_SCHEDULING_STRATEGY", "1"),
 )
 
 # Comma-separated list of custom resources prioritized in scheduling. Sorted from highest to lowest priority.
@@ -573,6 +583,7 @@ RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP = get_env_bool(
 # use gRPC to send requests, we flip this flag on.
 RAY_SERVE_USE_GRPC_BY_DEFAULT = (
     os.environ.get("RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
+    or os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "0") == "1"
 )
 
 RAY_SERVE_PROXY_USE_GRPC = os.environ.get("RAY_SERVE_PROXY_USE_GRPC") == "1" or (
@@ -600,110 +611,172 @@ DRAINING_MESSAGE = "This node is being drained."
 
 # Feature flag to enable a limited form of direct ingress where ingress applications
 # listen on port 8000 (HTTP) and 9000 (gRPC). No proxies will be started.
+# Check OSS env var first, then anyscale-specific one for backwards compatibility.
+# Also enabled when HAProxy mode is enabled.
 RAY_SERVE_ENABLE_DIRECT_INGRESS = (
-    os.environ.get("RAY_SERVE_ENABLE_DIRECT_INGRESS", "0") == "1"
+    os.environ.get(
+        "RAY_SERVE_ENABLE_DIRECT_INGRESS",
+        os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "0"),
+    )
+    == "1"
 )
 
 # Feature flag to use HAProxy.
-RAY_SERVE_ENABLE_HA_PROXY = os.environ.get("RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
+# Check OSS env var first, then anyscale-specific one for backwards compatibility.
+RAY_SERVE_ENABLE_HA_PROXY = (
+    os.environ.get(
+        "RAY_SERVE_ENABLE_HA_PROXY",
+        os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HA_PROXY", "0"),
+    )
+    == "1"
+)
 
 # HAProxy configuration defaults
 # Maximum number of concurrent connections
-RAY_SERVE_HAPROXY_MAXCONN = int(os.environ.get("RAY_SERVE_HAPROXY_MAXCONN", "20000"))
+RAY_SERVE_HAPROXY_MAXCONN = int(
+    os.environ.get(
+        "RAY_SERVE_HAPROXY_MAXCONN",
+        os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_MAXCONN", "20000"),
+    )
+)
 
 # Number of threads for HAProxy
-RAY_SERVE_HAPROXY_NBTHREAD = int(os.environ.get("RAY_SERVE_HAPROXY_NBTHREAD", "4"))
+RAY_SERVE_HAPROXY_NBTHREAD = int(
+    os.environ.get(
+        "RAY_SERVE_HAPROXY_NBTHREAD",
+        os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_NBTHREAD", "4"),
+    )
+)
 
 # HAProxy configuration file location
 RAY_SERVE_HAPROXY_CONFIG_FILE_LOC = os.environ.get(
-    "RAY_SERVE_HAPROXY_CONFIG_FILE_LOC", "/tmp/haproxy-serve/haproxy.cfg"
+    "RAY_SERVE_HAPROXY_CONFIG_FILE_LOC",
+    os.environ.get(
+        "ANYSCALE_RAY_SERVE_HAPROXY_CONFIG_FILE_LOC",
+        "/tmp/haproxy-serve/haproxy.cfg",
+    ),
 )
 
 # HAProxy admin socket path
 RAY_SERVE_HAPROXY_SOCKET_PATH = os.environ.get(
-    "RAY_SERVE_HAPROXY_SOCKET_PATH", "/tmp/haproxy-serve/admin.sock"
+    "RAY_SERVE_HAPROXY_SOCKET_PATH",
+    os.environ.get(
+        "ANYSCALE_RAY_SERVE_HAPROXY_SOCKET_PATH", "/tmp/haproxy-serve/admin.sock"
+    ),
 )
 
 # Enable HAProxy optimized configuration (server state persistence, etc.)
 # Disabled by default to prevent test suite interference
 RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG = (
-    os.environ.get("RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG", "1") == "1"
+    os.environ.get(
+        "RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG",
+        os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_HAPROXY_OPTIMIZED_CONFIG", "1"),
+    )
+    == "1"
 )
 
 # HAProxy server state path
 RAY_SERVE_HAPROXY_SERVER_STATE_BASE = os.environ.get(
-    "RAY_SERVE_HAPROXY_SERVER_STATE_BASE", "/tmp/haproxy-serve"
+    "RAY_SERVE_HAPROXY_SERVER_STATE_BASE",
+    os.environ.get(
+        "ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_BASE", "/tmp/haproxy-serve"
+    ),
 )
 
 # HAProxy server state path
 RAY_SERVE_HAPROXY_SERVER_STATE_FILE = os.environ.get(
-    "RAY_SERVE_HAPROXY_SERVER_STATE_FILE", "/tmp/haproxy-serve/server-state"
+    "RAY_SERVE_HAPROXY_SERVER_STATE_FILE",
+    os.environ.get(
+        "ANYSCALE_RAY_SERVE_HAPROXY_SERVER_STATE_FILE",
+        "/tmp/haproxy-serve/server-state",
+    ),
 )
 
 # HAProxy hard stop after timeout
 RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S = int(
-    os.environ.get("RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S", "120")
+    os.environ.get(
+        "RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S",
+        os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HARD_STOP_AFTER_S", "120"),
+    )
 )
 
 # HAProxy metrics export port
 RAY_SERVE_HAPROXY_METRICS_PORT = int(
-    os.environ.get("RAY_SERVE_HAPROXY_METRICS_PORT", "9101")
+    os.environ.get(
+        "RAY_SERVE_HAPROXY_METRICS_PORT",
+        os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_METRICS_PORT", "9101"),
+    )
 )
 
 # HAProxy log port
 RAY_SERVE_HAPROXY_SYSLOG_PORT = int(
-    os.environ.get("RAY_SERVE_HAPROXY_SYSLOG_PORT", "514")
+    os.environ.get(
+        "RAY_SERVE_HAPROXY_SYSLOG_PORT",
+        os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_SYSLOG_PORT", "514"),
+    )
 )
 
 # HAProxy timeout configurations (in seconds, None = no timeout)
+_timeout_server_raw = os.environ.get(
+    "RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S",
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S"),
+)
 RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S = (
-    int(os.environ.get("RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S"))
-    if os.environ.get("RAY_SERVE_HAPROXY_TIMEOUT_SERVER_S")
-    else None
+    int(_timeout_server_raw) if _timeout_server_raw else None
 )
 
+_timeout_connect_raw = os.environ.get(
+    "RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S",
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S"),
+)
 RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S = (
-    int(os.environ.get("RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S"))
-    if os.environ.get("RAY_SERVE_HAPROXY_TIMEOUT_CONNECT_S")
-    else None
+    int(_timeout_connect_raw) if _timeout_connect_raw else None
 )
 
 # HAProxy timeout client
 RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S = int(
-    os.environ.get("RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S", "3600")
+    os.environ.get(
+        "RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S",
+        os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_TIMEOUT_CLIENT_S", "3600"),
+    )
 )
 
 # Number of consecutive failed server health checks that must occur
 # before haproxy marks the server as down.
 RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL = int(
-    os.environ.get("RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL", "2")
+    os.environ.get(
+        "RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL",
+        os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FALL", "2"),
+    )
 )
 
 # Number of consecutive successful server health checks that must occur
 # before haproxy marks the server as up.
 RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE = int(
-    os.environ.get("RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE", "2")
+    os.environ.get(
+        "RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE",
+        os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_RISE", "2"),
+    )
 )
 
 # Time interval between each haproxy health check attempt. Also the
 # timeout of each health check before being considered as failed.
 RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER = os.environ.get(
-    "RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER", "5s"
+    "RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER",
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_INTER", "5s"),
 )
 
 # Time interval between each haproxy health check attempt when the server is in any of the transition states: UP - transitionally DOWN or DOWN - transitionally UP
 RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER = os.environ.get(
-    "RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER", "250ms"
+    "RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER",
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_FASTINTER", "250ms"),
 )
 
 # Time interval between each haproxy health check attempt when the server is in the DOWN state
 RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER = os.environ.get(
-    "RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER", "250ms"
+    "RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER",
+    os.environ.get("ANYSCALE_RAY_SERVE_HAPROXY_HEALTH_CHECK_DOWNINTER", "250ms"),
 )
-
-# Direct ingress must be enabled if HAProxy is enabled
-if RAY_SERVE_ENABLE_HA_PROXY:
-    RAY_SERVE_ENABLE_DIRECT_INGRESS = True
 
 RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT = int(
     os.environ.get("RAY_SERVE_DIRECT_INGRESS_MIN_HTTP_PORT", "30000")
@@ -723,15 +796,13 @@ RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT = int(
 # The minimum drain period for a HTTP proxy.
 # If RAY_SERVE_FORCE_STOP_UNHEALTHY_REPLICAS is set to 1,
 # then the minimum draining period is 0.
+# Check OSS env var first, then anyscale-specific one for backwards compatibility.
 RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S = float(
-    os.environ.get("RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S", "30")
+    os.environ.get(
+        "RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S",
+        os.environ.get("ANYSCALE_RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S", "30"),
+    )
 )
-
-# HTTP request timeout
-SERVE_HTTP_REQUEST_TIMEOUT_S_HEADER = "x-request-timeout-seconds"
-
-# HTTP request disconnect disabled
-SERVE_HTTP_REQUEST_DISCONNECT_DISABLED_HEADER = "x-request-disconnect-disabled"
 
 # If throughput optimized Ray Serve is enabled, set the following constants.
 # This should be at the end.
@@ -747,10 +818,18 @@ if RAY_SERVE_THROUGHPUT_OPTIMIZED:
         "RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP", "0"
     )
     RAY_SERVE_LOG_TO_STDERR = get_env_bool("RAY_SERVE_LOG_TO_STDERR", "0")
-    RAY_SERVE_USE_GRPC_BY_DEFAULT = get_env_bool("RAY_SERVE_USE_GRPC_BY_DEFAULT", "1")
-    RAY_SERVE_ENABLE_DIRECT_INGRESS = get_env_bool(
-        "RAY_SERVE_ENABLE_DIRECT_INGRESS", "1"
+    RAY_SERVE_USE_GRPC_BY_DEFAULT = (
+        get_env_bool("RAY_SERVE_USE_GRPC_BY_DEFAULT", "1")
+        and os.environ.get("ANYSCALE_RAY_SERVE_USE_GRPC_BY_DEFAULT", "1") == "1"
     )
+    RAY_SERVE_ENABLE_DIRECT_INGRESS = (
+        get_env_bool("RAY_SERVE_ENABLE_DIRECT_INGRESS", "1")
+        and os.environ.get("ANYSCALE_RAY_SERVE_ENABLE_DIRECT_INGRESS", "1") == "1"
+    )
+
+# Direct ingress must be enabled if HAProxy is enabled
+if RAY_SERVE_ENABLE_HA_PROXY:
+    RAY_SERVE_ENABLE_DIRECT_INGRESS = True
 
 # The maximum allowed RPC latency in milliseconds.
 # This is used to detect and warn about long RPC latencies

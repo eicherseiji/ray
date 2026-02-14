@@ -630,6 +630,9 @@ class HashShufflingOperatorBase(PhysicalOperator, SubProgressBarMixin):
         self._output_blocks_stats: List[BlockStats] = list()
         self._shuffled_blocks_stats: List[BlockStats] = list()
 
+        self._shuffle_metrics = OpRuntimeMetrics(self)
+        self._reduce_metrics = OpRuntimeMetrics(self)
+
         # Incremental individual partition metadata accumulated separately for
         # individual input sequences during shuffling. Maps
         #
@@ -995,14 +998,16 @@ class HashShufflingOperatorBase(PhysicalOperator, SubProgressBarMixin):
         self._shuffling_tasks.clear()
         self._finalizing_tasks.clear()
 
+    @property
+    def metrics(self) -> OpRuntimeMetrics:
+        # TODO figure out a better way to combine w/ finalization metrics
+        self._shuffle_metrics._extra_metrics = self._extra_metrics()
+        return self._shuffle_metrics
+
     def _extra_metrics(self):
-        shuffle_name = f"{self._name}_shuffle"
         finalize_name = f"{self._name}_finalize"
 
-        self._shuffle_metrics.as_dict()
-
         return {
-            shuffle_name: self._shuffle_metrics.as_dict(),
             finalize_name: self._reduce_metrics.as_dict(),
         }
 
@@ -1038,6 +1043,13 @@ class HashShufflingOperatorBase(PhysicalOperator, SubProgressBarMixin):
                 * self._aggregator_pool._aggregator_ray_remote_args.get("memory", 0)
             ),
             object_store_memory=0,
+        )
+
+    def per_task_resource_allocation(self) -> ExecutionResources:
+        return ExecutionResources(
+            cpu=self._DEFAULT_SHUFFLE_BLOCK_NUM_CPUS,
+            object_store_memory=0,
+            gpu=0,
         )
 
     def incremental_resource_usage(self) -> ExecutionResources:

@@ -101,6 +101,7 @@ py_test_module_list(
 # Medium tests.
 py_test_module_list(
     size = "medium",
+    env = {"ANYSCALE_TRACING_EXPORTER_IMPORT_PATH": ""},
     files = [
         "test_actor_replica_wrapper.py",
         "test_backpressure.py",
@@ -255,6 +256,7 @@ py_test_module_list(
         "RAY_SERVE_REPLICA_UTILIZATION_REPORT_INTERVAL_S": "1",
         "RAY_SERVE_REPLICA_UTILIZATION_NUM_BUCKETS": "10",
         "RAY_SERVE_REPLICA_HEALTH_GAUGE_REPORT_INTERVAL_S": "0.1",
+        "ANYSCALE_TRACING_EXPORTER_IMPORT_PATH": "",
     },
     files = [
         "test_deploy_app.py",
@@ -467,7 +469,7 @@ py_test_module_list(
 py_test_module_list(
     size = "medium",
     data = glob(["test_config_files/**/*"]),
-    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "1"},
+    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "0"},
     files = [
         "test_cluster.py",
         "test_controller_recovery.py",
@@ -491,7 +493,7 @@ py_test_module_list(
 # Large tests with pack scheduling
 py_test_module_list(
     size = "enormous",
-    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "1"},
+    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "0"},
     files = [
         "test_standalone.py",
         "test_standalone_3.py",
@@ -512,7 +514,7 @@ py_test_module_list(
 py_test_module_list(
     size = "large",
     data = glob(["test_config_files/**/*"]),
-    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "1"},
+    env = {"RAY_SERVE_USE_PACK_SCHEDULING_STRATEGY": "0"},
     files = [
         "test_deployment_scheduler.py",
         "test_gang_scheduling.py",
@@ -673,6 +675,7 @@ py_test_module_list(
     env = {
         "RAY_SERVE_ENABLE_HA_PROXY": "1",
         "RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S": "0.01",
+        "RAY_SERVE_REPLICA_HEALTH_GAUGE_REPORT_INTERVAL_S": "0.1",
     },
     files = [
         "test_haproxy.py",

@@ -172,6 +172,8 @@ class MARWILConfig(AlgorithmConfig):
         # fmt: off
         # __sphinx_doc_begin__
         # MARWIL specific settings:
+        self._is_online = False
+
         self.beta = 1.0
         self.bc_logstd_coeff = 0.0
         self.moving_average_sqd_adv_norm_update_rate = 1e-8
@@ -426,8 +428,20 @@ class MARWILConfig(AlgorithmConfig):
             )
 
     @property
-    def _model_auto_keys(self):
-        return super()._model_auto_keys | {"beta": self.beta, "vf_share_layers": False}
+    def is_online(self) -> bool:
+        """Defines if this config is for online RL.
+
+        Note, a config can be for on- and offline training, if the algorithm is
+        for example hybrid.
+        """
+        return self._is_online if self.enable_env_runner_and_connector_v2 else True
+
+    @property
+    def _model_config_auto_includes(self):
+        return super()._model_config_auto_includes | {
+            "beta": self.beta,
+            "vf_share_layers": False,
+        }
 
 
 class MARWIL(Algorithm):
