@@ -27,7 +27,6 @@ from starlette.types import Receive, Scope, Send
 import ray
 from ray.anyscale.serve._private.http_util import ASGIDIReceiveProxy
 from ray.serve._private.constants import (
-    RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
     RAY_SERVE_DIRECT_INGRESS_MIN_DRAINING_PERIOD_S,
     RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
     RAY_SERVE_ENABLE_DIRECT_INGRESS,
@@ -51,7 +50,6 @@ from ray.serve._private.http_util import (
     configure_http_middlewares,
 )
 from ray.serve.context import _get_in_flight_requests
-from ray.anyscale.serve.utils import asyncio_grpc_exception_handler
 from ray.serve._private.common import (
     RequestProtocol,
     ReplicaQueueLengthInfo,
@@ -468,22 +466,10 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
 
 class AnyscaleReplica(ReplicaBase):
     def __init__(self, **kwargs):
-        self._server = grpc.aio.server(
-            options=[
-                (
-                    "grpc.max_receive_message_length",
-                    RAY_SERVE_REPLICA_GRPC_MAX_MESSAGE_LENGTH,
-                )
-            ]
-        )
-
         self._direct_ingress_http_server_task: Optional[asyncio.Task] = None
         self._direct_ingress_grpc_server_task: Optional[asyncio.Task] = None
 
         super().__init__(**kwargs)
-
-        # Silence spammy false positive errors from gRPC Python
-        self._event_loop.set_exception_handler(asyncio_grpc_exception_handler)
 
         # Set up tracing
         try:
