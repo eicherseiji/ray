@@ -412,57 +412,6 @@ class AnyscaleReplicaMetricsManager(ReplicaMetricsManager):
                         self._ingress_ongoing_http_requests
                     )
 
-    def _report_cached_metrics(self):
-        super()._report_cached_metrics()
-
-        if not self._is_direct_ingress:
-            return
-
-        for protocol in [RequestProtocol.HTTP]:
-            if protocol == RequestProtocol.HTTP:
-                ingress_request_counter = self.ingress_http_request_counter
-                ingress_request_error_counter = self.ingress_http_request_error_counter
-                deployment_request_error_counter = (
-                    self.deployment_http_request_error_counter
-                )
-                ingress_processing_latencies = (
-                    self.ingress_http_processing_latency_tracker
-                )
-                self.ingress_num_ongoing_http_requests_gauge.set(
-                    self._ingress_ongoing_http_requests
-                )
-            else:
-                # TODO(alexyang): Add metrics for gRPC.
-                continue
-
-            for request_tags, count in self._cached_ingress_request_counter[
-                protocol
-            ].items():
-                ingress_request_counter.inc(count, tags=dict(request_tags))
-
-            for request_tags, count in self._cached_ingress_request_error_counter[
-                protocol
-            ].items():
-                ingress_request_error_counter.inc(count, tags=dict(request_tags))
-
-            for request_tags, count in self._cached_deployment_request_error_counter[
-                protocol
-            ].items():
-                deployment_request_error_counter.inc(count, tags=dict(request_tags))
-
-            for latency_tags, latencies in self._cached_ingress_processing_latencies[
-                protocol
-            ].items():
-                for latency_ms in latencies:
-                    ingress_processing_latencies.observe(
-                        latency_ms, tags=dict(latency_tags)
-                    )
-
-        self._cached_ingress_request_counter.clear()
-        self._cached_ingress_request_error_counter.clear()
-        self._cached_deployment_request_error_counter.clear()
-        self._cached_ingress_processing_latencies.clear()
-
 
 class AnyscaleReplica(ReplicaBase):
     def __init__(self, **kwargs):
