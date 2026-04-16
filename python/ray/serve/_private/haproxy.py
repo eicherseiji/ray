@@ -1327,11 +1327,9 @@ class HAProxyManager(ProxyActorInterface):
         if fallback_target is not None:
             fallback_server = self._target_to_server(fallback_target)
 
-        # When ingress bypass is active, the main targets are LLMServer replicas
-        # serving vLLM's native app which uses /health not /-/healthz.
-        health_path = None  # use default
-        if target_group.router_targets:
-            health_path = "/health"
+        # Data plane targets serve via Serve's ASGI wrapper, so use the
+        # default health check path (/-/healthz).
+        health_path = None
 
         return BackendConfig(
             # The name is lowercased and formatted as <protocol>-<app_name>. Special
