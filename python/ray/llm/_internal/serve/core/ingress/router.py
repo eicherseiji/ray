@@ -47,7 +47,11 @@ class LLMRouter:
         await self._init_completed.wait()
 
     async def __call__(self, request):
-        """Handle /internal/route POST requests."""
+        """Handle /internal/route POST requests and health checks."""
+        # Respond to GET health checks so HAProxy marks us as UP.
+        if request.method != "POST":
+            return JSONResponse({"status": "ok"})
+
         import orjson
 
         body = await request.body()
