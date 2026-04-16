@@ -1573,18 +1573,11 @@ class ServeController:
             for replica_info in replicas:
                 port = replica_info.direct_ingress_http_port
                 if port is not None and replica_info.node_ip is not None:
-                    instance_id = (
-                        self.cluster_node_info_cache.get_node_instance_id(
-                            replica_info.node_id
-                        )
-                        if replica_info.node_id
-                        else None
-                    )
                     http_targets.append(
                         Target(
                             ip=replica_info.node_ip,
                             port=port,
-                            instance_id=instance_id or "",
+                            instance_id="",
                             name=replica_info.actor_name,
                         )
                     )
