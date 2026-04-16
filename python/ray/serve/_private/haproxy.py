@@ -187,6 +187,7 @@ class ServerConfig:
     name: str  # Server identifier for HAProxy config
     host: str  # IP/hostname to connect to
     port: int  # Port to connect to
+    routing_key: Optional[str] = None  # Stable custom-routing selection key
 
     def __str__(self) -> str:
         return f"ServerConfig(name='{self.name}', host='{self.host}', port={self.port})"
@@ -250,6 +251,17 @@ class BackendConfig:
 
     # List of servers in this backend
     servers: List[ServerConfig] = field(default_factory=list)
+
+    # Router servers for ingress bypass Lua routing.
+    # When populated, HAProxy Lua calls these to get routing decisions.
+    router_servers: List[ServerConfig] = field(default_factory=list)
+
+    # Whether this backend should use the direct ingress custom request routing path.
+    custom_request_routing: bool = False
+
+    # Per-server connection limit for the custom-routed backend.
+    # When set, HAProxy queues excess requests instead of forwarding them all.
+    max_server_conns: Optional[int] = None
 
     # The fallback server for this backend.
     fallback_server: Optional[ServerConfig] = None
@@ -503,7 +515,6 @@ class HAProxyApi(ProxyApi):
         self._proc = None
         # Track old processes from graceful reloads that may still be draining
         self._old_procs: List[asyncio.subprocess.Process] = []
-
         # Ensure required directories exist during initialization
         self._initialize_directories_and_error_files()
 
@@ -520,7 +531,7 @@ class HAProxyApi(ProxyApi):
         socket_dir = os.path.dirname(self.cfg.socket_path)
         os.makedirs(socket_dir, exist_ok=True)
 
-        # Create a server state directory only if optimization is enabled
+        # Create a server state directory only if persistence is enabled
         if self.cfg.enable_hap_optimization:
             server_state_dir = os.path.dirname(self.cfg.server_state_file)
             os.makedirs(server_state_dir, exist_ok=True)
@@ -582,6 +593,10 @@ class HAProxyApi(ProxyApi):
         """Perform a graceful reload of HAProxy by starting a new process with -sf."""
         try:
             old_proc = self._proc
+            if old_proc is None:
+                self._proc = await self._start_and_wait_for_haproxy()
+                return
+
             await self._wait_for_hap_availability(old_proc)
 
             # Save server state if optimization is enabled
@@ -635,6 +650,133 @@ class HAProxyApi(ProxyApi):
             f"HAProxy did not enter running state within {timeout_s} seconds."
         )
 
+    def _write_lua_script(
+        self,
+        backends: List[BackendConfig],
+    ) -> str:
+        """Write the Lua routing script for direct ingress custom request routing.
+
+        Per-request routing: Lua calls /internal/route on an ingress router
+        for every request, which calls choose_replicas() to pick a replica.
+        This supports custom routing logic including prefix-cache-aware routing.
+
+        Returns the path to the written Lua script.
+        """
+        config_dir = os.path.dirname(self.config_file_path)
+        lua_path = os.path.join(config_dir, "direct_ingress_custom_request_routing.lua")
+
+        router_group_entries = []
+        for backend in backends:
+            if not backend.custom_request_routing or not backend.router_servers:
+                continue
+            servers_lua = ", ".join(
+                f"{{ host = {json.dumps(s.host)}, port = {s.port} }}"
+                for s in backend.router_servers
+            )
+            router_group_entries.append(
+                f'    {{ path_prefix = {json.dumps(backend.path_prefix or "/")}, '
+                f"servers = {{ {servers_lua} }} }}"
+            )
+
+        routers_lua = (
+            "{\n" + ",\n".join(router_group_entries) + "\n}"
+            if router_group_entries
+            else "{}"
+        )
+
+        lua_content = f"""local ROUTERS = {routers_lua}
+local rr_counter = 0
+
+local function path_matches(path, prefix)
+    if prefix == "/" then
+        return true
+    end
+    return path == prefix or string.sub(path, 1, #prefix + 1) == prefix .. "/"
+end
+
+local function find_router_group(path)
+    for _, group in ipairs(ROUTERS) do
+        if path_matches(path, group.path_prefix) then
+            return group
+        end
+    end
+    return nil
+end
+
+local function do_request(server, body)
+    local sock = core.tcp()
+    sock:settimeout(0.5)
+
+    local ok, err = sock:connect(server.host, tonumber(server.port))
+    if not ok then
+        return nil
+    end
+
+    local req = "POST /internal/route HTTP/1.0\\r\\n"
+        .. "Content-Type: application/json\\r\\n"
+        .. "Content-Length: " .. #body .. "\\r\\n"
+        .. "\\r\\n"
+        .. body
+
+    local ok, err = sock:send(req)
+    if not ok then
+        sock:close()
+        return nil
+    end
+
+    local response = sock:receive("*a")
+    sock:close()
+
+    if not response then
+        return nil
+    end
+
+    return response
+end
+
+core.register_action("route_direct_ingress_request", {{"http-req"}}, function(txn)
+    local path = txn.sf:path()
+    local group = find_router_group(path)
+    if not group then
+        return
+    end
+
+    local body = txn.sf:req_body()
+    if not body or body == "" then
+        return
+    end
+
+    -- Round-robin across router servers, trying each once on failure.
+    local n = #group.servers
+    local start = rr_counter
+    rr_counter = rr_counter + 1
+    local response = nil
+    for i = 0, n - 1 do
+        local server = group.servers[(start + i) % n + 1]
+        response = do_request(server, body)
+        if response then break end
+    end
+
+    if not response then
+        return
+    end
+
+    local host = response:match('"host"%s*:%s*"([^"]+)"')
+    local port = response:match('"port"%s*:%s*(%d+)')
+
+    if host and port then
+        local routing_key = "sc_" .. host:gsub("%.", "_") .. "_" .. port
+        txn:set_var("txn.direct_ingress_target", routing_key)
+        txn:set_var("txn.custom_request_routed", true)
+    end
+end, 0)
+"""
+        with open(lua_path, "w") as f:
+            f.write(lua_content)
+
+        logger.info(f"Wrote Lua routing script to {lua_path}")
+        return lua_path
+
     def _generate_config_file_internal(self) -> None:
         """Internal config generation without locking (for use within locked sections)."""
         try:
@@ -647,6 +789,15 @@ class HAProxyApi(ProxyApi):
                 self.backend_configs.values(),
                 key=lambda be: (-len(be.path_prefix), be.path_prefix),
             )
+
+            has_custom_request_routing = any(
+                backend.custom_request_routing for backend in backends
+            )
+
+            # Write Lua script if direct ingress custom request routing is active.
+            lua_script_path = None
+            if has_custom_request_routing:
+                lua_script_path = self._write_lua_script(backends)
 
             # Enrich backends with precomputed health check configuration strings
             backends_with_health_config = [
@@ -677,6 +828,8 @@ class HAProxyApi(ProxyApi):
                     "backends_with_health_config": backends_with_health_config,
                     "healthz_rules": healthz_rules,
                     "route_info": health_route_info,
+                    "has_custom_request_routing": has_custom_request_routing,
+                    "lua_script_path": lua_script_path,
                 }
             )
 
@@ -884,7 +1037,6 @@ class HAProxyApi(ProxyApi):
             # Regenerate the config file with the deny rule
             self._generate_config_file_internal()
 
-            # Perform a graceful reload to apply changes
             await self._graceful_reload()
             logger.info("Successfully disabled health checks.")
         except Exception as e:
@@ -897,7 +1049,6 @@ class HAProxyApi(ProxyApi):
             self.cfg.pass_health_checks = True
 
             self._generate_config_file_internal()
-            # Perform a graceful reload to apply changes
             await self._graceful_reload()
             logger.info("Successfully enabled health checks.")
         except Exception as e:
@@ -987,7 +1138,10 @@ class HAProxyManager(ProxyActorInterface):
         )
 
         self._haproxy = HAProxyApi(
-            cfg=HAProxyConfig(http_options=http_options, is_head=is_head)
+            cfg=HAProxyConfig(
+                http_options=http_options,
+                is_head=is_head,
+            )
         )
         self._haproxy_start_task = self.event_loop.create_task(self._haproxy.start())
 
@@ -1150,6 +1304,7 @@ class HAProxyManager(ProxyActorInterface):
             # Use localhost if target is on the same node as HAProxy
             host="127.0.0.1" if target.ip == self._node_ip_address else target.ip,
             port=target.port,
+            routing_key=f"sc_{target.ip.replace('.', '_')}_{target.port}",
         )
 
     def _create_backend_config(
@@ -1158,11 +1313,25 @@ class HAProxyManager(ProxyActorInterface):
         fallback_target: Optional[Target],
     ) -> BackendConfig:
         """Create a backend configuration from a target group and fallback target."""
+        custom_request_routing = bool(target_group.router_targets)
         servers = [self._target_to_server(target) for target in target_group.targets]
+
+        router_servers = [
+            self._target_to_server(target) for target in target_group.router_targets
+        ]
+        router_servers = sorted(
+            router_servers, key=lambda server: (server.port, server.host)
+        )
 
         fallback_server = None
         if fallback_target is not None:
             fallback_server = self._target_to_server(fallback_target)
+
+        # When ingress bypass is active, the main targets are LLMServer replicas
+        # serving vLLM's native app which uses /health not /-/healthz.
+        health_path = None  # use default
+        if target_group.router_targets:
+            health_path = "/health"
 
         return BackendConfig(
             # The name is lowercased and formatted as <protocol>-<app_name>. Special
@@ -1173,8 +1342,12 @@ class HAProxyManager(ProxyActorInterface):
             ),
             path_prefix=target_group.route_prefix,
             servers=servers,
+            router_servers=router_servers,
+            custom_request_routing=custom_request_routing,
+            max_server_conns=None,
             app_name=target_group.app_name,
             fallback_server=fallback_server,
+            health_check_path=health_path,
         )
 
     async def _reload_haproxy(self) -> None:

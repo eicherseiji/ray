@@ -2,7 +2,7 @@ import asyncio
 import logging
 import pickle
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, Tuple
 
 import grpc
 
@@ -258,6 +258,14 @@ class RunningReplica:
     def is_cross_language(self) -> bool:
         """Whether this replica is cross-language (Java)."""
         return self._replica_info.is_cross_language
+
+    @property
+    def direct_ingress_endpoint(self) -> Optional[Tuple[str, int]]:
+        """Return (host, port) of the replica's direct ingress HTTP server."""
+        port = self._replica_info.direct_ingress_http_port
+        if port is not None:
+            return (self._replica_info.node_ip, port)
+        return None
 
     @property
     def stub(self):

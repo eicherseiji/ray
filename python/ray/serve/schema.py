@@ -463,6 +463,16 @@ class DeploymentSchema(BaseModel):
             "init_kwargs, and actor_options."
         ),
     )
+    router: bool = Field(
+        default=False,
+        description=(
+            "If True, this deployment serves as the router for ingress bypass mode. "
+            "The router deployment receives /internal/route requests from HAProxy "
+            "for routing decisions. Only one deployment per application can be marked as router. "
+            "When specified with ingress bypass, the router receives routing requests "
+            "while other deployments receive direct data plane traffic."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -1521,6 +1531,13 @@ class TargetGroup(BaseModel):
     route_prefix: str = Field(description="Prefix route of the targets.")
     protocol: RequestProtocol = Field(description="Protocol of the targets.")
     app_name: str = Field("", description="Name of the application.")
+    # Router targets for ingress bypass Lua routing. When populated,
+    # HAProxy Lua calls these targets to get routing decisions, then
+    # forwards data plane traffic to the main targets.
+    router_targets: List[Target] = Field(
+        default_factory=list,
+        description="List of router targets for Lua-based routing decisions.",
+    )
 
 
 @PublicAPI(stability="stable")

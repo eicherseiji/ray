@@ -630,6 +630,13 @@ RAY_SERVE_ENABLE_DIRECT_INGRESS = (
 # Feature flag to use HAProxy.
 RAY_SERVE_ENABLE_HA_PROXY = os.environ.get("RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
 
+# Feature flag to enable ingress bypass mode. When enabled, HAProxy Lua
+# routes requests directly to LLMServer replicas via direct ingress ports,
+# using an LLMRouter deployment for routing decisions.
+RAY_SERVE_ENABLE_INGRESS_BYPASS = (
+    os.environ.get("RAY_SERVE_ENABLE_INGRESS_BYPASS", "0") == "1"
+)
+
 # Feature flag to include client IP address in HTTP access logs.
 # Off by default for privacy; set to "1" to enable.
 RAY_SERVE_LOG_CLIENT_ADDRESS = (
