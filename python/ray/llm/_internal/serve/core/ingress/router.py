@@ -58,9 +58,14 @@ class LLMRouter:
 
     @router_app.post("/internal/route")
     async def route(self, request: Request):
+        import time
+
         import orjson
 
+        t0 = time.monotonic()
         body = await request.body()
+        t_body = time.monotonic()
+
         try:
             parsed = orjson.loads(body)
         except Exception:
@@ -79,10 +84,20 @@ class LLMRouter:
         if model_id is None:
             return JSONResponse({"error": "no model"}, status_code=404)
 
+        t_pre_pick = time.monotonic()
         try:
             host, port, replica_id = await self._pick_replica(model_id)
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=503)
+        t_post_pick = time.monotonic()
+
+        logger.info(
+            f"ROUTE request_id={request.headers.get('x-request-id', '?')} "
+            f"model={model_id} → {host}:{port} "
+            f"body={1000*(t_body-t0):.1f}ms "
+            f"pick={1000*(t_post_pick-t_pre_pick):.1f}ms "
+            f"total={1000*(t_post_pick-t0):.1f}ms"
+        )
 
         return JSONResponse({"host": host, "port": port})
 

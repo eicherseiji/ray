@@ -2481,7 +2481,26 @@ class Replica:
             self._user_callable_wrapper.user_callable, "_asgi_app", None
         )
         if custom_app is not None:
-            await custom_app(scope, receive, send)
+            t_enter = time.time()
+            first_body_sent = False
+            original_send = send
+
+            async def timed_send(msg):
+                nonlocal first_body_sent
+                if (
+                    not first_body_sent
+                    and msg.get("type") == "http.response.body"
+                    and msg.get("body")
+                ):
+                    first_body_sent = True
+                    ttfb_ms = (time.time() - t_enter) * 1000
+                    if route not in ("/-/healthz", "/-/routes", "/health"):
+                        logger.info(
+                            f"DIRECT_INGRESS path={route} " f"ttfb={ttfb_ms:.1f}ms"
+                        )
+                await original_send(msg)
+
+            await custom_app(scope, receive, timed_send)
             return
 
         # If the HTTP path does not match the deployment route prefix,
