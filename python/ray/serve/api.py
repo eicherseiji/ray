@@ -438,6 +438,7 @@ def deployment(
     deployment_actors: Default[
         Optional[List[Union[Dict, DeploymentActorConfig]]]
     ] = DEFAULT.VALUE,
+    router: Default[bool] = DEFAULT.VALUE,
 ) -> Callable[[Callable], Deployment]:
     """Decorator that converts a Python class to a `Deployment`.
 
@@ -516,6 +517,8 @@ def deployment(
             Each actor is shared across all replicas of this deployment. Use
             `serve.get_deployment_actor(actor_name)` from within a replica to get
             the actor handle. See `DeploymentActorConfig` for options.
+        router: If True, this deployment serves as the router for ingress
+            bypass mode. Only one deployment per application can be the router.
     Returns:
         `Deployment`
     """
@@ -602,6 +605,7 @@ def deployment(
         max_constructor_retry_count=max_constructor_retry_count,
         gang_scheduling_config=gang_scheduling_config,
         deployment_actors=deployment_actors,
+        router=router,
     )
     deployment_config.user_configured_option_names = set(user_configured_option_names)
 
