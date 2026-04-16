@@ -2442,15 +2442,6 @@ class Replica:
         if self._route_prefix and self._route_prefix != "/":
             scope["root_path"] = self._route_prefix
 
-        # If the user callable has registered a custom ASGI app (e.g.,
-        # LLMServer registers vLLM's FastAPI app), serve it directly.
-        custom_app = getattr(
-            self._user_callable_wrapper.user_callable, "_asgi_app", None
-        )
-        if custom_app is not None:
-            await custom_app(scope, receive, send)
-            return
-
         start_time = time.time()
         method = scope.get("method", "WS").upper()
         route = scope.get("path", "")
@@ -2481,6 +2472,16 @@ class Replica:
                 was_error=not healthy,
                 status_code=str(status_code),
             )
+            return
+
+        # If the user callable has registered a custom ASGI app (e.g.,
+        # LLMServer registers vLLM's FastAPI app), serve it directly.
+        # This runs after health checks so /-/healthz still works.
+        custom_app = getattr(
+            self._user_callable_wrapper.user_callable, "_asgi_app", None
+        )
+        if custom_app is not None:
+            await custom_app(scope, receive, send)
             return
 
         # If the HTTP path does not match the deployment route prefix,
