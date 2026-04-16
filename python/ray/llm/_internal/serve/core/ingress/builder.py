@@ -136,9 +136,9 @@ def build_openai_app(builder_config: dict) -> Application:
 
     # If ingress bypass is enabled via env var, create a dedicated LLMRouter
     # deployment that handles /internal/route for HAProxy Lua routing decisions.
-    from ray.serve._private.constants import RAY_SERVE_ENABLE_INGRESS_BYPASS
-
-    if RAY_SERVE_ENABLE_INGRESS_BYPASS:
+    # Check os.environ directly (not the module-level constant) because the env
+    # var may be set after the constants module was first imported.
+    if os.environ.get("RAY_SERVE_ENABLE_INGRESS_BYPASS", "0") == "1":
         from ray.llm._internal.serve.core.ingress.router import LLMRouter
 
         logger.info("Ingress bypass enabled: creating LLMRouter deployment")
