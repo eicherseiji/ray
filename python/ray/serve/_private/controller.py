@@ -1483,6 +1483,10 @@ class ServeController:
         router_deployment_name = (
             self.application_state_manager.get_router_deployment_name(app_name)
         )
+        logger.info(
+            f"_get_target_groups_for_app: app={app_name}, "
+            f"router_deployment_name={router_deployment_name}"
+        )
 
         if router_deployment_name:
             return self._get_target_groups_for_app_with_router(
@@ -1552,21 +1556,38 @@ class ServeController:
         )
 
         # Data plane targets: all non-router deployments with direct ingress ports.
-        # Iterate over all deployments in the app to find LLMServer replicas.
+        # We use the replica's own HTTP port (from _actor._http_port) rather than
+        # NodePortManager, because direct ingress ports are allocated by the replica
+        # actor itself, not by the controller.
         all_deployment_names = self.application_state_manager.get_deployments(app_name)
 
-        data_plane_details = []
+        http_targets = []
         for dep_name in all_deployment_names:
             if dep_name == router_deployment_name:
                 continue
-            details = self._get_running_replica_details_for_deployment(
-                app_name, dep_name
+            deployment_id = DeploymentID(app_name=app_name, name=dep_name)
+            all_replica_infos = (
+                self.deployment_state_manager.get_running_replica_infos()
             )
-            data_plane_details.extend(details)
-
-        http_targets = self._get_targets_for_protocol(
-            data_plane_details, RequestProtocol.HTTP
-        )
+            replicas = all_replica_infos.get(deployment_id, [])
+            for replica_info in replicas:
+                port = replica_info.direct_ingress_http_port
+                if port is not None and replica_info.node_ip is not None:
+                    instance_id = (
+                        self.cluster_node_info_cache.get_node_instance_id(
+                            replica_info.node_id
+                        )
+                        if replica_info.node_id
+                        else None
+                    )
+                    http_targets.append(
+                        Target(
+                            ip=replica_info.node_ip,
+                            port=port,
+                            instance_id=instance_id or "",
+                            name=replica_info.actor_name,
+                        )
+                    )
 
         if not http_targets and not router_http_targets:
             return []
