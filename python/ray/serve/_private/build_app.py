@@ -107,12 +107,29 @@ def build_app(
         default_runtime_env=default_runtime_env,
         make_deployment_handle=make_deployment_handle,
     )
-    # Determine router deployment name from the router=True decorator.
+
+    # If the Application has a router peer, build it into the same app.
+    # The router is NOT a DAG child of the ingress — it's an independent
+    # deployment that gets its own replicas and handles.
     router_deployment_name = None
-    for deployment in deployments:
-        if deployment._deployment_config.router:
-            router_deployment_name = deployment.name
-            break
+    if app._router is not None:
+        router_deployments = _build_app_recursive(
+            app._router,
+            app_name=name,
+            handles=handles,
+            deployment_names=deployment_names,
+            default_runtime_env=default_runtime_env,
+            make_deployment_handle=make_deployment_handle,
+        )
+        deployments.extend(router_deployments)
+        router_deployment_name = deployment_names[app._router]
+
+    # Also check for router=True decorator (config-based path).
+    if router_deployment_name is None:
+        for deployment in deployments:
+            if deployment._deployment_config.router:
+                router_deployment_name = deployment.name
+                break
 
     return BuiltApplication(
         name=name,

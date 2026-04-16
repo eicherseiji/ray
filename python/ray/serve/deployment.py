@@ -60,9 +60,18 @@ class Application:
 
     """
 
-    def __init__(self, bound_deployment: "Deployment"):
+    def __init__(
+        self,
+        bound_deployment: "Deployment",
+        *,
+        router: Optional["Application"] = None,
+    ):
         # This is used by `build_app`, but made private so users don't use it.
         self._bound_deployment = bound_deployment
+        # Optional router Application for ingress bypass mode.
+        # The router is a peer deployment (not a DAG child) that handles
+        # routing decisions for HAProxy Lua.
+        self._router = router
 
 
 @PublicAPI(stability="stable")
