@@ -1912,7 +1912,7 @@ class Replica:
         if not RAY_SERVE_ENABLE_DIRECT_INGRESS:
             return
 
-        if not self._ingress:
+        if not self._ingress and not self._deployment_config.router:
             return
 
         async def allocate_and_start_server(start_server_fn, protocol):
