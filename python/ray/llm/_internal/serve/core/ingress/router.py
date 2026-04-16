@@ -8,8 +8,10 @@ to that LLMServer replica's direct ingress port.
 import asyncio
 from typing import Dict, List, Tuple
 
-from starlette.responses import JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
+from ray import serve
 from ray._common.utils import get_or_create_event_loop
 from ray.llm._internal.common.utils.lora_utils import get_base_model_id
 from ray.llm._internal.serve.core.configs.llm_config import LLMConfig
@@ -18,7 +20,10 @@ from ray.serve.handle import DeploymentHandle
 
 logger = get_logger(__name__)
 
+router_app = FastAPI()
 
+
+@serve.ingress(router_app)
 class LLMRouter:
     """Lightweight router deployment for ingress bypass.
 
@@ -46,12 +51,13 @@ class LLMRouter:
     async def check_health(self):
         await self._init_completed.wait()
 
-    async def __call__(self, request):
-        """Handle /internal/route POST requests and health checks."""
-        # Respond to GET health checks so HAProxy marks us as UP.
-        if request.method != "POST":
-            return JSONResponse({"status": "ok"})
+    @router_app.get("/")
+    @router_app.get("/health")
+    async def health(self):
+        return JSONResponse({"status": "ok"})
 
+    @router_app.post("/internal/route")
+    async def route(self, request: Request):
         import orjson
 
         body = await request.body()
