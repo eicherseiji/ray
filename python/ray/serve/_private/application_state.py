@@ -1622,15 +1622,19 @@ def build_serve_application(
                 application_autoscaling_policy_function
             )
         for deployment in built_app.deployments:
-            if inspect.isclass(deployment.func_or_class) and issubclass(
-                deployment.func_or_class, ASGIAppReplicaWrapper
-            ):
-                num_ingress_deployments += 1
-            is_ingress = deployment.name == built_app.ingress_deployment_name
             is_router = (
                 built_app.router_deployment_name is not None
                 and deployment.name == built_app.router_deployment_name
             )
+            # Router deployments use @serve.router (ASGI wrapper) but are
+            # not ingress deployments — don't count them.
+            if (
+                not is_router
+                and inspect.isclass(deployment.func_or_class)
+                and issubclass(deployment.func_or_class, ASGIAppReplicaWrapper)
+            ):
+                num_ingress_deployments += 1
+            is_ingress = deployment.name == built_app.ingress_deployment_name
 
             if deployment._deployment_config.deployment_actors:
                 for cfg in deployment._deployment_config.deployment_actors:

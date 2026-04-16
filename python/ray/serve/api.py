@@ -405,6 +405,34 @@ def ingress(app: Union[ASGIApp, Callable]) -> Callable:
     return decorator
 
 
+def router(app: Union[ASGIApp, Callable]) -> Callable:
+    """Wrap a router deployment class with an ASGI application.
+
+    Similar to ``@serve.ingress``, but semantically indicates that this
+    deployment serves as a router for ingress bypass mode (handling
+    ``/internal/route`` requests from HAProxy Lua).
+
+    Usage is identical to ``@serve.ingress``::
+
+        from fastapi import FastAPI
+        router_app = FastAPI()
+
+        @serve.deployment(router=True)
+        @serve.router(router_app)
+        class MyRouter:
+            @router_app.post("/internal/route")
+            async def route(self, request):
+                ...
+
+    Args:
+        app: the FastAPI/ASGI app for this router deployment.
+
+    Returns:
+        A decorator that wraps a class with ASGI support.
+    """
+    return ingress(app)
+
+
 @PublicAPI(stability="stable")
 def deployment(
     _func_or_class: Optional[Callable] = None,

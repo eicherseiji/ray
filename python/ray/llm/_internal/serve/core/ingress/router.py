@@ -11,11 +11,11 @@ from typing import Dict, List, Tuple
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from ray import serve
 from ray._common.utils import get_or_create_event_loop
 from ray.llm._internal.common.utils.lora_utils import get_base_model_id
 from ray.llm._internal.serve.core.configs.llm_config import LLMConfig
 from ray.llm._internal.serve.observability.logging import get_logger
+from ray.serve.api import router as serve_router
 from ray.serve.handle import DeploymentHandle
 
 logger = get_logger(__name__)
@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 router_app = FastAPI()
 
 
-@serve.ingress(router_app)
+@serve_router(router_app)
 class LLMRouter:
     """Lightweight router deployment for ingress bypass.
 

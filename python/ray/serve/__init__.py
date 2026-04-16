@@ -17,6 +17,7 @@ try:
         get_replica_context,
         ingress,
         multiplexed,
+        router,  # noqa: F401
         run,
         run_many,
         shutdown,
