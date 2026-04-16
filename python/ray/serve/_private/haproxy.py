@@ -187,7 +187,6 @@ class ServerConfig:
     name: str  # Server identifier for HAProxy config
     host: str  # IP/hostname to connect to
     port: int  # Port to connect to
-    routing_key: Optional[str] = None  # Stable custom-routing selection key
 
     def __str__(self) -> str:
         return f"ServerConfig(name='{self.name}', host='{self.host}', port={self.port})"
@@ -666,6 +665,7 @@ class HAProxyApi(ProxyApi):
         lua_path = os.path.join(config_dir, "direct_ingress_custom_request_routing.lua")
 
         router_group_entries = []
+        server_name_map_entries = []
         for backend in backends:
             if not backend.custom_request_routing or not backend.router_servers:
                 continue
@@ -677,14 +677,25 @@ class HAProxyApi(ProxyApi):
                 f'    {{ path_prefix = {json.dumps(backend.path_prefix or "/")}, '
                 f"servers = {{ {servers_lua} }} }}"
             )
+            for s in backend.servers:
+                server_name_map_entries.append(
+                    f'    [{json.dumps(f"{s.host}:{s.port}")}] = '
+                    f"{json.dumps(s.name)}"
+                )
 
         routers_lua = (
             "{\n" + ",\n".join(router_group_entries) + "\n}"
             if router_group_entries
             else "{}"
         )
+        server_name_map_lua = (
+            "{\n" + ",\n".join(server_name_map_entries) + "\n}"
+            if server_name_map_entries
+            else "{}"
+        )
 
         lua_content = f"""local ROUTERS = {routers_lua}
+local direct_server_name_map = {server_name_map_lua}
 local rr_counter = 0
 
 local function path_matches(path, prefix)
@@ -765,9 +776,11 @@ core.register_action("route_direct_ingress_request", {{"http-req"}}, function(tx
     local port = response:match('"port"%s*:%s*(%d+)')
 
     if host and port then
-        local routing_key = "sc_" .. host:gsub("%.", "_") .. "_" .. port
-        txn:set_var("txn.direct_ingress_target", routing_key)
-        txn:set_var("txn.custom_request_routed", true)
+        local server_key = host .. ":" .. port
+        local server_name = direct_server_name_map[server_key]
+        if server_name then
+            txn:set_var("txn.direct_ingress_target", server_name)
+        end
     end
 end, 0)
 """
@@ -1304,7 +1317,6 @@ class HAProxyManager(ProxyActorInterface):
             # Use localhost if target is on the same node as HAProxy
             host="127.0.0.1" if target.ip == self._node_ip_address else target.ip,
             port=target.port,
-            routing_key=f"sc_{target.ip.replace('.', '_')}_{target.port}",
         )
 
     def _create_backend_config(
