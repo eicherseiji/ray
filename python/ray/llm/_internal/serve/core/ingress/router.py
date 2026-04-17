@@ -35,6 +35,8 @@ class LLMRouter:
     def __init__(self, llm_deployments: List[DeploymentHandle]):
         self._default_serve_handles: Dict[str, DeploymentHandle] = {}
         self._llm_configs: Dict[str, LLMConfig] = {}
+        self._di_load_cache: Dict[str, float] = {}
+        self._load_poller_started = False
         self._rr_counter = 0
 
         self._init_completed = asyncio.Event()
@@ -102,11 +104,33 @@ class LLMRouter:
 
         return JSONResponse({"host": host, "port": port})
 
-    async def _pick_replica(self, model_id: str) -> Tuple[str, int, str]:
-        """Pick a replica via the request router's choose_replicas.
+    async def _start_load_poller(self):
+        """Background task: poll replica queue lengths every 50ms.
 
-        Uses the same load-aware selection as the standard Serve pipeline,
-        with round-robin fallback.
+        Refreshes the replica list from the request router each iteration
+        so scaling events are reflected.
+        """
+        while True:
+            for handle in self._default_serve_handles.values():
+                request_router = handle._get_request_router()
+                if request_router is None:
+                    continue
+                for r in request_router.curr_replicas.values():
+                    if r.direct_ingress_endpoint is None:
+                        continue
+                    try:
+                        load = await r.get_queue_len(deadline_s=0.5)
+                        self._di_load_cache[r.replica_id] = load
+                    except Exception:
+                        pass
+            await asyncio.sleep(0.05)
+
+    async def _pick_replica(self, model_id: str) -> Tuple[str, int, str]:
+        """Pick the least-loaded replica using background-polled queue lengths.
+
+        No per-request RPCs — routing decisions use cached load data,
+        keeping the routing path fast and preserving request delivery
+        timing patterns. Falls back to round-robin when cache is empty.
 
         Returns (host, port, replica_id).
         """
@@ -119,26 +143,28 @@ class LLMRouter:
         if request_router is None:
             raise RuntimeError(f"Request router not initialized for {model_id}")
 
-        replicas = list(request_router.curr_replicas.values())
-        di_replicas = [r for r in replicas if r.direct_ingress_endpoint is not None]
+        di_replicas = [
+            r
+            for r in request_router.curr_replicas.values()
+            if r.direct_ingress_endpoint is not None
+        ]
         if not di_replicas:
             raise RuntimeError(f"No direct-ingress-enabled replicas for {model_id}")
 
-        # Use the request router's load-aware replica selection.
-        replica_tiers = await request_router.choose_replicas(
-            candidate_replicas=di_replicas,
-            pending_request=None,
-        )
-        for tier in replica_tiers:
-            for replica in tier:
-                if replica.direct_ingress_endpoint is not None:
-                    return (
-                        *replica.direct_ingress_endpoint,
-                        replica.replica_id.unique_id,
-                    )
+        # Start background load poller on first call.
+        if not self._load_poller_started:
+            self._load_poller_started = True
+            asyncio.get_event_loop().create_task(self._start_load_poller())
 
-        # Fallback: round-robin if choose_replicas returned no valid endpoints.
-        idx = self._rr_counter % len(di_replicas)
-        self._rr_counter += 1
-        r = di_replicas[idx]
-        return (*r.direct_ingress_endpoint, r.replica_id.unique_id)
+        # If cache has data, pick least-loaded. Otherwise round-robin.
+        if self._di_load_cache:
+            best = min(
+                di_replicas,
+                key=lambda r: self._di_load_cache.get(r.replica_id, float("inf")),
+            )
+        else:
+            idx = self._rr_counter % len(di_replicas)
+            self._rr_counter += 1
+            best = di_replicas[idx]
+
+        return (*best.direct_ingress_endpoint, best.replica_id.unique_id)
