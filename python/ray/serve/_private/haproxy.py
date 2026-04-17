@@ -185,8 +185,9 @@ class ServerConfig:
     """Configuration for a single server."""
 
     name: str  # Server identifier for HAProxy config
-    host: str  # IP/hostname to connect to
+    host: str  # IP/hostname to connect to (may be 127.0.0.1 for same-node)
     port: int  # Port to connect to
+    real_ip: Optional[str] = None  # Original IP before localhost conversion
 
     def __str__(self) -> str:
         return f"ServerConfig(name='{self.name}', host='{self.host}', port={self.port})"
@@ -678,9 +679,11 @@ class HAProxyApi(ProxyApi):
                 f"servers = {{ {servers_lua} }} }}"
             )
             for s in backend.servers:
+                # Use real_ip (not localhost-converted host) because
+                # the router returns the actual node IP.
+                ip = s.real_ip or s.host
                 server_name_map_entries.append(
-                    f'    [{json.dumps(f"{s.host}:{s.port}")}] = '
-                    f"{json.dumps(s.name)}"
+                    f'    [{json.dumps(f"{ip}:{s.port}")}] = ' f"{json.dumps(s.name)}"
                 )
 
         routers_lua = (
@@ -1317,6 +1320,7 @@ class HAProxyManager(ProxyActorInterface):
             # Use localhost if target is on the same node as HAProxy
             host="127.0.0.1" if target.ip == self._node_ip_address else target.ip,
             port=target.port,
+            real_ip=target.ip,
         )
 
     def _create_backend_config(
