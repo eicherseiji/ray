@@ -90,13 +90,15 @@ class LLMRouter:
             return JSONResponse({"error": str(e)}, status_code=503)
         t_post_pick = time.monotonic()
 
-        logger.info(
+        route_msg = (
             f"ROUTE request_id={request.headers.get('x-request-id', '?')} "
             f"model={model_id} → {host}:{port} "
             f"body={1000*(t_body-t0):.1f}ms "
             f"pick={1000*(t_post_pick-t_pre_pick):.1f}ms "
             f"total={1000*(t_post_pick-t0):.1f}ms"
         )
+        logger.info(route_msg)
+        print(route_msg, flush=True)
 
         return JSONResponse({"host": host, "port": port})
 

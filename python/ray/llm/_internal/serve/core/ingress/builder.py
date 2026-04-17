@@ -145,9 +145,16 @@ def build_openai_app(builder_config: dict) -> Application:
 
         # LLMRouter handles /internal/route for HAProxy Lua routing decisions.
         # It receives LLMServer handles to access their request routers.
+        # Scale router replicas to match LLMServer replicas.
+        num_router_replicas = sum(
+            c.deployment_config.get("autoscaling_config", {}).get("max_replicas", 1)
+            for c in llm_configs
+        )
+        logger.info(f"Creating {num_router_replicas} LLMRouter replicas")
         router_app = serve.deployment(
             LLMRouter,
             router=True,
+            num_replicas=num_router_replicas,
             max_ongoing_requests=1000,
         ).bind(llm_deployments=llm_deployments)
 
