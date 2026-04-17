@@ -38,8 +38,6 @@ class LLMRouter:
     def __init__(self, llm_deployments: List[DeploymentHandle]):
         self._default_serve_handles: Dict[str, DeploymentHandle] = {}
         self._llm_configs: Dict[str, LLMConfig] = {}
-        self._di_load_cache: Dict[str, float] = {}
-        self._load_poller_started = False
         self._rr_counter = 0
 
         self._init_completed = asyncio.Event()
@@ -148,25 +146,13 @@ class LLMRouter:
     async def health(self):
         return JSONResponse({"status": "ok"})
 
-    async def _start_load_poller(self):
-        """Background task: poll replica queue lengths every 50ms."""
-        while True:
-            for handle in self._default_serve_handles.values():
-                request_router = handle._get_request_router()
-                if request_router is None:
-                    continue
-                for r in request_router.curr_replicas.values():
-                    if r.direct_ingress_endpoint is None:
-                        continue
-                    try:
-                        load = await r.get_queue_len(deadline_s=0.5)
-                        self._di_load_cache[r.replica_id] = load
-                    except Exception:
-                        pass
-            await asyncio.sleep(0.05)
-
     async def _pick_replica(self, model_id: str) -> Tuple[str, int, str]:
-        """Pick the least-loaded replica from background-polled cache."""
+        """Pick a replica via round-robin.
+
+        Direct ingress bypasses Serve's request tracking, so Serve-side
+        queue lengths are always 0. Use simple round-robin for even
+        distribution.
+        """
         base_model_id = get_base_model_id(model_id)
         handle = self._default_serve_handles.get(base_model_id)
         if handle is None:
@@ -184,18 +170,8 @@ class LLMRouter:
         if not di_replicas:
             raise RuntimeError(f"No direct-ingress-enabled replicas for {model_id}")
 
-        if not self._load_poller_started:
-            self._load_poller_started = True
-            asyncio.get_event_loop().create_task(self._start_load_poller())
-
-        if self._di_load_cache:
-            best = min(
-                di_replicas,
-                key=lambda r: self._di_load_cache.get(r.replica_id, float("inf")),
-            )
-        else:
-            idx = self._rr_counter % len(di_replicas)
-            self._rr_counter += 1
-            best = di_replicas[idx]
+        idx = self._rr_counter % len(di_replicas)
+        self._rr_counter += 1
+        best = di_replicas[idx]
 
         return (*best.direct_ingress_endpoint, best.replica_id.unique_id)
