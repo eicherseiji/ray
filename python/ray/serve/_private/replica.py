@@ -2480,6 +2480,11 @@ class Replica:
         custom_app = getattr(
             self._user_callable_wrapper.user_callable, "_asgi_app", None
         )
+        with open("/tmp/di_asgi_debug.log", "a") as _f:
+            _f.write(
+                f"path={route} custom_app={custom_app is not None} "
+                f"callable_type={type(self._user_callable_wrapper.user_callable).__name__}\n"
+            )
         if custom_app is not None:
             t_enter = time.time()
             first_body_sent = False

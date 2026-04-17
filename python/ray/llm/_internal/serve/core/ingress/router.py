@@ -57,8 +57,15 @@ class LLMRouter:
 
         original_app = self._asgi_app
         router_self = self
+        _log_path = "/tmp/llm_router_debug.log"
 
         async def route_middleware(scope, receive, send):
+            with open(_log_path, "a") as f:
+                f.write(
+                    f"middleware hit: type={scope.get('type')} "
+                    f"method={scope.get('method')} "
+                    f"path={scope.get('path')}\n"
+                )
             if (
                 scope["type"] == "http"
                 and scope.get("method") == "POST"
@@ -69,6 +76,8 @@ class LLMRouter:
             await original_app(scope, receive, send)
 
         self._asgi_app = route_middleware
+        with open(_log_path, "a") as f:
+            f.write("middleware installed\n")
 
     async def _handle_route_raw(self, scope, receive, send):
         """Raw ASGI handler for /internal/route — no FastAPI overhead."""
