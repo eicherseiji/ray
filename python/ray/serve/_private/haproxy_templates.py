@@ -158,7 +158,7 @@ backend {{ backend.name or 'unknown' }}-direct
     use-server {{ server.name }} if { var(txn.direct_ingress_target) -m str "{{ server.name }}" }
     {%- endfor %}
     {%- for server in backend.servers %}
-    server {{ server.name }} {{ server.host }}:{{ server.port }}
+    server {{ server.name }} {{ server.host }}:{{ server.port }} check
     {%- endfor %}
 {%- endif %}
 {%- endfor %}
