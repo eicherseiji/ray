@@ -8,7 +8,7 @@ to that LLMServer replica's direct ingress port.
 import asyncio
 from typing import Dict, List, Tuple
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from ray._common.utils import get_or_create_event_loop
@@ -28,8 +28,11 @@ class LLMRouter:
     """Lightweight router deployment for ingress bypass.
 
     Receives /internal/route POST requests from HAProxy Lua, picks the
-    least-loaded LLMServer replica via the deployment handle's request
-    router, and returns its direct ingress (host, port).
+    least-loaded LLMServer replica via background-polled queue lengths,
+    and returns its direct ingress (host, port).
+
+    The /internal/route handler is a raw ASGI middleware (not a FastAPI
+    route) to minimize per-request latency for the Lua TCP round-trip.
     """
 
     def __init__(self, llm_deployments: List[DeploymentHandle]):
@@ -41,6 +44,85 @@ class LLMRouter:
 
         self._init_completed = asyncio.Event()
         get_or_create_event_loop().create_task(self._setup(llm_deployments))
+
+        # Install raw ASGI middleware for /internal/route after the
+        # @serve.router wrapper sets self._asgi_app.
+        get_or_create_event_loop().create_task(self._install_route_middleware())
+
+    async def _install_route_middleware(self):
+        """Replace the ASGI app with a wrapper that intercepts /internal/route."""
+        # Wait for @serve.router to set _asgi_app
+        while not hasattr(self, "_asgi_app"):
+            await asyncio.sleep(0.01)
+
+        original_app = self._asgi_app
+        router_self = self
+
+        async def route_middleware(scope, receive, send):
+            if (
+                scope["type"] == "http"
+                and scope.get("method") == "POST"
+                and scope.get("path") == "/internal/route"
+            ):
+                await router_self._handle_route_raw(scope, receive, send)
+                return
+            await original_app(scope, receive, send)
+
+        self._asgi_app = route_middleware
+
+    async def _handle_route_raw(self, scope, receive, send):
+        """Raw ASGI handler for /internal/route — no FastAPI overhead."""
+        import orjson
+
+        # Read body
+        body_parts = []
+        while True:
+            message = await receive()
+            body_parts.append(message.get("body", b""))
+            if not message.get("more_body", False):
+                break
+        body_bytes = b"".join(body_parts)
+
+        try:
+            parsed = orjson.loads(body_bytes)
+        except Exception:
+            await self._send_json(send, {"error": "invalid json"}, 400)
+            return
+
+        default_model_id = (
+            next(iter(self._llm_configs.keys())) if self._llm_configs else None
+        )
+        model = parsed.get("model", default_model_id)
+        if model and model not in self._llm_configs:
+            base = get_base_model_id(model)
+            if base not in self._llm_configs:
+                model = None
+        model_id = model or default_model_id
+
+        if model_id is None:
+            await self._send_json(send, {"error": "no model"}, 404)
+            return
+
+        try:
+            host, port, replica_id = await self._pick_replica(model_id)
+        except Exception as e:
+            await self._send_json(send, {"error": str(e)}, 503)
+            return
+
+        await self._send_json(send, {"host": host, "port": port}, 200)
+
+    async def _send_json(self, send, data, status):
+        import orjson
+
+        body = orjson.dumps(data)
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [[b"content-type", b"application/json"]],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
 
     async def _setup(self, llm_deployments: List[DeploymentHandle]):
         for handle in llm_deployments:
@@ -57,59 +139,8 @@ class LLMRouter:
     async def health(self):
         return JSONResponse({"status": "ok"})
 
-    @router_app.post("/internal/route")
-    async def route(self, request: Request):
-        import time
-
-        import orjson
-
-        t0 = time.monotonic()
-        body = await request.body()
-        t_body = time.monotonic()
-
-        try:
-            parsed = orjson.loads(body)
-        except Exception:
-            return JSONResponse({"error": "invalid json"}, status_code=400)
-
-        default_model_id = (
-            next(iter(self._llm_configs.keys())) if self._llm_configs else None
-        )
-        model = parsed.get("model", default_model_id)
-        if model and model not in self._llm_configs:
-            base = get_base_model_id(model)
-            if base not in self._llm_configs:
-                model = None
-        model_id = model or default_model_id
-
-        if model_id is None:
-            return JSONResponse({"error": "no model"}, status_code=404)
-
-        t_pre_pick = time.monotonic()
-        try:
-            host, port, replica_id = await self._pick_replica(model_id)
-        except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=503)
-        t_post_pick = time.monotonic()
-
-        route_msg = (
-            f"ROUTE request_id={request.headers.get('x-request-id', '?')} "
-            f"model={model_id} → {host}:{port} "
-            f"body={1000*(t_body-t0):.1f}ms "
-            f"pick={1000*(t_post_pick-t_pre_pick):.1f}ms "
-            f"total={1000*(t_post_pick-t0):.1f}ms"
-        )
-        logger.info(route_msg)
-        print(route_msg, flush=True)
-
-        return JSONResponse({"host": host, "port": port})
-
     async def _start_load_poller(self):
-        """Background task: poll replica queue lengths every 50ms.
-
-        Refreshes the replica list from the request router each iteration
-        so scaling events are reflected.
-        """
+        """Background task: poll replica queue lengths every 50ms."""
         while True:
             for handle in self._default_serve_handles.values():
                 request_router = handle._get_request_router()
@@ -126,14 +157,7 @@ class LLMRouter:
             await asyncio.sleep(0.05)
 
     async def _pick_replica(self, model_id: str) -> Tuple[str, int, str]:
-        """Pick the least-loaded replica using background-polled queue lengths.
-
-        No per-request RPCs — routing decisions use cached load data,
-        keeping the routing path fast and preserving request delivery
-        timing patterns. Falls back to round-robin when cache is empty.
-
-        Returns (host, port, replica_id).
-        """
+        """Pick the least-loaded replica from background-polled cache."""
         base_model_id = get_base_model_id(model_id)
         handle = self._default_serve_handles.get(base_model_id)
         if handle is None:
@@ -151,12 +175,10 @@ class LLMRouter:
         if not di_replicas:
             raise RuntimeError(f"No direct-ingress-enabled replicas for {model_id}")
 
-        # Start background load poller on first call.
         if not self._load_poller_started:
             self._load_poller_started = True
             asyncio.get_event_loop().create_task(self._start_load_poller())
 
-        # If cache has data, pick least-loaded. Otherwise round-robin.
         if self._di_load_cache:
             best = min(
                 di_replicas,
