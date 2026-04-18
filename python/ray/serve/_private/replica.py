@@ -182,6 +182,46 @@ from ray.util import metrics as ray_metrics
 logger = logging.getLogger(SERVE_LOGGER_NAME)
 
 
+_ARRIVAL_LOG_PATH = "/tmp/replica_arrival.log"
+_arrival_log_fh = None
+
+
+def _arrival_log(replica_id: str, route: str) -> None:
+    """Diagnostic: append one line per data-plane request arrival.
+
+    Format: <time.time()>\\t<pid>\\t<replica_id>\\t<route>
+    Used to measure inter-arrival spread per replica.
+    """
+    global _arrival_log_fh
+    if _arrival_log_fh is None:
+        _arrival_log_fh = open(_ARRIVAL_LOG_PATH, "a", buffering=1)
+    _arrival_log_fh.write(f"{time.time():.6f}\t{os.getpid()}\t{replica_id}\t{route}\n")
+
+
+_TTFT_SPLIT_LOG_PATH = "/tmp/replica_ttft_split.log"
+_ttft_split_fh = None
+
+
+def _ttft_split_log(line: str) -> None:
+    """Diagnostic: per-request timing split inside the LLMServer replica.
+
+    Stamps at:
+      t_asgi:       entry to _direct_ingress_asgi (uvicorn handed off)
+      t_custom_in:  just before `await custom_app(...)`
+      t_first_body: first non-empty `http.response.body` message sent
+    Deltas give:
+      custom_in - t_asgi = _direct_ingress_asgi wrapper overhead
+      t_first_body - t_custom_in = vLLM FastAPI (routing, tokenize,
+        engine.add_request, engine prefill, first-token stream out)
+      Subtracting engine TTFT (from /metrics) isolates the
+        vLLM-FastAPI-only overhead.
+    """
+    global _ttft_split_fh
+    if _ttft_split_fh is None:
+        _ttft_split_fh = open(_TTFT_SPLIT_LOG_PATH, "a", buffering=1)
+    _ttft_split_fh.write(line)
+
+
 def _wrap_grpc_call(f):
     """Decorator that processes grpc methods."""
 
@@ -2429,6 +2469,9 @@ class Replica:
         receive: Receive,
         send: Send,
     ):
+        # Diagnostic stamp: entry to _direct_ingress_asgi (right after
+        # uvicorn parsed the request and handed us the ASGI scope).
+        _t_asgi = time.perf_counter_ns()
         # NOTE(edoakes): it's important to only start the replica server after the
         # constructor runs because we are using SO_REUSEPORT. We don't want a new
         # replica to start handling connections until it's ready to serve traffic.
@@ -2480,32 +2523,61 @@ class Replica:
         custom_app = getattr(
             self._user_callable_wrapper.user_callable, "_asgi_app", None
         )
-        with open("/tmp/di_asgi_debug.log", "a") as _f:
-            _f.write(
-                f"path={route} custom_app={custom_app is not None} "
-                f"callable_type={type(self._user_callable_wrapper.user_callable).__name__}\n"
-            )
         if custom_app is not None:
-            t_enter = time.time()
-            first_body_sent = False
-            original_send = send
+            # Diagnostic: record per-replica arrival timestamps for data-plane
+            # paths (skip the routing POST to LLMRouter's /internal/route).
+            # Used to measure inter-arrival spread / dispatch burstiness.
+            if route != "/internal/route":
+                _arrival_log(self._replica_id.unique_id, route)
+            # Track this direct-ingress request in the replica's
+            # ongoing-requests counter so get_num_ongoing_requests()
+            # (queried by the request router via get_queue_len for
+            # load-aware dispatch) is accurate. Without this, direct-
+            # ingress traffic is invisible to Serve's routing layer.
+            req_meta = RequestMetadata(
+                request_id=generate_request_id(),
+                internal_request_id=generate_request_id(),
+                call_method="__call__",
+                route=route,
+                app_name=self._deployment_id.app_name,
+                multiplexed_model_id="",
+                is_streaming=True,
+                _request_protocol=RequestProtocol.HTTP,
+                is_direct_ingress=True,
+            )
+            self._metrics_manager.inc_num_ongoing_requests(req_meta)
 
-            async def timed_send(msg):
-                nonlocal first_body_sent
+            # Per-request timing split (only log for data-plane paths).
+            _t_custom_in = time.perf_counter_ns()
+            _is_dp = (
+                route != "/internal/route"
+                and route != "/-/healthz"
+                and route != "/health"
+            )
+            _first_body_done = False
+
+            async def _timed_send(msg):
+                nonlocal _first_body_done
                 if (
-                    not first_body_sent
+                    _is_dp
+                    and not _first_body_done
                     and msg.get("type") == "http.response.body"
                     and msg.get("body")
                 ):
-                    first_body_sent = True
-                    ttfb_ms = (time.time() - t_enter) * 1000
-                    if route not in ("/-/healthz", "/-/routes", "/health"):
-                        logger.info(
-                            f"DIRECT_INGRESS path={route} " f"ttfb={ttfb_ms:.1f}ms"
-                        )
-                await original_send(msg)
+                    _first_body_done = True
+                    _t_first_body = time.perf_counter_ns()
+                    _ttft_split_log(
+                        f"{time.time():.6f}\t{self._replica_id.unique_id}\t"
+                        f"pre_custom_ns={_t_custom_in - _t_asgi}\t"
+                        f"custom_to_first_body_ns={_t_first_body - _t_custom_in}\t"
+                        f"asgi_to_first_body_ns={_t_first_body - _t_asgi}\n"
+                    )
+                await send(msg)
 
-            await custom_app(scope, receive, timed_send)
+            try:
+                await custom_app(scope, receive, _timed_send if _is_dp else send)
+            finally:
+                self._metrics_manager.dec_num_ongoing_requests(req_meta)
             return
 
         # If the HTTP path does not match the deployment route prefix,

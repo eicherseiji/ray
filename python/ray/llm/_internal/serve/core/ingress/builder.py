@@ -144,12 +144,11 @@ def build_openai_app(builder_config: dict) -> Application:
         logger.info("Ingress bypass enabled: LLMServer=ingress, LLMRouter=router")
 
         # LLMRouter handles /internal/route for HAProxy Lua routing decisions.
-        # It receives LLMServer handles to access their request routers.
-        # Scale router replicas to match LLMServer replicas.
-        num_router_replicas = sum(
-            c.deployment_config.get("autoscaling_config", {}).get("max_replicas", 1)
-            for c in llm_configs
-        )
+        # Single replica matches reference pattern (PR #62298): Lua picks the
+        # first router so a single ingress absorbs all routing traffic with a
+        # warm event loop. Multi-replica spreads load across idle actors on
+        # the head node and adds per-call teardown jitter (see iter_72).
+        num_router_replicas = 1
         logger.info(f"Creating {num_router_replicas} LLMRouter replicas")
         router_app = serve.deployment(
             LLMRouter,

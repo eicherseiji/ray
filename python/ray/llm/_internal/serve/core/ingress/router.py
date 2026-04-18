@@ -6,6 +6,8 @@ to that LLMServer replica's direct ingress port.
 """
 
 import asyncio
+import os
+import time
 from typing import Dict, List, Tuple
 
 from fastapi import FastAPI
@@ -18,6 +20,18 @@ from ray.llm._internal.serve.observability.logging import get_logger
 from ray.serve.api import router as serve_router
 from ray.serve.handle import DeploymentHandle
 
+_PERF_LOG_PATH = "/tmp/llm_router_perf.log"
+_perf_log_fh = None
+
+
+def _perf_log(line: str) -> None:
+    global _perf_log_fh
+    if _perf_log_fh is None:
+        _perf_log_fh = open(_PERF_LOG_PATH, "a", buffering=1)
+        _perf_log_fh.write(f"# pid={os.getpid()} start={time.time()}\n")
+    _perf_log_fh.write(line)
+
+
 logger = get_logger(__name__)
 
 router_app = FastAPI()
@@ -27,9 +41,9 @@ router_app = FastAPI()
 class LLMRouter:
     """Lightweight router deployment for ingress bypass.
 
-    Receives /internal/route POST requests from HAProxy Lua, picks the
-    least-loaded LLMServer replica via background-polled queue lengths,
-    and returns its direct ingress (host, port).
+    Receives /internal/route POST requests from HAProxy Lua, picks an
+    LLMServer replica via round-robin, and returns its direct ingress
+    (host, port).
 
     The /internal/route handler is a raw ASGI middleware (not a FastAPI
     route) to minimize per-request latency for the Lua TCP round-trip.
@@ -49,37 +63,41 @@ class LLMRouter:
 
     async def _install_route_middleware(self):
         """Replace the ASGI app with a wrapper that intercepts /internal/route."""
-        # Wait for @serve.router to set _asgi_app
         while not hasattr(self, "_asgi_app"):
             await asyncio.sleep(0.01)
 
         original_app = self._asgi_app
         router_self = self
-        _log_path = "/tmp/llm_router_debug.log"
 
         async def route_middleware(scope, receive, send):
-            with open(_log_path, "a") as f:
-                f.write(
-                    f"middleware hit: type={scope.get('type')} "
-                    f"method={scope.get('method')} "
-                    f"path={scope.get('path')}\n"
-                )
             if (
                 scope["type"] == "http"
                 and scope.get("method") == "POST"
                 and scope.get("path") == "/internal/route"
             ):
-                await router_self._handle_route_raw(scope, receive, send)
+                mw_start = time.perf_counter_ns()
+
+                async def send_wrapped(msg):
+                    if msg.get("type") == "http.response.body" and not msg.get(
+                        "more_body", False
+                    ):
+                        _perf_log(
+                            f"mw\t{time.time():.6f}\ttotal={time.perf_counter_ns() - mw_start}\n"
+                        )
+                    await send(msg)
+
+                await router_self._handle_route_raw(scope, receive, send_wrapped)
                 return
             await original_app(scope, receive, send)
 
         self._asgi_app = route_middleware
-        with open(_log_path, "a") as f:
-            f.write("middleware installed\n")
+        logger.info("LLMRouter route middleware installed")
 
     async def _handle_route_raw(self, scope, receive, send):
         """Raw ASGI handler for /internal/route — no FastAPI overhead."""
         import orjson
+
+        t0 = time.perf_counter_ns()
 
         # Read body
         body_parts = []
@@ -89,6 +107,8 @@ class LLMRouter:
             if not message.get("more_body", False):
                 break
         body_bytes = b"".join(body_parts)
+
+        t1 = time.perf_counter_ns()
 
         try:
             parsed = orjson.loads(body_bytes)
@@ -116,7 +136,14 @@ class LLMRouter:
             await self._send_json(send, {"error": str(e)}, 503)
             return
 
+        t2 = time.perf_counter_ns()
+
         await self._send_json(send, {"host": host, "port": port}, 200)
+
+        t3 = time.perf_counter_ns()
+        _perf_log(
+            f"{time.time():.6f}\tbody={t1 - t0}\tpick={t2 - t1}\tsend={t3 - t2}\ttotal={t3 - t0}\n"
+        )
 
     async def _send_json(self, send, data, status):
         import orjson
@@ -126,7 +153,10 @@ class LLMRouter:
             {
                 "type": "http.response.start",
                 "status": status,
-                "headers": [[b"content-type", b"application/json"]],
+                "headers": [
+                    [b"content-type", b"application/json"],
+                    [b"content-length", str(len(body)).encode()],
+                ],
             }
         )
         await send({"type": "http.response.body", "body": body})
@@ -147,11 +177,15 @@ class LLMRouter:
         return JSONResponse({"status": "ok"})
 
     async def _pick_replica(self, model_id: str) -> Tuple[str, int, str]:
-        """Pick a replica via round-robin.
+        """Least-loaded pick via the request router's choose_replicas.
 
-        Direct ingress bypasses Serve's request tracking, so Serve-side
-        queue lengths are always 0. Use simple round-robin for even
-        distribution.
+        Measured at c=32/8r today on this box:
+        - choose_replicas (this code): 125ms TTFT
+        - reference bg-poller min cache (PR #62298 verbatim): 323ms TTFT
+          (min() stalls on ties; 32 concurrent picks in the 50ms poll
+          window all select the same replica)
+        - bg-poller + local-increment tie-break: 141ms TTFT
+          (still worse because 50ms cache lag misses fast arrivals)
         """
         base_model_id = get_base_model_id(model_id)
         handle = self._default_serve_handles.get(base_model_id)
@@ -162,16 +196,26 @@ class LLMRouter:
         if request_router is None:
             raise RuntimeError(f"Request router not initialized for {model_id}")
 
-        di_replicas = [
+        direct_ingress_replicas = [
             r
             for r in request_router.curr_replicas.values()
             if r.direct_ingress_endpoint is not None
         ]
-        if not di_replicas:
+        if not direct_ingress_replicas:
             raise RuntimeError(f"No direct-ingress-enabled replicas for {model_id}")
 
-        idx = self._rr_counter % len(di_replicas)
-        self._rr_counter += 1
-        best = di_replicas[idx]
+        replica_tiers = await request_router.choose_replicas(
+            candidate_replicas=direct_ingress_replicas,
+            pending_request=None,
+        )
+        for tier in replica_tiers:
+            for replica in tier:
+                endpoint = replica.direct_ingress_endpoint
+                if endpoint is not None:
+                    return (*endpoint, replica.replica_id.unique_id)
 
+        # Fallback: pure round-robin if choose_replicas returned no tiers.
+        idx = self._rr_counter % len(direct_ingress_replicas)
+        self._rr_counter += 1
+        best = direct_ingress_replicas[idx]
         return (*best.direct_ingress_endpoint, best.replica_id.unique_id)

@@ -469,12 +469,16 @@ class VLLMEngine(LLMEngine):
 
         custom_stat_loggers = None
         if self.llm_config.log_engine_metrics:
-            from vllm.v1.metrics.ray_wrappers import RayPrometheusStatLogger
+            # Use PrometheusStatLogger (prometheus_client based) rather than
+            # RayPrometheusStatLogger so histograms/counters register with the
+            # prometheus_client default registry that vLLM's `/metrics` ASGI
+            # mount serves. RayPrometheusStatLogger routes metrics into Ray's
+            # metrics system, which is invisible to vLLM's `/metrics` endpoint
+            # — blocking per-replica engine TTFT probes via the direct-ingress
+            # port.
+            from vllm.v1.metrics.loggers import PrometheusStatLogger
 
-            # V1 AsyncLLM does not yet support add_logger: https://github.com/vllm-project/vllm/issues/17702
-            # Use `disable_log_stats: False` and `log_engine_metrics: False` as
-            # a workaround to enable PrometheusStatLogger instead.
-            custom_stat_loggers = [RayPrometheusStatLogger]
+            custom_stat_loggers = [PrometheusStatLogger]
 
         executor_class = Executor.get_class(vllm_engine_config)
         logger.info(f"Using executor class: {executor_class}")
