@@ -40,6 +40,7 @@ from ray.serve._private.constants import (
     RAY_SERVE_ENABLE_DIRECT_INGRESS,
     RAY_SERVE_ENABLE_HA_PROXY,
     RAY_SERVE_FREEZE_GC_ON_STARTUP,
+    RAY_SERVE_HANDOFF_MULTI_LEAF,
     RAY_SERVE_LOG_TO_STDERR,
     RAY_SERVE_REQUEST_PATH_LOG_BUFFER_SIZE,
     RAY_SERVE_RUN_ROUTER_IN_SEPARATE_LOOP,
@@ -1142,6 +1143,7 @@ class ServeController:
                         "deployer_job_id": args.deployer_job_id,
                         "ingress": args.ingress,
                         "ingress_request_router": args.ingress_request_router,
+                        "response_channel": args.response_channel,
                         "uses_multiplexing": args.uses_multiplexing,
                         "route_prefix": (
                             args.route_prefix if args.HasField("route_prefix") else None
@@ -1596,11 +1598,33 @@ class ServeController:
         ingress_deployment_name = (
             self.application_state_manager.get_ingress_deployment_name(app_name) or ""
         )
+        # Whole-app opt-in for the HAProxy ResponseChannel (HTTP only).
+        response_channel = self.application_state_manager.get_response_channel(app_name)
 
-        # Get running replicas for the ingress deployment
-        replica_details = self._get_running_replica_details_for_ingress_deployment(
-            app_name
-        )
+        # Get running replicas for the splice pool. Normally that is the single
+        # ingress deployment. With response-delegation multi-leaf enabled, the
+        # router can hand off to any of N leaves, so union every non-router
+        # deployment's replicas; non-direct-ingress deployments contribute no
+        # HTTP targets and drop out naturally below.
+        if (
+            RAY_SERVE_HANDOFF_MULTI_LEAF
+            and ingress_request_router_deployment_name is not None
+        ):
+            replica_details = []
+            for deployment_name in self.application_state_manager.get_deployments(
+                app_name
+            ):
+                if deployment_name == ingress_request_router_deployment_name:
+                    continue
+                replica_details.extend(
+                    self._get_running_replica_details_for_deployment(
+                        app_name, deployment_name
+                    )
+                )
+        else:
+            replica_details = self._get_running_replica_details_for_ingress_deployment(
+                app_name
+            )
         # Without ingress replicas, HAProxy has no data-plane targets to route to,
         # so suppress router targets too — the app is effectively unreachable.
         if not replica_details:
@@ -1630,6 +1654,7 @@ class ServeController:
                     app_name=app_name,
                     ingress_request_router_targets=ingress_request_router_targets,
                     ingress_deployment_name=ingress_deployment_name,
+                    response_channel=response_channel,
                 )
             )
 

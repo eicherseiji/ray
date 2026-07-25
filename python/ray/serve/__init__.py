@@ -27,6 +27,7 @@ try:
     )
     from ray.serve.batching import batch
     from ray.serve.config import ControllerOptions, HTTPOptions
+    from ray.serve.handoff import HandOff
     from ray.serve.utils import get_trace_context
 
 except ModuleNotFoundError as e:
@@ -47,6 +48,7 @@ __all__ = [
     "_run",
     "_run_many",
     "batch",
+    "HandOff",
     "start",
     "ControllerOptions",
     "HTTPOptions",

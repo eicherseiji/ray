@@ -149,7 +149,7 @@ local function _route_via_ingress_request_router(txn, app, pool, replica_map)
     -- and is not retried.
     local n = #pool
     local start = _rr_cursor[app] or 0
-    _rr_cursor[app] = start + 1
+    _rr_cursor[app] = (start + 1) % n
     local response = nil
     for i = 0, n - 1 do
         local router = pool[(start + i) % n + 1]
@@ -167,7 +167,8 @@ local function _route_via_ingress_request_router(txn, app, pool, replica_map)
         return
     end
 
-    local replica_id = extract_replica_id(http_response_body(response))
+    local rbody = http_response_body(response)
+    local replica_id = extract_replica_id(rbody)
     if not replica_id then
         txn:set_var("txn.ingress_request_router_failed", "unparseable_replica_id")
         return
@@ -184,6 +185,15 @@ local function _route_via_ingress_request_router(txn, app, pool, replica_map)
 
     txn:set_var("txn.ingress_request_router_target", server_name)
     txn:set_var("txn.via_ingress_request_router", true)
+
+    -- Response-delegation: if the router returned a handoff key, carry it to the
+    -- leaf (as x-handoff-key, set by the frontend) so the leaf serves the staged
+    -- (transformed) request rather than the spliced body. Optional: a plain
+    -- replica pick omits it and the leaf serves the request as usual.
+    local handoff_key = rbody:match('"handoff_key"%s*:%s*"([^"]+)"')
+    if handoff_key then
+        txn:set_var("txn.handoff_key", handoff_key)
+    end
 end
 
 -- Failure semantics: every path that reaches a router decision but cannot pin

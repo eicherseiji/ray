@@ -1587,6 +1587,13 @@ class TargetGroup(BaseModel):
         "",
         description="Name of the application's ingress deployment.",
     )
+    # Whether this app opted into the ResponseChannel. When True, HAProxy serves
+    # this app's requests through the channel services (leaf streams the response
+    # back to HAProxy, off the parents' response path).
+    response_channel: bool = Field(
+        False,
+        description="Whether this app's backend uses the HAProxy ResponseChannel.",
+    )
 
 
 @PublicAPI(stability="alpha")

@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar, Union
 from ray.dag.py_obj_scanner import _PyObjScanner
 from ray.serve._private.constants import (
     RAY_SERVE_ENABLE_HA_PROXY,
+    RAY_SERVE_HANDOFF_MULTI_LEAF,
     SERVE_LOGGER_NAME,
 )
 from ray.serve._private.http_util import ASGIAppReplicaWrapper
@@ -78,9 +79,17 @@ class BuiltApplication:
     # Optional ingress request router deployment for ingress bypass mode.
     # When set, this deployment serves /internal/route for HAProxy Lua routing.
     ingress_request_router_deployment: Optional[Deployment] = None
+    # Whether this app opted into the ResponseChannel (leaf streams responses to
+    # HAProxy, off the parents' response path). Carried on the ingress deployment.
+    response_channel: bool = False
 
     def validate_single_fastapi_ingress(self) -> None:
         """Validate that the application has at most one FastAPI ingress."""
+        # Response-delegation multi-leaf apps intentionally have multiple ASGI
+        # leaf deployments (one per model), all serving on their own node ports
+        # for HAProxy to splice; the ingress request router picks among them.
+        if RAY_SERVE_HANDOFF_MULTI_LEAF and self.ingress_request_router_deployment:
+            return
         num_ingress_deployments = sum(
             inspect.isclass(deployment.func_or_class)
             and issubclass(deployment.func_or_class, ASGIAppReplicaWrapper)
@@ -177,9 +186,6 @@ def build_app(
             default_runtime_env=default_runtime_env,
             make_deployment_handle=make_deployment_handle,
         )
-        # TODO(eicherseiji): The current ingress-bypass design only supports a
-        # standalone single-deployment router. Revisit this once routers can
-        # compose helper deployments.
         if len(ingress_request_router_deployments) == 0:
             raise ValueError(
                 "Expected `ingress_request_router` to build into one standalone "
@@ -188,13 +194,29 @@ def build_app(
                 "from the main application graph; attach it only as "
                 "`ingress_request_router`."
             )
-        if len(ingress_request_router_deployments) > 1:
+        # The root of the router subtree is the router deployment itself. With
+        # response-delegation multi-leaf, the router also binds handles to the
+        # extra leaf deployments; they come back here and are registered as
+        # ordinary app deployments so they deploy and join HAProxy's server-map
+        # union. Without the flag the router must be a single deployment.
+        router_name = deployment_names[ingress_request_router]
+        extra_leaves = [
+            deployment
+            for deployment in ingress_request_router_deployments
+            if deployment.name != router_name
+        ]
+        if extra_leaves and not RAY_SERVE_HANDOFF_MULTI_LEAF:
             raise ValueError(
                 "Expected `ingress_request_router` to build into exactly one "
                 "standalone deployment, got "
                 f"{len(ingress_request_router_deployments)}."
             )
-        ingress_request_router_deployment = ingress_request_router_deployments[0]
+        ingress_request_router_deployment = next(
+            deployment
+            for deployment in ingress_request_router_deployments
+            if deployment.name == router_name
+        )
+        deployments = deployments + extra_leaves
 
     main_deployment_names = {deployment.name for deployment in deployments}
 
@@ -211,6 +233,7 @@ def build_app(
         },
         external_scaler_enabled=external_scaler_enabled,
         ingress_request_router_deployment=ingress_request_router_deployment,
+        response_channel=app._response_channel,
     )
 
 

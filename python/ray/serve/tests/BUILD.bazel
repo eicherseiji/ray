@@ -123,6 +123,7 @@ py_test_module_list(
         "test_handle_2.py",
         "test_handle_cancellation.py",
         "test_handle_streaming.py",
+        "test_handoff.py",
         "test_healthcheck.py",
         "test_http_headers.py",
         "test_http_routes.py",

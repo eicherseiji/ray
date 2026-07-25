@@ -518,6 +518,10 @@ class BackendConfig:
     # /internal/route on one of these to pick a data-plane replica.
     ingress_request_router_servers: List[ServerConfig] = field(default_factory=list)
 
+    # Whether this app opted into the ResponseChannel. When True, the frontend
+    # serves this backend's requests through the channel stream service.
+    response_channel: bool = False
+
     # The fallback server for this backend.
     fallback_server: Optional[ServerConfig] = None
 
@@ -1277,6 +1281,23 @@ class HAProxyApi(ProxyApi):
             logger.debug(f"Wrote Lua routing script to {lua_path}")
         return lua_path
 
+    def _write_response_channel_lua(self) -> str:
+        """Write the ResponseChannel Lua and return its path.
+
+        The Lua re-injects the client request as a loopback kickoff, so it needs
+        the frontend port to reach HAProxy itself.
+        """
+        template = string.Template(
+            (Path(__file__).parent / "response_channel.lua.tmpl").read_text()
+        )
+        content = template.substitute(FRONTEND_PORT=self.cfg.frontend_port)
+        lua_path = os.path.join(
+            os.path.dirname(self.config_file_path), "response_channel.lua"
+        )
+        if _write_if_changed(lua_path, content):
+            logger.debug(f"Wrote ResponseChannel Lua script to {lua_path}")
+        return lua_path
+
     def _generate_config_file_internal(self) -> bool:
         """Internal config generation without locking (for use within locked sections)."""
         try:
@@ -1306,6 +1327,11 @@ class HAProxyApi(ProxyApi):
                 http_backends
             )
             has_ingress_request_router = ingress_request_router_lua_path is not None
+
+            has_response_channel = any(b.response_channel for b in http_backends)
+            response_channel_lua_path = (
+                self._write_response_channel_lua() if has_response_channel else None
+            )
 
             # Enrich HTTP backends with precomputed health check configuration strings
             http_backends_with_health_config = [
@@ -1378,6 +1404,8 @@ class HAProxyApi(ProxyApi):
                     "route_info": health_route_info,
                     "has_ingress_request_router": has_ingress_request_router,
                     "ingress_request_router_lua_path": ingress_request_router_lua_path,
+                    "has_response_channel": has_response_channel,
+                    "response_channel_lua_path": response_channel_lua_path,
                     "ingress_request_router_timeout_s": (
                         RAY_SERVE_HAPROXY_INGRESS_REQUEST_ROUTER_TIMEOUT_S
                     ),
@@ -2072,6 +2100,7 @@ class HAProxyManager(ProxyActorInterface):
             path_prefix=target_group.route_prefix,
             servers=servers,
             ingress_request_router_servers=ingress_request_router_servers,
+            response_channel=target_group.response_channel,
             app_name=target_group.app_name,
             ingress_deployment_name=target_group.ingress_deployment_name,
             fallback_server=fallback_server,

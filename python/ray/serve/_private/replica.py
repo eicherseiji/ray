@@ -68,7 +68,9 @@ from ray.serve._private.constants import (
     RAY_SERVE_DIRECT_INGRESS_PORT_RETRY_COUNT,
     RAY_SERVE_ENABLE_DIRECT_INGRESS,
     RAY_SERVE_ENABLE_HA_PROXY,
+    RAY_SERVE_ENABLE_HANDOFF,
     RAY_SERVE_FREEZE_GC_ON_STARTUP,
+    RAY_SERVE_HANDOFF_MULTI_LEAF,
     RAY_SERVE_HAPROXY_METRICS_ENABLED,
     RAY_SERVE_METRICS_EXPORT_INTERVAL_MS,
     RAY_SERVE_RECORD_AUTOSCALING_STATS_TIMEOUT_S,
@@ -113,6 +115,7 @@ from ray.serve._private.grpc_util import (
     set_grpc_code_and_details,
     start_grpc_server,
 )
+from ray.serve._private.handoff import honor_via_handle
 from ray.serve._private.http_util import (
     ASGIAppReplicaWrapper,
     ASGIArgs,
@@ -200,6 +203,7 @@ from ray.serve.grpc_util import (
     gRPCInputStream,
 )
 from ray.serve.handle import DeploymentHandle
+from ray.serve.handoff import HandOff
 from ray.serve.schema import EncodingType, LoggingConfig, ReplicaRank
 from ray.types import ObjectRef
 
@@ -1626,7 +1630,7 @@ class Replica:
         with self._wrap_request(request_metadata, ray_trace_ctx):
             async with self._start_request(request_metadata):
                 try:
-                    return await self._user_callable_wrapper.call_user_method(
+                    result = await self._user_callable_wrapper.call_user_method(
                         request_metadata, request_args, request_kwargs
                     )
                 except Exception as e:
@@ -1634,6 +1638,14 @@ class Replica:
                     # Non-gRPC requests should preserve the original exception
                     # without creating a self-referential __cause__ chain.
                     self._raise_user_exception(e, request_metadata)
+                if RAY_SERVE_ENABLE_HANDOFF and isinstance(result, HandOff):
+                    # The method delegated its response: deliver the request to
+                    # the target replica and return its response, so this replica
+                    # is off the response path. FastAPI routes are handled earlier
+                    # (the route callable), since FastAPI consumes the return value
+                    # before it reaches here.
+                    return await honor_via_handle(result)
+                return result
 
     async def handle_request_streaming(
         self, request_metadata: RequestMetadata, *request_args, **request_kwargs
@@ -1750,9 +1762,14 @@ class Replica:
                         ):
                             yield result
                     else:
-                        yield await self._user_callable_wrapper.call_user_method(
+                        result = await self._user_callable_wrapper.call_user_method(
                             request_metadata, request_args, request_kwargs
                         )
+                        if RAY_SERVE_ENABLE_HANDOFF and isinstance(result, HandOff):
+                            # See handle_request: deliver from the target replica
+                            # so this replica is off the response path.
+                            result = await honor_via_handle(result)
+                        yield result
                 except Exception as e:
                     self._raise_user_exception(e, request_metadata)
 
@@ -2173,7 +2190,14 @@ class Replica:
             return
 
         if not self._ingress and not self._is_ingress_request_router:
-            return
+            # Response-delegation multi-leaf: an ASGI leaf deployment that is not
+            # the app ingress still serves on its own node port so HAProxy can
+            # splice to it. Detected by having built an ASGI app.
+            if not (
+                RAY_SERVE_HANDOFF_MULTI_LEAF
+                and self._user_callable_asgi_app is not None
+            ):
+                return
 
         async def allocate_and_start_server(start_server_fn, protocol):
             """Attempt to allocate a port and start the server with retries."""
@@ -4026,6 +4050,11 @@ class UserCallableWrapper:
             elif is_http_request and not user_method_info.is_asgi_app:
                 # For the FastAPI codepath, the response has already been sent over
                 # ASGI, but for the vanilla deployment codepath we need to send it.
+                if RAY_SERVE_ENABLE_HANDOFF and isinstance(result, HandOff):
+                    # A vanilla HTTP ingress delegated its response: deliver from
+                    # the target replica and send its response, so this replica is
+                    # off the response path.
+                    result = await honor_via_handle(result)
                 await self._send_user_result_over_asgi(result, asgi_args)
             elif not is_http_request and not sync_gen_consumed:
                 # If a unary method is called with stream=True for anything EXCEPT

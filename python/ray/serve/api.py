@@ -432,6 +432,12 @@ def ingress(app: Optional[Union[ASGIApp, Callable]] = None) -> Callable:
         # the fast api routes here.
         if isinstance(app, (FastAPI, APIRouter)):
             make_fastapi_class_based_view(app, cls)
+            # Honor a `serve.HandOff` returned by any route: Serve stages the
+            # request at the target and returns the routing decision, so the
+            # deployment is off the response path. No-op for normal returns.
+            from ray.serve._private.handoff import install_handoff_honoring
+
+            install_handoff_honoring(app)
 
         # Late-bound (`app is None`): the class's `__serve_build_asgi_app__`
         # produces the real app at replica init time.

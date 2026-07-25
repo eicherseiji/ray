@@ -620,6 +620,45 @@ def test_build_app_requires_ingress_request_router_to_be_single_deployment(
         )
 
 
+def test_build_app_multi_leaf_registers_extra_leaves(monkeypatch):
+    """With handoff multi-leaf, the router may bring in extra leaf deployments;
+    they are registered as app deployments and the router root is identified."""
+    monkeypatch.setattr("ray.serve._private.build_app.RAY_SERVE_ENABLE_HA_PROXY", True)
+    monkeypatch.setattr(
+        "ray.serve._private.build_app.RAY_SERVE_HANDOFF_MULTI_LEAF", True
+    )
+
+    @serve.deployment
+    class Ingress:
+        pass
+
+    @serve.deployment
+    class Leaf2:
+        pass
+
+    @serve.deployment
+    class IngressRequestRouter:
+        def __init__(self, leaf2):
+            self._leaf2 = leaf2
+
+    ingress_app = Ingress.bind()
+    app = ingress_app._with_ingress_request_router(
+        IngressRequestRouter.bind(Leaf2.bind())
+    )
+
+    built_app: BuiltApplication = build_app(
+        app,
+        name="default",
+        make_deployment_handle=FakeDeploymentHandle.from_deployment,
+    )
+
+    # The extra leaf is registered as an app deployment (so it deploys and joins
+    # HAProxy's server-map union); the router root is the request router itself.
+    assert {d.name for d in built_app.deployments} == {"Ingress", "Leaf2"}
+    assert built_app.ingress_request_router_deployment is not None
+    assert built_app.ingress_request_router_deployment.name == "IngressRequestRouter"
+
+
 def test_build_app_rejects_ingress_request_router_in_main_app_graph(monkeypatch):
     monkeypatch.setattr("ray.serve._private.build_app.RAY_SERVE_ENABLE_HA_PROXY", True)
 

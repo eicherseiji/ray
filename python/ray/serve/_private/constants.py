@@ -714,6 +714,22 @@ RAY_SERVE_ENABLE_DIRECT_INGRESS = (
 # Feature flag to use HAProxy.
 RAY_SERVE_ENABLE_HA_PROXY = os.environ.get("RAY_SERVE_ENABLE_HA_PROXY", "0") == "1"
 
+# Feature flag for response-delegation multi-leaf: when an app has an ingress
+# request router, union every leaf deployment's replicas into the HAProxy server
+# pool (not just the single ingress deployment) so the router can hand off to any
+# of N leaves. Off by default; existing single-leaf apps are unchanged.
+RAY_SERVE_HANDOFF_MULTI_LEAF = (
+    os.environ.get("RAY_SERVE_HANDOFF_MULTI_LEAF", "0") == "1"
+)
+
+# Feature flag for honoring a serve.HandOff returned by a deployment. When on, a
+# HandOff returned from a unary handle-called method is resolved by Serve: the
+# request is delivered to the target replica and its response is returned, so the
+# returning deployment is off the response path. Off by default; the isinstance
+# check is skipped entirely when off, so non-HandOff calls pay nothing.
+RAY_SERVE_ENABLE_HANDOFF = os.environ.get("RAY_SERVE_ENABLE_HANDOFF", "0") == "1"
+
+
 # Ingress request router replicas pinned to each proxy node.
 RAY_SERVE_INGRESS_ROUTER_REPLICAS_PER_NODE = get_env_int_positive(
     "RAY_SERVE_INGRESS_ROUTER_REPLICAS_PER_NODE", 1

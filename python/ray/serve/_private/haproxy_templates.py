@@ -69,6 +69,11 @@ HAPROXY_CONFIG_TEMPLATE = """global
     {%- if has_ingress_request_router %}
     lua-load-per-thread {{ ingress_request_router_lua_path }}
     {%- endif %}
+    {%- if has_response_channel %}
+    # Shared (not per-thread): the push and stream services correlate through a
+    # global per-id queue table, so they must run in one Lua state.
+    lua-load {{ response_channel_lua_path }}
+    {%- endif %}
     {%- if has_ingress_request_router and ingress_request_router_forward_body %}
     tune.bufsize {{ ingress_request_router_bufsize }}
     {%- else %}
@@ -181,12 +186,34 @@ frontend http_frontend
     # Inject unique reload ID as header to track which HAProxy instance handled the request (testing only)
     http-request set-header x-haproxy-reload-id {{ config.reload_id }}
     {%- endif %}
+    {%- if has_response_channel %}
+    # ResponseChannel (response-path only, orthogonal to routing). Strip the
+    # channel headers from client requests; only the loopback kickoff HAProxy
+    # itself issues may carry them. The leaf's chunk stream lands on
+    # response_channel_push; the per-backend stream service below serves client
+    # requests to opted-in apps.
+    http-request del-header x-serve-response-channel if !{ src 127.0.0.0/8 }
+    http-request del-header x-response-id if !{ src 127.0.0.0/8 }
+    http-request use-service lua.response_channel_push if { path_beg /internal/response/ }
+    {%- endif %}
     # Per-backend path ACLs (used for both ingress-request-router dispatch
     # and static use_backend selection below).
 {%- for backend in backends %}
     acl is_{{ backend.name or 'unknown' }} path_beg {{ '/' if not backend.path_prefix or backend.path_prefix == '/' else backend.path_prefix ~ '/' }}
     acl is_{{ backend.name or 'unknown' }} path {{ backend.path_prefix or '/' }}
 {%- endfor %}
+    {%- if has_response_channel %}
+    # A client request to an opted-in app is served by response_channel_stream:
+    # it mints a response id, re-injects the request as a loopback kickoff (with
+    # x-serve-response-channel, so it routes to the ingress instead of re-entering
+    # here), and drains the per-id queue to the client. Scoped per-backend, so
+    # plain apps behind the same HAProxy are untouched.
+{%- for backend in backends %}
+    {%- if backend.response_channel %}
+    http-request use-service lua.response_channel_stream if is_{{ backend.name or 'unknown' }} !{ hdr(x-serve-response-channel) -m found }
+    {%- endif %}
+{%- endfor %}
+    {%- endif %}
     {%- if config.metrics_enabled %}
     # Per-request HTTP metric vars (app / route / ingress deployment), set on the
     # first matching backend. Backends are sorted longest-prefix-first and the
@@ -215,6 +242,10 @@ frontend http_frontend
     http-request wait-for-body time {{ ingress_request_router_timeout_s }}s if METH_POST has_ingress_request_router_app
     {%- endif %}
     http-request lua.route_via_ingress_request_router if METH_POST has_ingress_request_router_app
+    # Response-delegation: carry the router's handoff key to the pinned leaf so it
+    # serves the staged (transformed) request. Gated on the var, so plain replica
+    # picks (no key) are untouched.
+    http-request set-header x-handoff-key %[var(txn.handoff_key)] if { var(txn.handoff_key) -m found }
     # A pin-miss is recoverable only if its app has a fallback proxy. Mark it
     # per app so the 503 below fails loud for apps with none.
     {%- for backend in backends %}
